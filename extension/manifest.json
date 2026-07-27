@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Cadence → Office Ally",
+  "version": "0.1.0",
+  "description": "Fill Office Ally fields from a saved Cadence note using a mapping you set once. Runs locally; makes no external calls.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["http://127.0.0.1:8420/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Cadence → Office Ally — open panel" }
+}

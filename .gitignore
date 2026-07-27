@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Patient data (PHI) and encryption keys — NEVER commit, even encrypted.
+app/storage/*.db
+app/storage/*.db.enc
+app/storage/.keyfile
+app/storage/.runtime/
+*.db
+*.sqlite
+*.sqlite3
+
+# Third-party credentials / secrets.
+app/integrations/.sheets_credentials.json
+app/integrations/sheets_config.yaml
+app/transcribe/hf_config.yaml
+*.pem
+*.key
+
+# Editor / tooling local state (keep the shared .claude/settings.json).
+.claude/settings.local.json
+.claude/*.lock
+.pytest_cache/
+.DS_Store
+Thumbs.db

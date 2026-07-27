@@ -1,0 +1,19 @@
+# Copy this file to sheets_config.yaml (same directory) and fill in your values.
+# sheets_config.yaml is gitignored -- it's local config, not something to commit.
+# See docs/google-sheets-sync-setup.md for the full one-time setup walkthrough.
+
+# The spreadsheet's ID, from its URL:
+# https://docs.google.com/spreadsheets/d/THIS_PART/edit
+spreadsheet_id: "PASTE_YOUR_SPREADSHEET_ID_HERE"
+
+# The tab name within that spreadsheet (case-sensitive).
+sheet_name: "Patients"
+
+# How often (seconds) the app checks the sheet for changes made by a PT directly
+# in Sheets. App -> sheet pushes happen immediately regardless of this value.
+poll_interval_seconds: 90
+
+# Path to the downloaded service-account JSON key. Relative paths are resolved
+# from the project root. Defaults to app/integrations/.sheets_credentials.json
+# if omitted.
+credentials_path: "app/integrations/.sheets_credentials.json"

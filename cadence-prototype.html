@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cadence — PT Notes (Prototype)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#f6f8f7; --surface:#ffffff; --ink:#17211e; --muted:#5d6f69; --line:#e2e8e5;
+    --teal:#15514e; --teal-soft:#e7f0ee; --teal-tint:#f0f6f4;
+    --amber:#b5701f; --amber-soft:#fbf1e3; --amber-line:#eccfa3;
+    --radius:14px; --shadow:0 1px 2px rgba(23,33,30,.04), 0 8px 28px rgba(23,33,30,.06);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--paper);color:var(--ink);font-family:"Hanken Grotesk",system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;padding:28px 20px 64px}
+  .wrap{max-width:1080px;margin:0 auto}
+
+  header.top{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+  .brand{display:flex;align-items:baseline;gap:12px}
+  .mark{font-size:26px;font-weight:700;letter-spacing:-.02em;color:var(--teal)}
+  .mark .dot{color:var(--amber)}
+  .tagline{font-size:13.5px;color:var(--muted)}
+  .pill{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber-line);padding:5px 10px;border-radius:999px}
+
+  .privacy{display:flex;gap:12px;align-items:flex-start;background:var(--amber-soft);border:1px solid var(--amber-line);border-radius:var(--radius);padding:14px 16px;margin-bottom:18px}
+  .privacy .ico{flex:none;width:22px;height:22px;color:var(--amber);margin-top:1px}
+  .privacy p{margin:0;font-size:13px;color:#6c5424}
+  .privacy strong{color:#5a430f}
+
+  .controls{display:grid;grid-template-columns:1fr 1fr;gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;box-shadow:var(--shadow)}
+  @media (max-width:640px){.controls{grid-template-columns:1fr}}
+  .field{display:flex;flex-direction:column;gap:6px}
+  .field label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .selrow{display:flex;gap:8px}
+  .selrow select{flex:1}
+  select{font-family:inherit;font-size:14px;color:var(--ink);background:#fcfdfd;border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2315514e' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");background-repeat:no-repeat;background-position:right 12px center}
+  select:focus{outline:2px solid var(--teal);outline-offset:1px;border-color:var(--teal)}
+
+  .patient{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px;margin-bottom:18px;box-shadow:var(--shadow)}
+  .avatar{width:38px;height:38px;border-radius:50%;background:var(--teal-soft);color:var(--teal);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex:none}
+  .pmeta{display:flex;flex-direction:column;line-height:1.3}
+  .pname{font-weight:600;font-size:15px}
+  .psub{font-size:12.5px;color:var(--muted);font-family:"IBM Plex Mono",monospace}
+  .spacer{flex:1}
+  .priorflag{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--teal);background:var(--teal-tint);border:1px solid var(--teal-soft);padding:6px 11px;border-radius:999px;cursor:pointer;user-select:none}
+  .priorflag .check{width:15px;height:15px}
+  .priorflag.off{color:var(--muted);background:#f4f6f5;border-color:var(--line)}
+  .priorflag.disabled{opacity:.6;cursor:not-allowed}
+  .priorflag.hidden{display:none}
+  .fake-tag{font-size:11px;color:var(--muted);font-style:italic;font-weight:400}
+
+  .grid{display:grid;grid-template-columns:0.9fr 1.1fr;gap:18px;align-items:start}
+  @media (max-width:860px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+  .step{display:flex;align-items:center;gap:9px;margin:0 0 6px}
+  .step .n{width:22px;height:22px;border-radius:50%;background:var(--teal);color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none}
+  .step h2{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .substep{font-size:12px;color:var(--muted);margin:0 0 14px 31px}
+
+  .dictabar{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  textarea{width:100%;min-height:200px;resize:vertical;border:1px solid var(--line);border-radius:10px;padding:13px 14px;font-family:inherit;font-size:14px;color:var(--ink);background:#fcfdfd;line-height:1.55}
+  textarea:focus{outline:2px solid var(--teal);outline-offset:1px;border-color:var(--teal)}
+  .btn{font-family:inherit;font-size:13.5px;font-weight:600;border-radius:10px;border:1px solid transparent;padding:10px 15px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:background .15s,border-color .15s,transform .05s}
+  .btn:active{transform:translateY(1px)}
+  .btn-sm{padding:7px 11px;font-size:12.5px}
+  .btn-mic{background:var(--surface);border-color:var(--line);color:var(--ink)}
+  .btn-mic:hover{border-color:var(--teal)}
+  .btn-mic.live{background:#fdecea;border-color:#e7a59c;color:#a3372a}
+  .btn-mic .pulse{width:9px;height:9px;border-radius:50%;background:#cf4631}
+  .btn-mic.live .pulse{animation:pulse 1.1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .btn-ghost{background:transparent;border-color:var(--line);color:var(--muted)}
+  .btn-ghost:hover{border-color:var(--teal);color:var(--teal)}
+  .btn-primary{background:var(--teal);color:#fff;width:100%;justify-content:center;margin-top:12px;padding:12px}
+  .btn-primary:hover{background:#0f413f}
+  .btn-primary:disabled{opacity:.55;cursor:default}
+  .helper{font-size:12px;color:var(--muted);margin:10px 2px 0}
+
+  .empty{color:var(--muted);font-size:13.5px;text-align:center;padding:38px 14px;border:1px dashed var(--line);border-radius:10px}
+  .empty svg{width:30px;height:30px;color:var(--teal);opacity:.5;margin-bottom:8px}
+
+  .savebar{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .btn-save{background:var(--teal);color:#fff;padding:9px 14px;font-size:13px}
+  .btn-save:hover{background:#0f413f}
+  .btn-save.done{background:var(--teal-soft);color:var(--teal);cursor:default}
+  .savehint{font-size:12px;color:var(--muted)}
+
+  .needs{background:var(--amber-soft);border:1px solid var(--amber-line);border-radius:11px;padding:13px 15px;margin-bottom:16px}
+  .needs h3{margin:0 0 8px;font-size:13px;font-weight:700;color:#5a430f;display:flex;align-items:center;gap:8px}
+  .needs h3 svg{width:16px;height:16px;color:var(--amber)}
+  .needs ul{margin:0;padding-left:18px}
+  .needs li{font-size:13px;color:#6c5424;margin:3px 0}
+  .resolve{margin-top:12px}
+  .resolve textarea{min-height:64px;background:#fffdf9;border-color:var(--amber-line)}
+  .btn-amber{background:var(--amber);color:#fff;margin-top:9px;padding:9px 14px;font-size:13px}
+  .btn-amber:hover{background:#9a5e15}
+  .resolve-actions{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap}
+  .resolve-actions .btn{margin-top:0}
+  .mic-help-sm{font-size:11.5px;color:var(--muted);margin:8px 2px 0}
+  .mic-help-sm:empty{display:none}
+
+  .sheet{border:1px solid var(--line);border-radius:11px;background:#fff;overflow:hidden}
+  .sheet-head{padding:14px 20px 12px;border-bottom:1px solid var(--line)}
+  .sheet-title{font-family:"Newsreader",Georgia,serif;font-size:18px;font-weight:600}
+  .sheet-sub{font-size:11.5px;color:var(--muted);font-family:"IBM Plex Mono",monospace;margin-top:3px}
+  .sec{padding:13px 20px;border-bottom:1px solid #eef2f0}
+  .sec:last-child{border-bottom:none}
+  .sec.cf{background:var(--teal-tint)}
+  .sec-h{display:flex;align-items:center;gap:9px;margin-bottom:5px}
+  .sec-h .lbl{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;font-weight:700;color:var(--teal)}
+  .cf-badge{font-size:10px;font-weight:600;color:var(--teal);background:var(--teal-soft);padding:2px 8px;border-radius:999px;letter-spacing:.03em}
+  .sec-body{font-family:"Newsreader",Georgia,serif;font-size:14.5px;line-height:1.6;color:#26312d;white-space:pre-wrap}
+  .gap{background:var(--amber-soft);color:var(--amber);border:1px solid var(--amber-line);border-radius:5px;padding:0 6px;font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:500}
+
+  .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loadwrap{display:flex;flex-direction:column;align-items:center;gap:12px;padding:42px 14px;color:var(--muted);font-size:13px}
+  .loadwrap .spin{border-color:var(--teal-soft);border-top-color:var(--teal);width:26px;height:26px}
+
+  /* Modal */
+  .overlay{position:fixed;inset:0;background:rgba(23,33,30,.45);display:none;align-items:flex-start;justify-content:center;padding:30px 16px;z-index:50;overflow:auto}
+  .overlay.open{display:flex}
+  .modal{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 20px 60px rgba(23,33,30,.25);width:100%;max-width:560px;max-height:calc(100vh - 60px);overflow:auto}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;padding:15px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface)}
+  .modal-head h3{margin:0;font-size:16px}
+  .modal-x{background:none;border:none;cursor:pointer;color:var(--muted);font-size:22px;line-height:1;padding:2px 6px}
+  .modal-x:hover{color:var(--ink)}
+  .modal-body{padding:18px 20px}
+  .mfield{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+  .mfield label{font-size:12px;font-weight:600;color:var(--muted)}
+  .mfield input{font-family:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fcfdfd}
+  .mfield input:focus,.mfield textarea:focus{outline:2px solid var(--teal);outline-offset:1px;border-color:var(--teal)}
+  .mrow{display:flex;gap:12px;flex-wrap:wrap}
+  .mrow .mfield{flex:1;min-width:140px}
+  .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
+
+  .fileitem{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,background .15s}
+  .fileitem:hover{border-color:var(--teal);background:var(--teal-tint)}
+  .fileitem .ft{font-weight:600;font-size:14px}
+  .fileitem .fd{font-size:11.5px;color:var(--muted);font-family:"IBM Plex Mono",monospace;margin-top:2px}
+  .fileitem .fsnip{font-size:12.5px;color:var(--muted);margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .files-empty{color:var(--muted);font-size:13.5px;text-align:center;padding:30px 12px;border:1px dashed var(--line);border-radius:10px}
+  .backbtn{background:none;border:none;color:var(--teal);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;padding:0;margin-bottom:12px;display:inline-flex;gap:6px;align-items:center}
+
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);background:var(--ink);color:#fff;padding:11px 18px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:60}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  footer{margin-top:26px;font-size:12px;color:var(--muted);line-height:1.6}
+  footer b{color:var(--ink)}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <span class="mark">Cadence<span class="dot">.</span></span>
+      <span class="tagline">Physical therapy notes, dictated.</span>
+    </div>
+    <span class="pill">Prototype</span>
+  </header>
+
+  <div class="privacy">
+    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    <p><strong>Demo only — use fake patients.</strong> This is a UX reference for the Cadence workflow: it does not generate notes and sends nothing anywhere. Note generation runs entirely on your own computer in the installed Cadence app, which saves to an encrypted local file — nothing ever leaves the machine. Patients/files here live only for this session (they reset on reload) and nothing here is private or HIPAA-compliant. Do not enter real patient details.</p>
+  </div>
+
+  <div class="controls">
+    <div class="field">
+      <label for="patientSel">Patient</label>
+      <div class="selrow">
+        <select id="patientSel"></select>
+        <button class="btn btn-ghost btn-sm" id="newPatientBtn">+ New</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="formSel">Note type</label>
+      <select id="formSel"></select>
+    </div>
+  </div>
+
+  <div class="patient">
+    <div class="avatar" id="pAvatar">MD</div>
+    <div class="pmeta">
+      <span class="pname" id="pName">—</span>
+      <span class="psub" id="pSub">—</span>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn btn-ghost btn-sm" id="filesBtn">Patient file (0)</button>
+    <div class="priorflag" id="priorFlag" role="button" tabindex="0" aria-pressed="true">
+      <svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      <span id="priorFlagText">Previous visit on file</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <div class="step"><span class="n">1</span><h2>Dictate your session</h2></div>
+      <p class="substep" id="formHint">Speak or type a quick summary; Cadence builds the note.</p>
+      <div class="dictabar">
+        <button class="btn btn-mic" id="micBtn"><span class="pulse"></span><span id="micLabel">Dictate</span></button>
+        <button class="btn btn-ghost" id="exampleBtn">Load example</button>
+        <button class="btn btn-ghost" id="clearBtn">Clear</button>
+      </div>
+      <textarea id="dictation" placeholder="Speak or type a quick summary of the session, the way you'd say it out loud — what you worked on, how the patient did, any measurements."></textarea>
+      <p class="helper" id="micHelp">Tip: the mic uses your browser's voice typing and is often blocked inside this preview. The real app replaces it with an offline medical speech model. Type instead here.</p>
+      <button class="btn btn-primary" id="generateBtn">Generate note</button>
+    </section>
+
+    <section class="card">
+      <div class="step"><span class="n">2</span><h2>Review the note</h2></div>
+      <p class="substep">Carried-forward sections are tinted; gaps are flagged in amber, not invented.</p>
+      <div id="output"></div>
+    </section>
+  </div>
+
+  <footer>
+    <b>Try this:</b> add a new patient with <b>+ New</b>, generate a note, then <b>Save to file</b> — open <b>Patient file</b> to see it stored. Switch patients to watch carry-forward change. Switch note type to watch behavior change.<br>
+    <b>"Cadence" is a placeholder name</b> — easy to change. Files here are session-only; the real app saves them privately on the laptop.
+  </footer>
+
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-head"><h3 id="modalTitle">—</h3><button class="modal-x" id="modalClose" aria-label="Close">×</button></div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  // ---------- Fictional roster (mutable; session-only) ----------
+  const PATIENTS = {
+    maria: {
+      initials:"MD", name:"Maria Delgado", sub:"MRN 00482-117 · DOB 03/14/1958 · L TKA, post-op wk 4",
+      prior:`PREVIOUS VISIT ON FILE (for carry-forward):
+Precautions: Status post left total knee arthroplasty. Weight-bearing as tolerated. Avoid forced knee flexion beyond tolerance; monitor incision. Fall risk secondary to antalgic gait. PMH: hypertension, bilateral knee OA.
+Functional Status (carry forward unless changed today): Ambulates 150 ft on level surfaces with front-wheeled walker, supervision. Stairs not yet attempted. Independent with bed mobility.
+Short-Term Goals (carry forward; mark MET if achieved):
+  STG #1: L knee active flexion to 110 deg for stair negotiation, within 2 weeks.
+  STG #2: Ambulate 200 ft on level surfaces with least-restrictive device, supervision, within 3 weeks.
+  STG #3: Independence with home exercise program within 2 weeks.
+Long-Term Goals (carry forward; mark MET if achieved):
+  LTG #1: Ascend/descend a full flight of stairs step-over-step with handrail, modified independence, within 6 weeks.
+  LTG #2: Independent community ambulation without assistive device within 8 weeks.`,
+      sample:`Follow-up for Maria Delgado, left total knee replacement, about four weeks post-op. Pain's better, around a 3 out of 10 with activity, mostly front of the knee, worse going up stairs. Sleeping better, doing her home program consistently. We did therapeutic exercise — quad sets, straight leg raises, seated knee flexion and extension, three sets of ten each with a light ankle cuff, tolerated well with minimal cueing, about twenty minutes. Then gait training on level surfaces and started some stairs, contact guard assist, working step-over-step, looked good, fifteen minutes. Manual therapy too — soft tissue work and patellar mobilizations to the left knee to bring down swelling and improve flexion, she responded well. Knee flexion measured about 105 today, up from 95 last week. Still a little mild swelling. Plan to keep progressing, advance the stairs, reassess goals next visit, twice a week.`,
+      files:[]
+    },
+    james: {
+      initials:"JC", name:"James Carter", sub:"MRN 00731-204 · DOB 09/02/1965 · R rotator cuff repair, post-op wk 6",
+      prior:`PREVIOUS VISIT ON FILE (for carry-forward):
+Precautions: Status post right rotator cuff repair. Sling per surgeon protocol when not exercising; no active overhead reaching; no lifting over 2 lb with right arm; avoid combined extension and external rotation. PMH: hypertension.
+Functional Status (carry forward unless changed today): Independent with most ADLs using left arm; limited right shoulder use for dressing and overhead tasks.
+Short-Term Goals (carry forward; mark MET if achieved):
+  STG #1: R shoulder active flexion to 140 deg for functional reaching, within 2 weeks.
+  STG #2: Report shoulder pain 3/10 or less during home program, within 2 weeks.
+  STG #3: Independent correct performance of HEP, within 1 week.
+Long-Term Goals (carry forward; mark MET if achieved):
+  LTG #1: Restore full functional right shoulder ROM for overhead activities, within 8 weeks.
+  LTG #2: Return to full work duties including lifting, within 10 weeks.`,
+      sample:`Follow-up for James Carter, recovering from right rotator cuff repair, about six weeks out. Shoulder pain down to about a 2 out of 10, mostly with overhead reaching, sleeping through the night again. Good with his home exercises. Today therapeutic exercise — pendulum swings, table slides, assisted shoulder flexion and external rotation, two sets of fifteen, light resistance, tolerated well with occasional cueing for posture, about twenty-five minutes. Manual therapy, soft tissue work to the right shoulder and gentle joint mobilizations to improve range, responded well, about fifteen minutes. Shoulder flexion measured around 140 today, up from 125 last visit. Plan to keep progressing strengthening, add light resistance bands next week, reassess goals, continue twice a week.`,
+      files:[]
+    },
+    robert: {
+      initials:"RN", name:"Robert Nguyen", sub:"MRN 00955-038 · DOB 06/21/1983 · acute low back pain · NEW patient",
+      prior:null,
+      sample:`New evaluation for Robert Nguyen, 42-year-old male, came in with lower back pain that started about three weeks ago after lifting boxes while moving. Pain is across the low back and sometimes goes into the right buttock, about a 6 out of 10 at worst, worse with bending forward and sitting a long time, a bit better when he walks around. No numbness or tingling in the legs, no bowel or bladder problems. He works in a warehouse with lots of lifting, no prior back surgery. He wants to get back to work without pain and be able to play with his kids. On exam, lumbar flexion was limited and reproduced his pain, extension was okay. Straight leg raise negative both sides. Leg strength looked full. Tenderness over the right lower back muscles with some guarding. We talked about activity modification and started gentle core and mobility exercises — pelvic tilts and cat-cow — and gave him a home program. Plan to see him twice a week for four weeks and reassess.`,
+      files:[]
+    }
+  };
+  const patientOrder = ["maria","james","robert"];
+
+  // Seed a "previous visit" file for patients who have a prior note, so the file view isn't empty.
+  ["maria","james"].forEach(id=>{
+    if(PATIENTS[id].prior){
+      PATIENTS[id].files.push({
+        id:"seed-"+id, formName:"Previous visit (on record)", date:(id==="maria"?"2026-06-11":"2026-06-09"),
+        sections:[{heading:"On record from last visit", body:PATIENTS[id].prior, carriedForward:false}], missingInfo:[]
+      });
+    }
+  });
+
+  // ---------- Note-type registry ----------
+  const FORMS = {
+    followup: { name:"Follow-Up Visit", mode:"require", carry:true, spec:
+`Sections in order: Summary of Daily Skilled Services (1-3 sentences); Precautions [carry forward]; one section per CPT actually performed today (97110 Therapeutic Exercise, 97112 Neuromuscular Re-education, 97116 Gait Training, 97140 Manual Therapy, 97530 Therapeutic Activities) each starting with "Minutes: __" then 1-2 sentences on setup/region/technique/dosage/cues/response; Pain - At Rest; Pain - With Movement; Vitals (BP and HR); Response to Treatment (Good/Fair/Poor); Functional Status [carry forward]; Short-Term Goals [carry forward, mark MET]; Long-Term Goals [carry forward, mark MET]; Plan.` },
+    initial: { name:"Initial Evaluation", mode:"require", carry:false, spec:
+`Sections in order: Chief Complaint; Diagnoses (ICD-10 if stated); Referral & Relevant History (PMH, precautions/contraindications, prior level of function); Objective Summary; Fall Risk (history of falls, steadiness, TUG if stated); Musculoskeletal Assessment (LE/UE ROM and strength by region); Other Systems (integumentary, neuromuscular, cognition/communication, pain); Cardiopulmonary (BP, HR, O2 at rest and with activity); Functional Mobility (bed mobility, transfers, gait with device/assist/distance, stairs); Coordination/Sensation/Edema; Assessment Summary (clinical impressions, reason for skilled services, rehab potential); Short-Term Goals; Long-Term Goals; Plan of Treatment (frequency, duration, intensity, certification period, patient goals).` },
+    discharge: { name:"Discharge Summary", mode:"require", carry:true, spec:
+`Sections in order: Discharge Destination & Reason; Diagnoses; Progress Period (number of visits/dates); Short-Term Goals [carry forward] each marked Met/Not Met with PLOF/Baseline/Previous/Discharge comparison; Long-Term Goals [carry forward] marked Met/Discontinued similarly; Assessment & Summary of Skilled Services (prognosis, interventions, progress); Functional Skills Assessment (bed mobility, transfers, surfaces, stairs, community mobility); Discharge Recommendations (home program, restorative/maintenance program).` },
+    progress: { name:"Progress Report", mode:"require", carry:true, spec:
+`Sections in order: Identification & days seen this period; Diagnoses; Short-Term Goals [carry forward] each with status (Met/Continue/New) and PLOF/Baseline/Previous/Current values plus verbal-cue %; Long-Term Goals [carry forward] similarly; Precautions / Prior Living [carry forward]; Assessment & Summary of Skilled Services (interventions, tests/measures, patient progress, supervision, communication); Justification for Continued Skilled Services (remaining impairments, reason for skilled services, rehab potential, plan focus).` },
+    soap: { name:"SOAP Note", mode:"omit", carry:false, spec:
+`Sections in order: Subjective (chief complaint + history of present illness as one paragraph; relevant past/social/family history only if mentioned); Objective (ONLY clinician-measured findings — vitals, exam findings, completed test results — as bullets, only those explicitly mentioned, no empty bullets); Assessment & Plan (each explicit problem/impression with a short plan). Patient-reported items go only in Subjective; do not infer diagnoses.` },
+    msk: { name:"MSK Assessment / Treatment", mode:"omit", carry:false, spec:
+`Sections in order (include a section only if mentioned): Current Condition/Complaint; Investigations; Medical History; Social History; Patient Goals (short/long-term); Objective (observation/gait, ROM & strength with sides, palpation, special tests, outcome measures); Diagnosis/Impression (primary + differentials if stated); Treatment (education, manual therapy, therapeutic exercise/neuromuscular, HEP); Assessment (clinical reasoning, prioritized problems, response, prognosis factors); Plan; CPT Codes; ICD-10 Codes.` },
+    avletter: { name:"After-Visit Letter (patient)", mode:"omit", carry:false, spec:
+`Patient-facing letter at a 6th-8th grade reading level, warm and plain. Sections (include only if relevant, remove empty ones): Reason for your visit; What we discussed and did today; Results from today; Your diagnoses/assessment (in plain language); Medications (start/change/stop, if any); Self-care instructions; Orders and referrals; Follow-up plan; Next steps summary (short checklist). Define any medical terms in plain words. Address the patient as "you". Do not add anything not discussed.` },
+    referral: { name:"Referral Letter (to specialist)", mode:"omit", carry:false, spec:
+`Professional letter to a receiving specialist. Sections (include only what is relevant to the referral): Reason for Referral; Relevant Medical History; Social History; Clinical Evaluation Summary (exam findings, tests, imaging if stated); Impact on Patient's Life; Goals of Referral (specific questions/outcomes sought); Follow-Up and Communication. Concise and focused on the referral concern.` },
+    smart: { name:"SMART Goal Note", mode:"omit", carry:false, spec:
+`Sections (omit any not explicitly provided): Patient Details (concise sentence); Clinical Focus; SMART Goal(s) as bullets covering Specific, Measurable, Achievable, Relevant, Time-bound; Barriers or Considerations; Plan for Monitoring (who/what/when). Include only explicitly provided information.` },
+    issues: { name:"Issues List", mode:"omit", carry:false, spec:
+`A numbered list of distinct issues. For each issue: a short specific label, then bullets only where explicitly stated — relevant details/history, pertinent PMH/meds, objective findings, likely diagnosis, differentials, planned investigations, planned treatment, referrals. Never infer; do not group distinct issues together; omit any bullet with no stated content.` },
+    soappt: { name:"SOAP-format PT Follow-Up", mode:"require", carry:true, spec:
+`Sections in order: Subjective (visit type/context, chief complaint & course since last visit, adherence/response to HEP, precautions [carry forward]); Objective (Vitals BP/HR; Active ROM by region with measurements; Manual Muscle Testing with grades; Palpation/Observation; Gait; Pain rating/location); Treatment (Patient Education; Manual Therapy with CPT+minutes; Therapeutic Exercise with CPT+minutes; Gait Training with CPT+minutes; HEP) — include a treatment only if performed, each starting "Minutes: __"; Goals: Short-Term [carry forward, mark MET], Long-Term [carry forward, mark MET]; Assessment (status/progress, impairments, medical necessity, Response to Treatment Good/Fair/Poor); Plan.` }
+  };
+  const FORM_ORDER = ["followup","initial","progress","discharge","soappt","soap","msk","avletter","referral","smart","issues"];
+
+  // ---------- State ----------
+  let currentPatient="maria", currentForm="followup", priorOn=true, lastResult=null;
+
+  const $ = id => document.getElementById(id);
+  const dictation=$("dictation"), output=$("output");
+  const overlay=$("overlay"), modalBody=$("modalBody");
+
+  // ---------- Helpers ----------
+  function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function withGaps(s){ return esc(s).replace(/\[\[NEEDS:\s*([^\]]+)\]\]/g,'<span class="gap">⌖ $1</span>'); }
+  function firstName(n){ return (n||"").trim().split(/\s+/)[0]||n; }
+  function initialsOf(n){ return (n||"").trim().split(/\s+/).slice(0,2).map(w=>w[0]?w[0].toUpperCase():"").join("")||"PT"; }
+  function fmtDate(d){ const x=d?new Date(d):new Date(); return isNaN(x)?"":x.toLocaleDateString(); }
+  function fmtDateTime(d){ const x=d?new Date(d):new Date(); if(isNaN(x)) return ""; return x.toLocaleDateString()+" "+x.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
+
+  // ---------- Selectors ----------
+  const patientSel=$("patientSel"), formSel=$("formSel");
+  function populatePatients(){
+    patientSel.innerHTML="";
+    patientOrder.forEach(id=>{ const p=PATIENTS[id]; const o=document.createElement("option"); o.value=id; o.textContent=p.name+(p.prior?"":" (new)"); patientSel.appendChild(o); });
+    patientSel.value=currentPatient;
+  }
+  FORM_ORDER.forEach(id=>{ const o=document.createElement("option"); o.value=id; o.textContent=FORMS[id].name; formSel.appendChild(o); });
+  patientSel.addEventListener("change", ()=>{ currentPatient=patientSel.value; onPatientChange(); });
+  formSel.addEventListener("change", ()=>{ currentForm=formSel.value; onFormChange(); });
+
+  function onPatientChange(){
+    const p=PATIENTS[currentPatient];
+    $("pAvatar").textContent=p.initials;
+    $("pName").innerHTML=esc(p.name)+(p.prior?"":' <span class="fake-tag">· new patient</span>');
+    $("pSub").textContent=p.sub;
+    priorOn=!!p.prior;
+    dictation.value="";
+    resetOutput();
+    renderPriorFlag();
+    updateFilesButton();
+    const hasSample=!!p.sample;
+    const eb=$("exampleBtn");
+    eb.disabled=!hasSample; eb.style.opacity=hasSample?"":".5"; eb.style.cursor=hasSample?"":"default";
+  }
+  function onFormChange(){
+    $("formHint").textContent="Building: "+FORMS[currentForm].name+" · "+(FORMS[currentForm].mode==="require"?"all applicable fields required":"includes only what you mention");
+    resetOutput();
+    renderPriorFlag();
+  }
+  function resetOutput(){
+    lastResult=null;
+    output.innerHTML='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><div>Load the example and generate to see the '+esc(FORMS[currentForm].name)+'.</div></div>';
+  }
+  function updateFilesButton(){ $("filesBtn").textContent="Patient file ("+PATIENTS[currentPatient].files.length+")"; }
+
+  // ---------- Prior flag ----------
+  const priorFlag=$("priorFlag");
+  function renderPriorFlag(){
+    const p=PATIENTS[currentPatient], form=FORMS[currentForm];
+    priorFlag.classList.remove("hidden","disabled","off");
+    if(!form.carry){ priorFlag.classList.add("hidden"); return; }
+    if(!p.prior){ priorFlag.classList.add("off","disabled"); priorFlag.setAttribute("aria-pressed","false"); $("priorFlagText").textContent="No previous visit"; return; }
+    priorFlag.classList.toggle("off", !priorOn);
+    priorFlag.setAttribute("aria-pressed", String(priorOn));
+    $("priorFlagText").textContent=priorOn?"Previous visit on file":"Ignore previous visit";
+  }
+  function togglePrior(){ const p=PATIENTS[currentPatient], form=FORMS[currentForm]; if(!form.carry||!p.prior) return; priorOn=!priorOn; renderPriorFlag(); }
+  priorFlag.addEventListener("click", togglePrior);
+  priorFlag.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); togglePrior(); }});
+
+  // ---------- Buttons ----------
+  $("exampleBtn").addEventListener("click", ()=>{ const s=PATIENTS[currentPatient].sample; if(!s) return; dictation.value=s; dictation.focus(); });
+  $("clearBtn").addEventListener("click", ()=>{ dictation.value=""; dictation.focus(); });
+
+  // ---------- Reusable dictation ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let activeRecog=null;
+  function setupDictation(btn, target, help, labelEl){
+    if(!btn || !target) return;
+    const idle=(labelEl && labelEl.textContent) || "Dictate";
+    if(!SR){ btn.disabled=true; btn.style.opacity=.5; btn.style.cursor="default"; if(help) help.textContent="Voice typing isn't available in this browser — type instead. (The real app uses an offline medical speech model.)"; return; }
+    const recog=new SR(); recog.continuous=true; recog.interimResults=false; recog.lang="en-US";
+    let listening=false;
+    const reset=()=>{ listening=false; btn.classList.remove("live"); if(labelEl) labelEl.textContent=idle; if(activeRecog===recog) activeRecog=null; };
+    recog.onresult=e=>{ let add=""; for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) add+=e.results[i][0].transcript; } if(add){ target.value += (target.value && !/\s$/.test(target.value)?" ":"")+add.trim(); } };
+    recog.onend=reset;
+    recog.onerror=(ev)=>{ reset(); if(help) help.textContent=(ev&&(ev.error==="not-allowed"||ev.error==="service-not-allowed"))?"The mic is blocked inside this preview window — type instead. Voice works in the installed offline app.":"Voice typing didn't start — type instead."; };
+    btn.addEventListener("click", ()=>{
+      if(listening){ recog.stop(); return; }
+      try{ if(activeRecog && activeRecog!==recog) activeRecog.stop(); activeRecog=recog; recog.start(); listening=true; btn.classList.add("live"); if(labelEl) labelEl.textContent="Stop"; }
+      catch(_){ reset(); if(help) help.textContent="The mic can't run inside this preview window — type instead. Voice works in the installed offline app."; }
+    });
+  }
+  setupDictation($("micBtn"), dictation, $("micHelp"), $("micLabel"));
+
+  // ---------- Generate ----------
+  $("generateBtn").addEventListener("click", ()=>generate());
+  async function generate(extraInfo){
+    const summary=dictation.value.trim();
+    if(!summary){ dictation.focus(); dictation.style.borderColor="#cf4631"; setTimeout(()=>dictation.style.borderColor="",1200); return; }
+    // This prototype no longer calls any model. Note generation runs entirely on
+    // this computer in the installed Cadence app (local FastAPI + on-device
+    // MedGemma) and is never sent to a cloud service — see CLAUDE.md. buildPrompt()
+    // below is kept only as a behavioral reference; the production prompt lives in
+    // app/generate/prompt.py, and the real note-quality safeguards in
+    // app/generate/postprocess.py.
+    const appUrl="http://127.0.0.1:8420";
+    output.innerHTML='<div class="empty"><strong>This preview doesn\'t write notes.</strong><br>'
+      +'Cadence generates the <b>'+esc(FORMS[currentForm].name)+'</b> entirely on your own computer — nothing is sent to the cloud. '
+      +'Open the installed Cadence app to generate it from this dictation:<br><br>'
+      +'<a href="'+appUrl+'" target="_blank" rel="noopener">'+appUrl+'</a></div>';
+  }
+
+  function buildPrompt(summary, extraInfo){
+    const p=PATIENTS[currentPatient], form=FORMS[currentForm];
+    const usePrior=form.carry && priorOn && p.prior;
+    const modeRule=form.mode==="require"
+      ? `COMPLETENESS (require mode): Only the sections and fields explicitly listed in the NOTE STRUCTURE above are required — nothing more. Rules for the ---MISSING--- list and [[NEEDS]] markers:
+  - A CPT treatment section is required ONLY if that treatment was actually performed today. If a treatment was not mentioned, simply leave it out. NEVER flag an unperformed treatment (e.g. a CPT code not mentioned) as missing.
+  - Flag a value with [[NEEDS: ...]] ONLY when it belongs to a section that applies to this visit and that value is genuinely absent (e.g. minutes for a treatment that WAS performed, BP/HR, a pain rating that was clearly expected but not given).
+  - Do NOT invent requirements beyond the listed structure: no billing-audit granularity, no sub-technique time breakdowns, no fields borrowed from other note types, no incision/wound checks unless the structure lists them.
+  - Do NOT put discrepancies, cross-checks, optional details, or "consider documenting" suggestions in ---MISSING---.
+  - If every required field for the sections that apply is present, the ---MISSING--- list must be exactly "- none".`
+      : `COMPLETENESS (omit mode): Include ONLY information explicitly stated in the dictation. Omit any section or bullet not mentioned. Do not infer. Keep the ---MISSING--- list as "- none" unless the clinician clearly began a value but left it incomplete.`;
+    return `You are a documentation assistant for a physical therapist. Convert the therapist's spoken summary into a complete, professional "${form.name}".
+
+PATIENT: ${p.name}. ${p.sub}.
+
+NOTE STRUCTURE FOR "${form.name}":
+${form.spec}
+
+${usePrior ? "PRIOR NOTE (carry forward the indicated sections; update only if today's summary changes them):\n"+p.prior : (form.carry ? "No prior note on file: for any [carry forward] section, insert [[NEEDS: prior value required]]." : "")}
+
+THERAPIST'S DICTATION OF TODAY'S SESSION:
+"""${summary}"""
+${extraInfo ? `\nADDITIONAL DETAILS THE THERAPIST JUST PROVIDED (use to fill gaps they cover):\n"""${extraInfo}"""\n` : ""}
+WRITING RULES:
+- The therapist may be a non-native English speaker; interpret imperfect grammar or roundabout phrasing charitably and render correct clinical wording.
+- Write from the SPECIFIC details actually said. No generic boilerplate; wording should be unique to this session.
+- Keep each section body tight (1-3 sentences unless the structure implies a list).
+- NEVER invent clinical values (minutes, vitals, pain levels, measurements, dates).
+- Do NOT infer or calculate the patient's age or any dates. Use only demographic facts explicitly stated in the dictation or patient line; if age is not stated, omit it rather than computing it from a date of birth.
+- ${modeRule}
+- For a section carried forward from the prior note, append [[CARRIED FORWARD]] to its heading line. Carry forward does NOT mean copy blindly: when today's session reports a change to a carried value (e.g. ambulation distance, assistive device, assist level, whether stairs were attempted, overall functional status), UPDATE that section to reflect today, and still mark it [[CARRIED FORWARD]].
+- Internal consistency: today's findings take precedence and no two sections may contradict each other. Before finishing, make sure carried-forward sections — especially Functional Status — agree with what the treatment sections describe happening today (do not state the patient walked 150 ft with a walker if today's gait section says 200 ft with a cane).
+- Mark a goal "MET" only if today's summary shows it was achieved. When all short-term goals are met, the Plan must briefly justify continued skilled care by referencing the remaining unmet long-term goals.
+
+OUTPUT FORMAT — plain text in EXACTLY this shape, nothing else (no JSON, no preamble, no code fences):
+
+## <Section heading> [[CARRIED FORWARD]]   (omit the tag if not carried forward)
+<body, with [[NEEDS: ...]] inline for any gap>
+
+Repeat "## " for every section in order. After the final section, on its own line write:
+---MISSING---
+then one "- " bullet per item the therapist should provide before finalizing, or "- none".`;
+  }
+
+  // ---------- Parser ----------
+  function parsePlain(text){
+    if(!text || !/##\s/.test(text)) return null;
+    let missingInfo=[], body=text;
+    const mIdx=text.search(/^-{2,}\s*MISSING/im);
+    if(mIdx>=0){ body=text.slice(0,mIdx); const block=text.slice(mIdx).replace(/^-{2,}\s*MISSING-*\s*/i,""); missingInfo=block.split(/\n/).map(l=>l.replace(/^[-•*]\s*/,"").trim()).filter(l=>l && !/^none$/i.test(l)); }
+    const sections=[]; const re=/^##\s+(.*)$/gm; let m, marks=[];
+    while((m=re.exec(body))!==null){ marks.push({head:m[1],start:m.index,bodyStart:re.lastIndex}); }
+    marks.forEach((mk,i)=>{ const end=i+1<marks.length?marks[i+1].start:body.length; let heading=mk.head.trim(); const cf=/\[\[\s*CARRIED FORWARD\s*\]\]/i.test(heading); heading=heading.replace(/\[\[\s*CARRIED FORWARD\s*\]\]/ig,"").trim(); const secBody=body.slice(mk.bodyStart,end).trim(); if(heading) sections.push({heading,body:secBody,carriedForward:cf}); });
+    return sections.length?{sections,missingInfo}:null;
+  }
+
+  // ---------- Sheet rendering ----------
+  function sheetHTML(formName, p, sections, date){
+    let h='<div class="sheet"><div class="sheet-head"><div class="sheet-title">'+esc(formName)+'</div><div class="sheet-sub">'+esc(p.name)+' · '+esc((p.sub.split("·")[0]||"").trim())+' · '+fmtDate(date)+'</div></div>';
+    (sections||[]).forEach(s=>{ h+='<div class="sec'+(s.carriedForward?' cf':'')+'"><div class="sec-h"><span class="lbl">'+esc(s.heading)+'</span>'+(s.carriedForward?'<span class="cf-badge">Carried forward</span>':'')+'</div><div class="sec-body">'+withGaps(s.body)+'</div></div>'; });
+    return h+'</div>';
+  }
+
+  function renderResult(r){
+    const p=PATIENTS[r.patientId]||PATIENTS[currentPatient];
+    const missing=Array.isArray(r.missingInfo)?r.missingInfo.filter(Boolean):[];
+    let html='<div class="savebar"><button class="btn btn-save" id="saveBtn">Save to '+esc(firstName(p.name))+"'s file</button><span class=\"savehint\">"+(missing.length?esc(missing.length+" field(s) still flagged"):"Looks complete")+'</span></div>';
+    if(missing.length){
+      html+='<div class="needs"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Before finalizing, please provide</h3><ul>';
+      missing.forEach(x=> html+="<li>"+esc(x)+"</li>");
+      html+='</ul><div class="resolve"><textarea id="resolveBox" placeholder="Add the missing details (e.g. \'manual therapy 10 minutes, BP 128/78, HR 72\') — type or dictate."></textarea><div class="resolve-actions"><button class="btn btn-mic" id="resolveMic"><span class="pulse"></span><span id="resolveMicLabel">Dictate</span></button><button class="btn btn-amber" id="resolveBtn">Add details &amp; update note</button></div><p class="mic-help-sm" id="resolveMicHelp"></p></div></div>';
+    }
+    html+=sheetHTML(r.formName, p, r.sections, r.date);
+    output.innerHTML=html;
+
+    $("saveBtn").addEventListener("click", ()=>saveCurrent(r));
+    const rb=$("resolveBtn");
+    if(rb){ rb.addEventListener("click", ()=>{ const extra=($("resolveBox").value||"").trim(); if(!extra){ $("resolveBox").focus(); return; } generate(extra); }); }
+    const rmic=$("resolveMic");
+    if(rmic) setupDictation(rmic, $("resolveBox"), $("resolveMicHelp"), $("resolveMicLabel"));
+  }
+
+  function saveCurrent(r){
+    const p=PATIENTS[r.patientId]; if(!p) return;
+    p.files.push({ id:"f"+Date.now(), formName:r.formName, date:r.date||new Date(), sections:r.sections, missingInfo:r.missingInfo||[] });
+    updateFilesButton();
+    const b=$("saveBtn"); if(b){ b.textContent="Saved ✓"; b.classList.add("done"); b.disabled=true; }
+    toast("Saved to "+firstName(p.name)+"'s file");
+  }
+
+  // ---------- Modal + toast ----------
+  function openOverlay(title){ $("modalTitle").textContent=title; overlay.classList.add("open"); }
+  function closeOverlay(){ overlay.classList.remove("open"); modalBody.innerHTML=""; }
+  $("modalClose").addEventListener("click", closeOverlay);
+  overlay.addEventListener("click", e=>{ if(e.target===overlay) closeOverlay(); });
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape" && overlay.classList.contains("open")) closeOverlay(); });
+
+  let toastT;
+  function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("show"),2200); }
+
+  // ---------- New patient ----------
+  $("newPatientBtn").addEventListener("click", openNewPatient);
+  function openNewPatient(){
+    openOverlay("New patient");
+    modalBody.innerHTML=
+      '<div class="mfield"><label>Full name</label><input id="npName" placeholder="e.g. Alex Rivera" autocomplete="off"></div>'+
+      '<div class="mrow"><div class="mfield"><label>Date of birth</label><input id="npDob" placeholder="MM/DD/YYYY" autocomplete="off"></div><div class="mfield"><label>MRN</label><input id="npMrn" placeholder="e.g. 01023-557" autocomplete="off"></div></div>'+
+      '<div class="mfield"><label>Condition / clinical summary</label><textarea id="npCond" rows="3" placeholder="e.g. L ankle sprain, 2 weeks post-injury — type or dictate"></textarea><div class="resolve-actions"><button class="btn btn-mic" id="npMic"><span class="pulse"></span><span id="npMicLabel">Dictate</span></button></div><p class="mic-help-sm" id="npMicHelp"></p></div>'+
+      '<div class="modal-actions"><button class="btn btn-ghost" id="npCancel">Cancel</button><button class="btn btn-primary" style="width:auto;margin:0" id="npSave">Add patient</button></div>';
+    setupDictation($("npMic"), $("npCond"), $("npMicHelp"), $("npMicLabel"));
+    $("npName").focus();
+    $("npCancel").addEventListener("click", closeOverlay);
+    $("npSave").addEventListener("click", ()=>{
+      const name=($("npName").value||"").trim();
+      if(!name){ $("npName").focus(); $("npName").style.borderColor="#cf4631"; setTimeout(()=>$("npName").style.borderColor="",1200); return; }
+      const dob=($("npDob").value||"").trim(), mrn=($("npMrn").value||"").trim(), cond=($("npCond").value||"").trim();
+      const id="p"+Date.now();
+      const subParts=["MRN "+(mrn||"—"),"DOB "+(dob||"—")]; if(cond) subParts.push(cond); subParts.push("new patient");
+      PATIENTS[id]={ initials:initialsOf(name), name:name, sub:subParts.join(" · "), prior:null, sample:"", files:[] };
+      patientOrder.push(id); currentPatient=id; populatePatients(); onPatientChange(); closeOverlay();
+      toast(firstName(name)+" added");
+    });
+  }
+
+  // ---------- Patient files ----------
+  $("filesBtn").addEventListener("click", openFiles);
+  function openFiles(){ openOverlay("Patient file — "+PATIENTS[currentPatient].name); showFilesList(); }
+  function showFilesList(){
+    const files=PATIENTS[currentPatient].files;
+    if(!files.length){ modalBody.innerHTML='<div class="files-empty">No notes saved yet.<br>Generate a note and choose “Save to file”.</div>'; return; }
+    let h="";
+    for(let i=files.length-1;i>=0;i--){
+      const f=files[i];
+      const snip=((f.sections&&f.sections[0]?f.sections[0].body:"")||"").replace(/\[\[NEEDS:[^\]]*\]\]/g,"").replace(/\s+/g," ").trim().slice(0,170);
+      h+='<div class="fileitem" data-idx="'+i+'"><div class="ft">'+esc(f.formName)+'</div><div class="fd">'+esc(fmtDateTime(f.date))+'</div><div class="fsnip">'+esc(snip)+'</div></div>';
+    }
+    modalBody.innerHTML=h;
+    Array.prototype.forEach.call(modalBody.querySelectorAll(".fileitem"), el=>{ el.addEventListener("click", ()=>showFileView(parseInt(el.getAttribute("data-idx"),10))); });
+  }
+  function showFileView(idx){
+    const f=PATIENTS[currentPatient].files[idx]; if(!f) return;
+    let h='<button class="backbtn" id="fileBack">← All files</button>';
+    h+=sheetHTML(f.formName, PATIENTS[currentPatient], f.sections, f.date);
+    if(f.missingInfo && f.missingInfo.length){ h+='<p class="savehint" style="margin-top:10px">'+esc(f.missingInfo.length+" field(s) were flagged when this was saved.")+'</p>'; }
+    modalBody.innerHTML=h;
+    $("fileBack").addEventListener("click", showFilesList);
+  }
+
+  // ---------- Init ----------
+  populatePatients();
+  onPatientChange();
+  onFormChange();
+})();
+</script>
+</body>
+</html>

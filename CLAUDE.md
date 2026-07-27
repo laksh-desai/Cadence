@@ -1,0 +1,455 @@
+# Cadence — Claude Code Project Guide
+
+Cadence is a **local, offline, HIPAA-conscious desktop app** that turns a physical
+therapist's spoken summary of a session into a completed clinical note, filling the
+practice's existing templates automatically. It replaces a paid cloud service
+(ScopeHealth) for a single small PT practice. The therapist dictates a short summary
+after each session; Cadence transcribes it, fills the correct note template, flags
+missing required fields instead of inventing them, carries forward the right sections
+from prior visits, and writes each note uniquely (no boilerplate) so insurance
+submissions don't look templated.
+
+---
+
+## Non-negotiable constraints
+
+- **Everything runs locally. No protected health information (PHI) ever leaves the
+  machine — with exactly one sanctioned exception: Google Workspace.** The practice
+  has a signed Business Associate Agreement with Google under its Workspace business
+  account, and this is the **only** third party PHI may ever be sent to.
+  - This is a narrow, deliberate carve-out, not a general opening. No other
+    third-party service — cloud AI, analytics, storage, anything — may ever process
+    real patient data, BAA or not, unless explicitly re-authorized in this file.
+  - The BAA covers the practice's **Google Workspace business account** specifically.
+    Before sending PHI to any Google product/feature (e.g. Sheets), confirm it's
+    reached through that same business account — a personal/consumer Google account
+    is **not** covered and must never receive PHI.
+  - This exception covers data the practice explicitly chooses to sync to Google
+    (e.g. a patient/notes view in Google Sheets). It does not change anything about
+    local generation, local model inference, or local storage — those still never
+    leave the device.
+- The prototype (`cadence-prototype.html`, at the repo root) **no longer calls any
+  model.** It formerly POSTed to a cloud model (Anthropic) as a stand-in for the local
+  model, using FAKE data only; that live cloud call has been removed. It is now a
+  **static UX/note-quality reference** — its Generate button points the user to the
+  running local app (`http://127.0.0.1:8420`) instead of generating anything itself,
+  and it makes no outbound calls (only Google Fonts and that local link). The
+  production app (`app/`) is where real, fully-local generation happens. Never
+  reintroduce a cloud generation path here or wire real patient data to it — it is
+  unrelated to, and not covered by, the Google Workspace exception above.
+- **The clinician reviews and signs every generated note.** Cadence drafts; it never
+  finalizes clinical content on its own, and never fabricates clinical values.
+
+## Target hardware (both development and deployment)
+
+Lenovo ThinkPad, Intel Core i5-8365U (4 cores / 8 threads, 8th gen, **no dedicated
+GPU** — Intel UHD 620), 16 GB RAM, 238 GB SSD. **CPU-only inference.** This caps the
+local LLM at roughly 4B parameters. Expect ~1–2 minutes to generate a note; that is
+acceptable for this workflow. Do not assume a GPU or large VRAM.
+
+## Production stack
+
+- **Transcription (speech-to-text): implemented.** Local **MedASR**
+  (`google/medasr`, Conformer-CTC, ~105M params), run via `transformers` + CPU-only
+  `torch` in `app/transcribe/medasr_client.py`. Audio is captured and WAV-encoded
+  entirely client-side (`app/ui/static/app.js`) and POSTed to `/api/transcribe` —
+  no audio ever leaves the device. The model is gated on Hugging Face; see
+  `docs/medasr-setup.md` for the one-time account/token setup. Loaded once at
+  FastAPI startup; if setup isn't done yet, the rest of the app still works and
+  the mic buttons surface a clear, actionable error instead of crashing anything.
+- **Note generation (form-filling):** **MedGemma 4B (text-only)**, the medical-tuned
+  Gemma variant, run locally via Ollama, CPU-only, ~Q4 quantization (~3–4 GB RAM).
+- **Storage:** encrypted local SQLite (`app/storage/`) for patients and saved
+  notes — Fernet-encrypted at rest, decrypt-to-temp-on-start / re-encrypt-on-write.
+- **Roster sync:** optional bidirectional Google Sheets sync for the patient
+  roster (`app/integrations/`) — see the Google Workspace BAA exception above.
+- **Packaging:** a local FastAPI backend serving a browser UI (`app/ui/`), launched
+  via a desktop shortcut (`launcher.py`) that starts the server and opens the
+  browser. The model server (Ollama) and the FastAPI app both stay local-only.
+- MedGemma "isn't yet clinical grade" per Google; expect to validate and likely
+  fine-tune on the clinician's own reviewed notes. Every note is clinician-reviewed
+  regardless of model quality. The same caution applies to MedASR's transcription
+  output per its own usage terms — it's a draft input to note generation, never
+  the final record.
+
+---
+
+## The note templates (3 built-in)
+
+The practice trimmed the built-in set to **three** templates (the rest were removed at the
+clinician's request and moved to `templates/_archive/` — recoverable, not loaded). Users add back
+any other note types themselves via the **Templates** tab (create / duplicate / edit — see
+Conventions). All are filled from the same dictation. Completeness modes:
+
+**REQUIRE mode** — all applicable fields required; flag genuinely-missing values:
+- **Initial Evaluation** (`initial`, `templates/initial.md`) — full-intake baseline, carry-forward
+  OFF. **Field-per-section** outline (one `## ` section per field) keeping all rule-15 completeness
+  sections (Medications, Allergies, Social History / Living Environment, clinical complexity,
+  discharge/transition, participation, etc.). No codes block (rule 12). Surfaces the
+  evaluation-complexity CPT flag.
+- **Initial Evaluation — Updated Version** (`initial_updated`, `templates/initial_updated.md`) —
+  the clinician's own 4-**block** outline verbatim (═══ dividers; includes a CPT/ICD codes block,
+  handled by the deterministic guards); carry-forward OFF; surfaces the eval-complexity flag. Kept
+  alongside `initial` deliberately (the clinician wanted both; names unchanged so they're
+  distinguishable). This is the ONE remaining block-format template — see the tradeoff note below.
+- **Follow-Up Visit** (`followup`, `templates/followup.md`) — interim skilled visit, field-per-section,
+  **carry-forward ON**. Carry section labels (`Precautions`, `Functional Status`, `Short-Term Goals`,
+  `Long-Term Goals`) + their `[carry forward]` markers are preserved so `CARRY_SECTION_LABELS` /
+  `carry_forward.CARRY_FIELD_HEADING_MAP` match.
+
+**OMIT mode** — none built-in anymore (the omit-mode note types — SOAP, MSK, After-Visit Letter,
+Referral, SMART, Issues — were the removed ones). Omit mode still exists and is selectable when
+creating a custom template.
+
+**Carry-forward forms:** only **Follow-Up Visit**. The Initial Evaluations never carry forward.
+Custom templates are always non-carry (v1).
+
+### Block-format vs field-per-section (resolved — the reason `initial`/`followup` are field-per-section)
+
+Confirmed on real generations: block-outline templates (═══ dividers + `Field:` labels) do NOT map
+cleanly to the app's `## <section>`-per-field pipeline. The 4B model is **nondeterministic** about
+them — sometimes a `## ` per BLOCK, sometimes it folds the WHOLE note under one `## <TITLE>` heading
+with the fields as `Field: value` body lines. That breaks per-field features:
+- **CPT chips:** `cpt.suggest_codes` matches a treatment's own section HEADING (deliberately — rule
+  12; matching prose would misfire), so block output (treatment as a body line) gets no `[[CPT: …]]`.
+  Do NOT "fix" by body-scanning for interventions — that reintroduces rule 12's misfire risk.
+- **Per-section review/edit** collapses to one/few big sections.
+So the clinician chose: **generate field-per-section, then group into the 4 SOAP fields as a
+copy transform.** `initial` and `followup` are now field-per-section (CPT chips + per-field review +
+carry-forward all work); `initial_updated` stays block by explicit request (an eval, non-carry, so
+the CPT-per-treatment gap barely applies). The **"Copy for Office Ally"** control (`app.js`
+`soapGroups` / `officeAllyHTML` / `wireOfficeAlly`, keyword classifier `SOAP_RULES`) buckets any
+note's sections into Subjective/Objective/Assessment/Plan for one-click copy into each Office Ally
+field. **Belt-and-suspenders:** `carry_forward.extract_snapshot_fields` still keeps its
+`_find_labeled_value` body-scan fallback (heading match first, then scan bodies for `Functional
+Status: …` lines), so carry-forward survives even if `initial_updated`-style block output or a model
+regression ever folds a note (verified 4/4 on a real single-section Follow-Up). `test_carry_extract.py`
+locks both paths.
+
+Reference template structures live in `templates/`; archived built-ins in `templates/_archive/`.
+
+---
+
+## Generation rules (hard-won — keep and extend these)
+
+These were derived by testing the prototype and correcting real failures. Apply them in
+every note-generation prompt:
+
+1. **Never invent clinical values** — minutes, vitals, pain levels, measurements,
+   dates. If a required value is absent, flag it for the clinician; never guess.
+2. **No inferring demographics** — never compute the patient's age from a date of
+   birth, and never infer unstated demographics. Use only what is explicitly stated.
+3. **Carry-forward means reconcile, not copy.** When today's session changes a carried
+   value (ambulation distance, assistive device, assist level, stairs attempted,
+   overall functional status), update that section to reflect today. Carried sections
+   must never contradict today's treatment sections.
+4. **Internal consistency** — today's findings take precedence; no two sections may
+   contradict each other. Check this before finishing.
+5. **Goals** — mark a goal MET only if today's data shows it achieved. When all
+   short-term goals are met, the Plan must justify continued skilled care by reference
+   to the remaining unmet long-term goals.
+6. **Require-mode discipline** — only flag genuinely-absent values in sections that
+   apply. Never flag treatments that weren't performed, never invent requirements (no
+   billing-audit granularity, no fields borrowed from other note types), never put
+   discrepancies or "consider documenting" suggestions in the missing list. If all
+   required fields for applicable sections are present, flag nothing.
+7. **Omit-mode discipline** — include only what was said; omit unmentioned sections;
+   never infer.
+8. **Charitable language handling / spoken-transcript cleanup** — the dictation is a
+   raw MedASR speech-to-text transcript of the therapist talking, who is also a fluent
+   but non-native English speaker. Expect spoken filler and hesitation words (um, uh,
+   like, so, you know), false starts, repeated words, and mid-sentence self-corrections.
+   Drop every filler and disfluency, keep only the corrected value on a self-correction,
+   interpret imperfect grammar charitably, and render clean professional clinical
+   English without changing the facts. Unambiguous vocalized pauses (um, uh, hmm, and
+   the like) are ALSO stripped deterministically before generation in
+   `app/generate/prompt.py:clean_dictation` — a model-independent backstop applied at
+   the single dictation chokepoint (so it also covers guided-mode assembled text).
+   Tokens that collide with real clinical usage (`mm` = millimeters, `er`/`ER` =
+   external rotation) are deliberately excluded from the strip and left to the prompt.
+9. **Unique, non-boilerplate** wording every session, built from the specific details
+   stated. Two sessions must not read the same.
+10. **"Minutes: __" belongs in the section body, never the heading.** Headings must
+    stay clean section/CPT names (e.g. "## Therapeutic Exercise"); a heading like
+    "## Minutes: 20 Therapeutic Exercise" is wrong. State this explicitly in the
+    output-format instructions — local models default to folding it into the heading
+    if not told otherwise.
+11. **MedGemma 4B reliably over-tags `[[CARRIED FORWARD]]` and invents empty
+    "not performed" treatment sections, regardless of how explicitly the prompt
+    forbids it** (confirmed across repeated runs with progressively more directive
+    wording, including naming the exact allowed sections). This is a model-capability
+    limit, not a prompt-wording bug — per the "isn't yet clinical grade" note above,
+    don't keep burning effort on prompt rewording for this specific failure. Instead
+    it is corrected deterministically in code, after parsing, in
+    `app/generate/postprocess.py`: any section whose body opens with "Minutes: 0" is
+    dropped (treated as not performed), and `[[CARRIED FORWARD]]` is stripped from any
+    section whose heading isn't one of the form's real carry-forward labels
+    (`app/generate/forms.py:CARRY_SECTION_LABELS`, matched bidirectionally since some
+    forms' specs invite a collapsed heading like "Goals" instead of separate
+    Short-Term/Long-Term headings). Keep this enforcement in place even if prompt
+    wording improves later — it's a cheap, reliable backstop either way.
+12. **Never let the model author a CPT or ICD-10 code.** Observed it confidently
+    fabricate both for an MSK note where the dictation never mentioned any code or
+    diagnosis classification — and the ICD-10 code it picked (M25.51, "pain in joint,
+    pelvic region and thigh") didn't even match the stated condition (ankle sprain).
+    Code assignment is a billing/coding judgment call for the clinician, never an
+    inference target. Enforced deterministically in
+    `app/generate/postprocess.py:flag_code_sections` — any section whose heading
+    contains "CPT" or "ICD" always gets replaced with a `[[NEEDS: ...]]` marker,
+    regardless of what the model wrote there. **CPT *suggestion* (added later, still
+    honouring this rule):** the model still never authors a code, but outpatient PT CPT
+    codes are a small closed set that maps 1:1 from the intervention the therapist
+    explicitly named — the note's own treatment-section headings — so a DETERMINISTIC
+    table (`app/generate/cpt.py:suggest_codes`, wired into `/api/generate` after the
+    verification layer) attaches a confirmable `[[CPT: <code> <label> — confirm]]` marker
+    to each treatment section. It also STRIPS any code the model wrote (the
+    followup/progress/soappt specs literally ask for "cpt", so the 4B model sometimes
+    emits one — and sometimes the wrong one; confirmed on a real run where it put "97110"
+    in the heading), substituting the table's. Judgment-heavy cases are deliberately NOT
+    auto-assigned: evaluation complexity (97161/2/3) is surfaced as a review flag for the
+    clinician to pick, and units / the 8-minute rule / modifiers are left to the biller
+    (payer-specific, high liability). The clinician confirms/edits/removes every code in
+    the editable review step before signing — Cadence drafts codes, the clinician bills.
+    ICD-10 stays banned entirely (open-ended, no safe deterministic map). The `[[CPT: ...]]`
+    marker renders as a distinct blue "code" chip (vs the amber gap chip) in `app.js`.
+13. **Carry-forward reconciliation ("update, don't copy") is not reliable for every
+    section, even when the prior snapshot and today's data are both available in the
+    prompt.** Confirmed case: a real second-visit test (used_prior: true, snapshot
+    correctly populated) where Gait Training correctly reflected today's updated
+    values (300ft, no device, independent stairs) but Functional Status — the
+    section this exact behavior is named for — punted with
+    `[[NEEDS: ambulation distance, assistive device, stair climbing]]` instead of
+    synthesizing the update, despite the same information being available both in
+    the carried snapshot and in today's dictation. This is a *safe* failure (no
+    fabrication, no stale/contradictory data shown, and the gap marker still renders
+    visibly via the UI's amber-highlight styling even when it doesn't also make it
+    into the structured missing-list array) but it is a real shortfall against the
+    feature's core value proposition. Don't assume reconciliation works reliably
+    just because it worked in an earlier test — it's inconsistent run to run.
+14. **Residual hallucination risk beyond what's been deterministically fixed**: in
+    the same MSK test, the model also invented a specific assistive device ("ambulates
+    with a cane") and specific pain ratings ("4/10 at rest, 5/10 with movement") that
+    were never stated, with no prior-note context to have leaked from (MSK doesn't
+    carry forward). No general-purpose code fix catches arbitrary invented prose the
+    way the structural fixes above catch tag/heading/code patterns — this is exactly
+    why clinician review of every note is a non-negotiable constraint, not a
+    nice-to-have. Don't treat the postprocess fixes in this file as having solved
+    fabrication risk generally; they've only closed the specific, structural failure
+    modes observed so far.
+15. **Complete extraction — never silently drop a stated fact (require mode).** Every
+    clinical fact the therapist states must appear somewhere in the note: every
+    medication with its dose, every diagnosis/PMH item, prior therapy, living
+    environment, code status, every goal, every measurement, every plan value.
+    Dropping a stated fact is as serious as inventing one. A dictated 11-medication
+    list and most of a PMH were dropped — and the root cause was often that the
+    template had **nowhere to put the content**: the Initial Evaluation template had
+    no Medications, Allergies, Social History/Living Environment, clinical-complexity,
+    discharge/transition, or participation fields, so no prompt rule could have saved
+    them. Fix the template first (audit its sections against a real note), then the
+    prompt. Enforced by the expanded `templates/initial.md` sections + the completeness
+    paragraph in `MODE_RULE_REQUIRE` (`app/generate/rules.py`). When a required field
+    genuinely wasn't stated, flag it — don't invent it.
+16. **Output/context ceiling caused silent truncation and a thin transcript tail.**
+    `num_ctx` was 4096 with no `num_predict`; a long (~20-minute) dictation plus the
+    full template and rules overflowed it, so Ollama dropped the tail of the transcript
+    AND cut the note off mid-sentence (observed ending: the dangling fragment
+    "Certification period"). Raised to `num_ctx=8192` + explicit `num_predict=3072` in
+    `app/generate/ollama_client.py`. This is not a prompt problem — no rule wording
+    fixes a dropped context window. For a genuinely huge dictation that still overflows
+    8192, the right fix is chunked/two-pass generation (fill the template in labeled
+    passes), NOT an ever-larger single context — a 4B model's attention over a very
+    long context degrades, giving the tail the least attention. **Now implemented** in
+    `app/generate/chunked.py` (`fit_dictation`), wired into `/api/generate` before
+    `build_prompt`: if the dictation would overflow the budget (`num_ctx - num_predict -
+    prompt-scaffold`), it is split at sentence boundaries and each chunk is rewritten by
+    the same local model into clean, fact-preserving prose, then the concatenation feeds
+    the normal pipeline. **Conservative by construction:** a normal-length dictation is
+    returned unchanged with zero extra model calls (byte-identical normal path, verified
+    by a real run reporting `condensed=False`), so only a genuinely huge dictation takes
+    the new route — trading the old SILENT truncation for a condensed pass plus a visible
+    "verify completeness" flag appended to the missing-info list. Caveats (per rules
+    14/15): the condense pass is itself a 4B call and could drop a fact, and verification
+    still anchors against the RAW dictation so a condense-introduced value with no basis
+    is flagged. Not yet validated on a genuinely huge real dictation — the deterministic
+    scaffolding + orchestration are unit-tested (`tests/test_chunked.py`), but confirm the
+    end-to-end condense behaviour on a real 30-min+ transcript before relying on it.
+17. **Spoken-artifact cleanup beyond fillers (prompt-level; clinician review still
+    required).** The transcript also carries dictated *checklist* answers ("Patient
+    worries about falling, yes"), garbled ASR passages, and self-contradictions that
+    must not pass through raw. The prompt now instructs: convert checklist answers to
+    declarative sentences (never emit "..., yes"/"..., no" or a question+answer);
+    repair garbled ASR into clear clinical English, marking truly-unrecoverable text
+    `[[NEEDS: unclear dictation "..." — clinician to confirm]]`; and on a
+    self-contradiction or two-values-for-one-field ("no known allergies except sulfa";
+    two visit frequencies) record the standard value and append `[[NEEDS: dictation
+    also stated "..." — clinician to confirm]]` rather than reproducing both. These are
+    prompt-only mitigations — there is no safe deterministic rewrite for arbitrary
+    spoken prose — so, like rule 14, they lean on clinician review, not a guarantee.
+    All such flags reuse the `[[NEEDS: ...]]` marker because that is the only form the
+    UI renders in amber (`app/ui/static/app.js`); a bare `⚠` would show as plain text.
+    **One narrow, bounded piece of this IS backed by code:** the checklist *affirmation*
+    "..., yes" is the only structurally-detectable, meaning-safe half, and the 4B model
+    echoes it verbatim regardless of the prompt (observed six times in one real Fall Risk
+    section, duplicated into the Objective Summary). A statement-final ", yes" is
+    therefore stripped deterministically in
+    `app/generate/postprocess.py:strip_checklist_affirmations` (bounded to end-of-statement
+    position so it never touches a mid-clause "..., yes, and ..."). The *negation* half
+    "..., no" is deliberately left prompt-only — dropping it would silently invert
+    clinical meaning ("unsteady, no" ≠ "unsteady") — and so remains a best-effort
+    mitigation plus clinician review, exactly like garbled-ASR repair and conflict
+    flagging above.
+18. **Map values by meaning, standardize notation, don't duplicate across sections.**
+    (a) Map plan-of-treatment values by content, not the spoken label: Frequency =
+    visits/week, Duration = total weeks, Intensity = minutes/session — so "duration
+    sixty minutes" is Intensity, not Duration. (b) Write MMT strength grades in standard
+    notation ("3+/5", ranges "3+/5 to 4-/5"), not spelled out — and, because the model
+    routinely echoes the spoken long form, this one is ALSO enforced deterministically
+    in `app/generate/postprocess.py:normalize_strength_grades` (bounded to a denominator
+    of five so it can never touch a pain rating like "4 out of 10"). (c) Each section is
+    written in its own words at its own level of detail (Objective Summary = brief
+    overview; the detailed sections carry the full findings) — never paste identical
+    TUG/MMT/ROM sentences into several sections (verbatim duplicates are now also flagged
+    deterministically — rule 20(e)). (d) Every section ends on a complete
+    sentence with its full stated value; a stated label ("Certification period") is
+    always followed by its value. All prompt-level, in `WRITING_RULES_LEAD`.
+19. **Completeness must not become confabulation — the model fills empty exam sections
+    with invented normals.** Confirmed on a real Initial Eval generation run (not a unit
+    test) after the rule-15 template expansion: for sections the dictation never
+    addressed, the model wrote unstated findings — "ROM limited... decreased flexion and
+    extension", "Skin intact. Neurological exam unremarkable. Cognitively intact.",
+    "O2 at rest and with activity normal", and "Coordination intact. Sensation intact.
+    No edema noted." The forceful rule-15 completeness wording ("dropping a stated fact
+    is as serious as inventing one") was over-read by the 4B model as "every section must
+    be filled." Countered in the prompt (`MODE_RULE_REQUIRE`) by stating explicitly that
+    completeness means every STATED fact appears, NOT that every section is filled, and
+    that asserting an unstated normal/negative exam finding ("intact", "unremarkable",
+    "within normal limits", "no edema", "O2 normal") is fabrication exactly as serious as
+    dropping a stated fact — such a section must be omitted or flagged
+    `[[NEEDS: not documented]]`, never filled with a fabricated normal. **UPDATE (see rule
+    20):** the original "no safe structural signal" claim here was too strong. You can't tell a
+    stated-normal from an invented-normal by the *assertion text* (a real "sensation intact" is
+    indistinguishable from an invented one) — but you don't need to: you check whether the
+    dictation mentions that body SYSTEM at all. `traceability.flag_unsupported_normals` now
+    deterministically flags any normal exam finding whose system the dictation never mentions,
+    which catches exactly this empty-exam-section case. It flags (never deletes) and can still
+    miss a normal for a system that WAS mentioned but with a different finding, so per rule 14
+    clinician review remains the backstop. Note
+    that on the same run the other prompt-only mitigations (rule 17 checklist "..., yes"
+    cleanup; rule 18(c) no-cross-section-duplication; rule 17 dictated-conflict flagging)
+    each failed at least once, so treat every prompt-only rule on this model as
+    best-effort and re-verify with a REAL generation, never unit tests alone.
+    **Directly observed across three real runs of the identical dictation with no prompt
+    change between them:** the empty-exam-section behavior OSCILLATED — one run correctly
+    wrote "Not documented"/"not detailed in the dictation" for the untouched sections, the
+    next regressed to fabricated "intact"/"no edema"/"O2 normal"; the checklist "..., yes"
+    artifact appeared once in one run and six times (duplicated across two sections) in the
+    next; and the discharge-plan restatement and "community mobility not tested" line were
+    present in two runs and dropped in a third. This run-to-run nondeterminism (temp 0.3)
+    IS the takeaway: a prompt fix lowers the *frequency* of a failure class, never its
+    *risk*. The corollary that earned its own proof this session: the deterministic
+    backstops (num_ctx anti-truncation, MMT shorthand, checklist "..., yes" strip,
+    CPT/ICD flagging, carry-tag/zero-minute enforcement) held on 100% of runs, while every
+    prompt-only rule fluctuated — so when a failure class is a detectable, meaning-safe
+    pattern, move it into `postprocess.py`; reserve prompting for the classes that have no
+    safe mechanical rewrite (arbitrary invented prose, cross-section paraphrase, meaning
+    inversion), and lean on clinician review there.
+20. **Local verification layer — deterministic hallucination flags in the note**
+    (`app/generate/traceability.py`, run in `/api/generate` after postprocess via
+    `add_verification_flags`). Appends amber `[[NEEDS: ...]]` markers for two model-independent
+    fabrication classes so the clinician's eye is drawn to them before signing; works identically
+    on any model — five fabrication/quality classes:
+    (a) **Unanchored clinical values** (`flag_unanchored_in_sections`) — a value in the NOTE
+    (pain X/10, MMT X/5, minutes, ROM degrees, ambulation distance) that does not appear in the
+    dictation → probable fabrication. `normalize_for_matching` bridges spoken↔written forms
+    ("four out of ten"↔"4/10", "one hundred twenty degrees"↔"120 degrees", and MMT ranges "three
+    plus to four minus out of five"↔"3+/5 to 4-/5" — the spoken denominator distributes to BOTH
+    grades; getting that wrong false-flagged a real dictated range on a live run, now a locked
+    regression test).
+    (b) **Unsupported normals** (`flag_unsupported_normals`) — a NORMAL exam finding ("skin
+    intact", "sensation intact", "no edema", "O2 normal") about a body system the dictation never
+    mentions → the invented-normal class of rule 19. Keyword-anchored per system with broad stems
+    so a differently-phrased real normal ("no swelling" for edema, "alert and oriented" for
+    cognition) still anchors and isn't false-flagged. Matches synonyms too ("integumentary" for
+    skin — a real-run miss now covered).
+    (c) **Unsupported vitals** (`flag_unsupported_vitals`) — a BP/HR/O2 value in the note whose
+    vital TYPE the dictation never mentions. Type-mention, not value-matching, because spoken idioms
+    ("one thirty over eighty") don't normalize to "130/80"; HR/O2 require an actual value so an
+    honest "HR: Not stated" is never flagged (a real-run regression), and the BP pattern rejects
+    "12/08/2026" so a note date isn't misread as a blood pressure.
+    (d) **Invented assistive devices** (`flag_unsupported_devices`) — a cane/walker/crutches/
+    wheelchair/rollator named in the note whose head noun the dictation never mentions (rule 14's
+    "ambulates with a cane"); negated mentions ("without a cane") are skipped.
+    (e) **Cross-section paste-duplication** (`flag_cross_section_duplication`) — the same substantial
+    sentence (>= 8 words) repeated near-verbatim across 2+ sections (rule 18c); only exact long
+    sentences, since brief summary overlap is by design. Style/non-boilerplate flag, not a fabrication.
+    (f) **Fabricated pain-slot scores** (`flag_unanchored_pain_fields`) — a rigid "Worst/Best/Current:
+    /10" pain template (the block `initial_updated`) pressures the 4B model to FILL the slots even
+    when no score was dictated (observed: a real note invented "Worst 10 / Best 10 / Current 10" for a
+    dictation that named pain locations but no numbers). Catches the bare field form ("Worst: 10") that
+    (a) misses because it only sees written "N/10"; flags a Worst/Best/Current value whose "N/10"
+    equivalent isn't in the dictation.
+    All FLAG, never delete — a genuinely dictated value/normal/device is indistinguishable from an
+    invented one in text (rules 14/19), so these are hedged "verify" aids leaning on the
+    non-negotiable clinician review, not rewrites. Confirmed on real generations: one flagged
+    invented skin/neuro/O2/sensation/coordination normals (leaving dictated cognition and a
+    "edema not documented" alone); a second flagged an invented cane/walker goal and a fabricated
+    40-minute session intensity, and surfaced the two edge cases fixed above. All flags reuse
+    `[[NEEDS: ...]]` because that is the only marker the UI renders in amber.
+
+## Standing workflow instruction
+
+When a generated note is wrong, **fix the underlying prompt/logic so that entire class
+of mistake is prevented going forward** — do not just patch the single note. Add the new
+correction to the rules above so it persists.
+
+## Conventions
+
+- The prototype is the behavioral reference for UX and note quality; preserve its
+  proven behavior when rebuilding into the real app.
+- Keep per-form generation prompts fixed and tested, not ad hoc. **Templates are now
+  runtime-editable** (a "Templates" tab in the UI + `/api/forms/{id}/template` endpoints):
+  a clinician can view every form's outline large/readable beside the dictation box, edit
+  a built-in's outline (stored as a spec-only *override* in `templates/overrides/`, leaving
+  the shipped `templates/*.md` pristine and one-click resettable), and create/duplicate/
+  delete their own **custom templates** (full files in `templates/custom/`). The template's
+  outline body *is* the generation spec (`FormSpec.spec` → `build_prompt`), so an edit changes
+  what the model is told to produce — clinician review still applies. The store lives in
+  `app/generate/forms.py` (`create_custom_template`/`duplicate_template`/`edit_template`/
+  `reset_template`/`delete_custom_template`/`reload_forms`); `FORM_ORDER` stays the fixed
+  BUILT-IN set, custom templates append after it via `ordered_form_ids()`. Custom templates
+  are **always non-carry** in v1 (carry-forward needs per-form `CARRY_SECTION_LABELS` +
+  `carry_forward.CARRY_FIELD_HEADING_MAP` wiring only the built-ins have). Guided `steps`
+  are still authored only in the built-in frontmatter (a duplicate copies them; created-from-
+  scratch templates have none and simply get no guided mode).
+- The prototype's demo cloud path has been removed (it no longer calls any model). Keep
+  it that way: the prototype must never make outbound model calls or touch real data.
+- **Input modalities (reference: Twofold AI).** Twofold offers four ways to get a session
+  into the tool — (1) type rough notes directly, (2) upload a recording, (3) dictate a session
+  summary, (4) live in-session capture — and it's a good UX template for Cadence's input surface.
+  Each maps to a LOCAL implementation (Cadence never sends audio or text off-device); all four now
+  exist. (1) free-text dictation box; (2) **audio-file upload** ("Upload audio" → `/api/transcribe`,
+  `setupAudioUpload`); (3) mic → MedASR (`setupDictation`); (4) **live in-session capture**
+  (`setupLiveCapture` in `app.js`) — continuous, hands-off recording of the whole visit,
+  auto-chunked into ~3-min segments each transcribed locally by a **single serialized MedASR
+  worker** (one pass at a time, to respect the CPU-only budget), accumulating into the dictation
+  box; recording never blocks on transcription (segments queue and drain in the background). The
+  borrowed idea is the input *flexibility*, never the cloud architecture — every mode stays fully
+  on-device.
+  **Live-capture v1 limits (documented, not bugs):** no **speaker diarization** — the transcript
+  mixes clinician + patient, so it's a rougher input to generation than a dictated summary (the
+  clinician reviews/edits the transcript before Generate, and the rule-19/20 verification flags
+  still run); CPU transcription can lag a long session (bounded only by queue memory); and a
+  recorded visit needs the patient's **consent** (surfaced in the UI copy). Speaker attribution and
+  chunked *generation* for very long transcripts (rule 16) remain future work.
+- **Guided dictation** (the Home dictate card's "Guided" mode) walks the clinician
+  through the selected form one section at a time, each with a concrete example,
+  because a static "what to mention" list couldn't tell them which of a dense form's
+  ~14 sections *this* dictation was missing. The per-section content lives in each
+  template's `steps:` frontmatter (`label` + `example` + optional flag), parsed into
+  `FormSpec.steps` (`app/generate/forms.py`). **Invariant: `steps` are a dictation aid
+  only and must NEVER enter the generation prompt** — `build_prompt` uses `form.spec`
+  exclusively; `tests/test_forms_guide.py` locks this in. Guided mode is a pure input
+  helper: it assembles the answered sections into the normal free-text dictation and
+  hands off to the same `/api/generate` pipeline (the model still structures the note
+  and the after-generate gap-flagging still catches skips) — it does not map fields
+  directly or change model behavior. Free dictation remains the default mode.

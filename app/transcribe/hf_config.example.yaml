@@ -1,0 +1,5 @@
+# Copy this file to hf_config.yaml (same directory) and paste your token.
+# hf_config.yaml is gitignored -- it's a personal credential, never committed.
+# See docs/medasr-setup.md for the full one-time setup walkthrough.
+
+hf_token: "PASTE_YOUR_HUGGING_FACE_TOKEN_HERE"

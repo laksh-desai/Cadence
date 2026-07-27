@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock EHR form — Cadence extension test</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 20px; } p.lede { color: #555; font-size: 14px; }
+  fieldset { border: 1px solid #ccc; border-radius: 8px; margin: 14px 0; padding: 12px 14px; }
+  legend { font-weight: 600; padding: 0 6px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: #444; margin: 10px 0 4px; }
+  input, textarea, select { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px;
+    border: 1px solid #bbb; border-radius: 6px; }
+  textarea { min-height: 70px; resize: vertical; }
+  .editable { min-height: 60px; border: 1px solid #bbb; border-radius: 6px; padding: 8px 10px; background: #fff; }
+  .row { display: flex; gap: 12px; } .row > div { flex: 1; }
+  .hint { color: #777; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>Mock EHR form</h1>
+  <p class="lede">A stand-in for Office Ally so you can validate the Cadence extension's click-to-pick
+  mapping and fill <strong>without</strong> touching a real EHR. Serve this over http
+  (<code>python -m http.server</code>) or enable "Allow access to file URLs" for the extension, open
+  it, click the extension icon, connect to Cadence, and map/fill. Fields deliberately use a mix of
+  <code>id</code>, <code>name</code>, and no-attribute so the selector fallback gets exercised.</p>
+
+  <fieldset>
+    <legend>Demographics</legend>
+    <div class="row">
+      <div><label>Patient name</label><input id="patientName" type="text"></div>
+      <div><label>Date of birth</label><input name="dob" type="text"></div>
+    </div>
+    <label>MRN</label><input id="mrn" type="text">
+    <label>Visit type (select)</label>
+    <select id="visitType">
+      <option value="">—</option>
+      <option>Initial Evaluation</option>
+      <option>Follow-Up Visit</option>
+      <option>Progress Report</option>
+    </select>
+  </fieldset>
+
+  <fieldset>
+    <legend>Note (SOAP)</legend>
+    <label>Subjective</label><textarea id="subjective"></textarea>
+    <label>Objective</label><textarea name="objective"></textarea>
+    <label>Assessment</label><textarea id="assessment"></textarea>
+    <label>Plan (contenteditable)</label><div class="editable" contenteditable="true" id="planEditable"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Discrete fields (no id/name — tests path selectors)</legend>
+    <label>Functional status</label><textarea></textarea>
+    <label>Gait training</label><textarea></textarea>
+  </fieldset>
+
+  <p class="hint">Nothing here is submitted anywhere — it's a static local page.</p>
+</body>
+</html>
