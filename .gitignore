@@ -11,6 +11,12 @@ app/storage/.runtime/
 *.sqlite
 *.sqlite3
 
+# Eval harness output (generated notes from the synthetic corpus — regenerable, noisy diffs).
+evals/runs/
+# Any corpus file holding REAL dictation rather than synthetic records. The synthetic
+# corpus in evals/data/*.jsonl IS committed so eval results are reproducible.
+evals/data/*.local.jsonl
+
 # Third-party credentials / secrets.
 app/integrations/.sheets_credentials.json
 app/integrations/sheets_config.yaml

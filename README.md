@@ -61,6 +61,14 @@ device, with one narrow sanctioned exception (Google Workspace, under a signed B
   fields only, never clinical note content.
 - **Launcher** — `launcher.py`, a double-click entry point that starts the local server
   and opens the browser.
+- **Corpus eval harness** *(synthetic data only)* — `evals/` + `scripts/eval_corpus.py`
+  generalizes `scripts/validate_quality.py` from one hardcoded dictation to a whole corpus
+  of transcripts, scoring each generated note in four tiers: CPT precision/recall against
+  gold labels, pipeline invariants (no surviving model-authored code, no illegal carry tags,
+  no mid-sentence truncation, content in bodies not headings), stated-value capture
+  (transcript → note, the mirror of the fabrication check), and a flag-triage report for
+  clinician adjudication. Drives the real pipeline directly, never `/api/generate`, so a
+  sweep can't write synthetic patients into the encrypted store.
 
 **Input modalities (reference: Twofold AI).** Four ways to get a session in, all fully on-device:
 type into the dictation box, dictate a summary (mic → local MedASR), **upload an audio file** (the
