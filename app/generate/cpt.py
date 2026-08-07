@@ -52,6 +52,28 @@ _CPT_RULES: list[tuple[str, str, str]] = [
     ("group therap", "97150", "Group Therapeutic Procedure"),
 ]
 
+# Timed ("constant attendance") outpatient-PT codes: billed in 15-minute units, so the Medicare
+# 8-minute rule applies to them and ONLY to them. Keyed by CODE rather than by a _CPT_RULES row
+# because several rows map to the same code (97010 x3, 97014 x2, 97535 x2) — "timed" is a property
+# of the code, not of the heading->code mapping, and a per-row flag could disagree with itself.
+#
+# Everything else in the table is SERVICE-BASED (one unit per session regardless of duration) and
+# must be EXCLUDED from the timed-minutes total: 97010 hot/cold, 97012 mechanical traction, 97014
+# unattended e-stim, 97016 vasopneumatic, 97018 paraffin, 97022 whirlpool, 97024 diathermy, and
+# 97150 group therapy. The 97161/97162/97163 evaluations are likewise one unit each and never enter
+# the total (they aren't in _CPT_RULES at all — see _EVAL_FORMS below).
+TIMED_CODES: frozenset[str] = frozenset({
+    "97032", "97033", "97034", "97035", "97036",
+    "97110", "97112", "97113", "97116", "97124", "97140",
+    "97530", "97535", "97542", "97760",
+})
+
+
+def is_timed(code: str) -> bool:
+    """True if `code` is billed in 15-minute units (so the 8-minute rule applies to its minutes)."""
+    return code in TIMED_CODES
+
+
 # Evaluation forms bill a per-visit evaluation CPT whose complexity level is a clinician judgment
 # (not a treatment-section lookup), so it is surfaced for selection rather than auto-assigned.
 _EVAL_FORMS = {"initial", "initial_updated"}

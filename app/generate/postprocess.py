@@ -82,14 +82,25 @@ def _is_carry_forward_label(form_id: str, heading: str) -> bool:
     return any(label.lower() in heading_lower or heading_lower in label.lower() for label in labels)
 
 
+# The model also writes the literal "[[CARRIED FORWARD]]" tag INTO the body text, not just onto the
+# heading line the parser watches — so a non-carry form ends up with a stray tag rendered in every
+# section (observed on a real non-carry Initial Evaluation run, #3). Match the tag anywhere.
+_CARRY_TAG_RE = re.compile(r"\s*\[\[\s*CARRIED\s+FORWARD\s*\]\]", re.IGNORECASE)
+
+
 def enforce_carry_tags(form_id: str, sections: list[dict]) -> list[dict]:
-    """Strip a [[CARRIED FORWARD]] flag from any section whose heading isn't one of
-    this form's actual carry-forward labels (app.generate.forms.CARRY_SECTION_LABELS).
+    """Keep [[CARRIED FORWARD]] only on sections that are actually carry-forward for this form
+    (app.generate.forms.CARRY_SECTION_LABELS), handling BOTH the parsed heading flag and a literal
+    tag the model dropped into the body. For an allowed section either signal means carried; for any
+    other section the flag is cleared AND the literal body tag is stripped so it never renders.
     """
     out = []
     for s in sections:
         allowed = _is_carry_forward_label(form_id, s["heading"])
-        out.append({**s, "carried_forward": bool(s["carried_forward"]) and allowed})
+        body_has_tag = _CARRY_TAG_RE.search(s["body"]) is not None
+        carried = allowed and (bool(s["carried_forward"]) or body_has_tag)
+        body = _CARRY_TAG_RE.sub("", s["body"]).rstrip()  # the flag drives rendering, never a body tag
+        out.append({**s, "carried_forward": carried, "body": body})
     return out
 
 
@@ -167,10 +178,59 @@ def strip_carry_instruction_headings(sections: list[dict]) -> list[dict]:
     return out
 
 
+_ECHO_MARKER_RE = re.compile(r"\[\[[^\]]*\]\]")
+
+
+def _norm_echo(text: str) -> str:
+    t = _ECHO_MARKER_RE.sub("", text)
+    t = re.sub(r"[^\w\s]", " ", t.lower())
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _spec_instruction_phrases(spec: str) -> list[str]:
+    """The guidance text after the 'Field — ...' / 'Field: ...' separator on each spec line — meta
+    instructions like 'mark MET if today's data shows it achieved'. A body equal to one is an echo."""
+    phrases = []
+    for line in spec.splitlines():
+        parts = re.split(r"\s+[—–]\s+|:\s+", line.strip(), maxsplit=1)
+        instr = parts[1] if len(parts) == 2 else line
+        n = _norm_echo(instr)
+        if len(n.split()) >= 4:
+            phrases.append(n)
+    return phrases
+
+
+def flag_template_echo(form_id: str, sections: list[dict]) -> list[dict]:
+    """Replace a section body that just parrots the template's own field INSTRUCTION (the model wrote
+    'ambulation distance, assistive device, assist level, and stairs, updated to reflect today' as the
+    Functional Status value — real run #15) with an explicit gap marker, so instruction text can never
+    masquerade as clinical data. Conservative: only an exact echo (optionally after a short label
+    prefix) is flagged, so a real note that merely shares a few words is never touched."""
+    from app.generate.forms import FORMS
+
+    form = FORMS.get(form_id)
+    if form is None:
+        return sections
+    phrases = _spec_instruction_phrases(form.spec)
+    out = []
+    for s in sections:
+        nb = _norm_echo(s["body"])
+        echoed = bool(nb) and any(
+            nb == p or (nb.endswith(p) and 0 < len(nb.split()) - len(p.split()) <= 3) for p in phrases
+        )
+        if echoed:
+            out.append({**s, "body": f"[[NEEDS: {s['heading']} not documented — model repeated the "
+                                     f"template instruction instead of a value]]"})
+        else:
+            out.append(s)
+    return out
+
+
 def apply(form_id: str, sections: list[dict]) -> list[dict]:
     sections = drop_unperformed_treatment_sections(sections)
     sections = strip_carry_instruction_headings(sections)
     sections = enforce_carry_tags(form_id, sections)
+    sections = flag_template_echo(form_id, sections)
     sections = flag_code_sections(sections)
     sections = flag_code_field_lines(sections)
     sections = normalize_strength_grades(sections)

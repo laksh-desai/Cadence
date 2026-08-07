@@ -13,6 +13,9 @@ app/storage/.runtime/
 
 # Eval harness output (generated notes from the synthetic corpus — regenerable, noisy diffs).
 evals/runs/
+# Per-sweep scored results. Regenerable and machine-written; commit one deliberately if you want
+# a baseline to diff future runs against (scripts/eval_compare.py).
+evals/results/
 # Any corpus file holding REAL dictation rather than synthetic records. The synthetic
 # corpus in evals/data/*.jsonl IS committed so eval results are reproducible.
 evals/data/*.local.jsonl

@@ -20,91 +20,27 @@ import argparse
 import asyncio
 import json
 import sys
-import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.generate import chunked, cpt, forms as forms_store, ollama_client, postprocess, traceability
+from app.generate import forms as forms_store, ollama_client
 from app.generate.forms import FORMS
-from app.generate.ollama_client import OllamaUnavailableError, generate_note
-from app.generate.parser import parse_plain
-from app.generate.prompt import PatientContext, build_prompt, render_prior_block
-from evals import dataset, score as scoring
+from app.generate.ollama_client import OllamaUnavailableError
+from evals import dataset, results as results_store, runner, score as scoring
+
+# The pipeline drive + scoring live in evals/runner.py so the Evals tab in the browser UI runs
+# the IDENTICAL code path — see that module's docstring for why the isolation guarantee is
+# structural rather than a convention.
+generate_one = runner.generate_one
+score_one = runner.score_one
 
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "evals" / "runs"
 
-# Mirrors app/ui/server.py:_finalize_note — kept in sync so the invariant check for
-# "a condensed dictation always warns the clinician" tests the real contract.
-CONDENSE_WARNING = "was long and was automatically condensed"
-CONDENSE_WARNING_HARD = "had to be condensed to fit the model even after"
 
-
-def build_missing(parsed_missing: list[str], code_flags: list[str], was_condensed: bool, still_over: bool) -> list[str]:
-    missing = list(parsed_missing) + list(code_flags)
-    if was_condensed:
-        missing.append(
-            "This dictation was very long and had to be condensed to fit the model even after "
-            "cleanup — verify the note captured the whole session."
-            if still_over else
-            "This dictation was long and was automatically condensed to fit the model — verify the "
-            "note captured the whole session."
-        )
-    return missing
-
-
-async def generate_one(record: dataset.EvalRecord, form, fast: bool):
-    """One full pipeline pass. Returns (sections, missing, was_condensed, seconds, parsed_ok)."""
-    sub = " · ".join(filter(None, [record.diagnosis, record.visit_type])) or "—"
-    ctx = PatientContext(name=record.patient_name, sub=sub)
-    prior_block = render_prior_block(form, None, False)
-
-    overhead = chunked.estimate_tokens(build_prompt(form, ctx, "", prior_block, None))
-    summary, was_condensed, still_over = await chunked.fit_dictation(
-        record.transcript, overhead, generate_note
-    )
-    prompt = build_prompt(form, ctx, summary, prior_block, None)
-
-    t0 = time.perf_counter()
-    text = await generate_note(prompt, model=ollama_client.model_for(fast))
-    seconds = time.perf_counter() - t0
-
-    parsed = parse_plain(text)
-    if parsed is None:
-        return [], [], was_condensed, seconds, False
-
-    sections = postprocess.apply(form.id, parsed["sections"])
-    # Verification anchors against the RAW transcript, not the condensed one, so a value the
-    # condense pass introduced without basis is still caught (same as the app).
-    sections = traceability.add_verification_flags(sections, record.transcript)
-    sections, code_flags = cpt.suggest_codes(sections, form.id)
-    missing = build_missing(parsed["missing_info"], code_flags, was_condensed, still_over)
-    return sections, missing, was_condensed, seconds, True
-
-
-def score_one(record, form, sections, missing, was_condensed, seconds, run, parsed_ok) -> scoring.RecordResult:
-    condense_flag = any(
-        CONDENSE_WARNING in m or CONDENSE_WARNING_HARD in m for m in missing
-    )
-    present, expected, missing_labels = scoring.section_coverage(sections, form)
-    return scoring.RecordResult(
-        record_id=record.id,
-        form_id=form.id,
-        run=run,
-        seconds=seconds,
-        was_condensed=was_condensed,
-        checks=scoring.score_invariants(
-            sections, form,
-            parsed_ok=parsed_ok, was_condensed=was_condensed, condense_flag_present=condense_flag,
-        ),
-        cpt=scoring.score_cpt(sections, record.cpt_codes) if record.cpt_codes else None,
-        omissions=scoring.score_omissions(sections, record.transcript),
-        flags=scoring.collect_flags(sections, record.transcript),
-        sections_present=present,
-        sections_expected=expected,
-        sections_missing=missing_labels,
-        note_chars=len(scoring.note_text(sections)),
-    )
+def _pct(v) -> str:
+    return "  n/a" if v is None else f"{v:.0%}"
 
 
 def report(results: list[scoring.RecordResult]) -> None:
@@ -164,6 +100,33 @@ def report(results: list[scoring.RecordResult]) -> None:
     if se:
         print(f"\n[B] Template section coverage: {sp}/{se} ({sp / se:.0%}) of outline labels emitted")
 
+    # Billing gold labels (ICD / dictation-side CPT / minutes / units). Safety metrics first:
+    # a leak is a wrong claim, where a miss is only an incomplete one.
+    billing_scoped = [r for r in results if r.billing_detection]
+    if billing_scoped:
+        agg = results_store.split_aggregate(results)
+        print(f"\n[A2] Billing extraction ({len(billing_scoped)} runs with billing gold)")
+        for scope in ("synthetic", "handwritten"):
+            a = agg[scope]
+            if not a:
+                continue
+            print(f"      {scope:<12} n={a['records']}  "
+                  f"CPT r{_pct(a['cpt_detection_recall'])}/p{_pct(a['cpt_detection_precision'])}  "
+                  f"ICD r{_pct(a['icd_recall'])}/p{_pct(a['icd_precision'])}  "
+                  f"min={_pct(a['minutes_exact'])} exact  units={_pct(a['units_exact'])} exact")
+        a = agg["all"]
+        unsafe = (a["distractor_leaks"], a["untimed_leaks"], a["laterality_errors"],
+                  a["minutes_fabricated"])
+        print(f"      UNSAFE: {a['distractor_leaks']} distractor leak(s), "
+              f"{a['untimed_leaks']} untimed leak(s), {a['laterality_errors']} laterality error(s), "
+              f"{a['minutes_fabricated']} fabricated minute value(s)"
+              + ("" if any(unsafe) else "  — none"))
+        print(f"      minutes not extracted (safe gap): {a['minutes_not_extracted']}"
+              f"   CMS/AMA disagreed on {a['method_disagreements']} record(s)")
+        for r in billing_scoped:
+            for code, reason in r.billing_detection.distractor_leaks:
+                print(f"      LEAK record {r.record_id} run {r.run}: billed {code} ({reason})")
+
     # Tier D — triage.
     nflags = sum(len(r.flags) for r in results)
     print(f"\n[D] Verification flags raised: {nflags} (human adjudication — see run JSON)")
@@ -209,6 +172,8 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="directory for per-run JSON")
     ap.add_argument("--resume", action="store_true", help="skip runs whose JSON already exists")
     ap.add_argument("--data", type=Path, default=None, help="corpus directory (default evals/data)")
+    ap.add_argument("--body-part", default=None,
+                    help="label the sweep's results file with this body part (does not filter)")
     args = ap.parse_args()
 
     try:
@@ -238,6 +203,7 @@ def main() -> int:
         return 2
 
     args.out.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.now(timezone.utc).isoformat()
     total = len(records) * args.runs
     print(f"Running {len(records)} records x {args.runs} run(s) = {total} generations "
           f"(~{total * 1.5:.0f} min at 1.5 min each)\n")
@@ -250,19 +216,20 @@ def main() -> int:
             done += 1
             out_path = args.out / f"record{record.id:03d}_{form.id}_run{run}.json"
             if args.resume and out_path.exists():
-                results.append(_load_result(out_path))
+                results.append(runner.load_result(out_path))
                 print(f"[{done}/{total}] record {record.id} run {run} — cached")
                 continue
             print(f"[{done}/{total}] record {record.id} ({record.word_count}w) "
                   f"-> {form.name}, run {run}… ", end="", flush=True)
             try:
-                sections, missing, was_condensed, seconds, parsed_ok = asyncio.run(
+                sections, missing, was_condensed, seconds, parsed_ok, draft = asyncio.run(
                     generate_one(record, form, args.fast)
                 )
             except OllamaUnavailableError as e:
                 print(f"\n  ABORT — {e}")
                 break
-            result = score_one(record, form, sections, missing, was_condensed, seconds, run, parsed_ok)
+            result = score_one(record, form, sections, missing, was_condensed, seconds, run,
+                               parsed_ok, draft)
             results.append(result)
             out_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
             # The note itself, for clinician review / SFT bootstrapping later.
@@ -275,35 +242,22 @@ def main() -> int:
 
     report(results)
     print(f"\nPer-run JSON + notes written to {args.out}")
+
+    if results:
+        path = results_store.write_run(results, config={
+            "body_part": args.body_part or "corpus",
+            "note_type": args.only or args.form or "all",
+            "form_override": args.form,
+            "sample_count": len(records),
+            "runs_per_record": args.runs,
+            "model": ollama_client.model_for(args.fast),
+            "fast": args.fast,
+            "corpus_files": sorted({r.source_file for r in records}),
+            "record_ids": [r.id for r in records],
+        }, started_at=started_at)
+        print(f"Sweep results (config + aggregate + per-record) written to {path}")
+        print(f"Compare with:  .venv/Scripts/python.exe scripts/eval_compare.py <older>.json {path.name}")
     return 0
-
-
-def _load_result(path: Path) -> scoring.RecordResult:
-    """Rehydrate just enough of a cached run for the aggregate report."""
-    d = json.loads(path.read_text(encoding="utf-8"))
-    inv = d["invariants"]
-    checks = [scoring.Check(name=f["name"], passed=False, detail=f["detail"]) for f in inv["failures"]]
-    checks += [scoring.Check(name=f"passed{i}", passed=True) for i in range(inv["passed"])]
-    cov = d["section_coverage"]
-    c = d.get("cpt")
-    o = d.get("omissions") or {}
-    return scoring.RecordResult(
-        record_id=d["record_id"], form_id=d["form_id"], run=d["run"], seconds=d["seconds"],
-        was_condensed=d["was_condensed"], checks=checks,
-        cpt=None if not c else scoring.CptScore(
-            gold=tuple(c["gold"]), suggested=tuple(c["suggested"]), hits=tuple(c["hits"]),
-            missed_section=tuple(c["missed_section"]), table_gap=tuple(c["table_gap"]),
-            extra=tuple(c["extra"]),
-        ),
-        omissions=scoring.OmissionScore(
-            stated=tuple(range(o.get("stated", 0))), present=tuple(range(o.get("present", 0))),
-            dropped=tuple(o.get("dropped", ())),
-        ),
-        flags=[scoring.Flag(section=f["section"], text=f["text"], context=f.get("context", ""))
-               for f in d.get("flags", [])],
-        sections_present=cov["present"], sections_expected=cov["expected"],
-        sections_missing=cov["missing"], note_chars=d.get("note_chars", 0),
-    )
 
 
 if __name__ == "__main__":

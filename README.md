@@ -45,8 +45,25 @@ device, with one narrow sanctioned exception (Google Workspace, under a signed B
   Deterministic and model-independent; it flags, never rewrites (rules 19–20 in `CLAUDE.md`).
 - **CPT code suggestion** — `app/generate/cpt.py` maps each treatment section's stated intervention
   to its CPT code from a fixed table (gait training → 97116, manual therapy → 97140, …) as a
-  confirmable blue chip; the model never authors codes (rule 12), and evaluation complexity / units
-  are surfaced for the clinician, not auto-assigned.
+  confirmable blue chip; the model never authors codes (rule 12), and evaluation complexity is
+  surfaced for the clinician, not auto-assigned.
+- **Billing draft from the dictation** — `app/generate/billing.py` reads the therapist's own words
+  (not the generated note) for the billable interventions, their minutes, and the diagnosis, then
+  maps them deterministically: CPT from the same fixed table, ICD-10 from a **body-part-scoped
+  closed table** (`app/generate/coding_tables.py`), and units via the **Medicare 8-minute rule**
+  over timed codes only. Shown as its own confirmable card in the review step. Everything it can't
+  find is flagged, never invented; a treatment the therapist negated, deferred, planned, or did at
+  a prior visit is kept in the list **with the reason it wasn't billed**. Because CMS substitution
+  and the AMA rule of eights genuinely disagree, both unit numbers are shown — Cadence drafts
+  billing, the clinician bills. **The shoulder ICD table still needs a coder's sign-off; a test
+  fails until it gets one.**
+- **Billing accuracy evals** — an **Evals** tab (and `scripts/gen_synthetic.py` /
+  `scripts/eval_corpus.py` / `scripts/eval_compare.py`) that writes realistic fake sessions
+  *together with their correct answers*, runs them through the real pipeline, and scores ICD, CPT,
+  minutes, and units separately. Results land in `evals/results/` as timestamped JSON so runs can
+  be diffed over time. Safety metrics (billing something the therapist said wasn't done, counting
+  untimed minutes, wrong-side diagnosis, invented durations) are reported first and separately
+  from accuracy — they measure wrong claims, not incomplete drafts.
 - **Editable review before finalize** — after generation the clinician reviews the note, clicks
   **Edit** to change any section (including confirming or changing a suggested code), then **Save** —
   nothing is persisted until they do. Reinforces "the clinician reviews and signs every note."

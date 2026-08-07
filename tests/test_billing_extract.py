@@ -1,0 +1,488 @@
+"""Dictation -> interventions / ICD-10 / minutes, and the four guards that make it safe.
+
+CLAUDE.md rule 12 forbids body-scanning the generated NOTE for interventions. Scanning the
+DICTATION is permitted instead, but only because of the guards this suite exists to lock:
+
+  1. clause scoping        — a negation in one clause must not reach a cue in the next
+  2. cue strength tiers    — a technique name never bills on its own authority
+  3. a status enum         — an excluded hit is RETAINED with its reason, never silently dropped
+  4. confirm_required      — hard-coded True on every path
+
+The negatives matter more than the positives here. A missed intervention is a safe failure the
+clinician corrects; a negated, prior-visit, planned, or home-program treatment that leaks into the
+billable set is an OVERBILL. Every "must not bill" test below is one of those.
+
+No model, no network, no DB — pure functions over strings.
+
+    .venv/Scripts/python.exe -m unittest tests.test_billing_extract -v
+"""
+
+import unittest
+
+from app.generate import billing, coding_tables
+from app.generate.billing import (
+    BARE_NUMBER,
+    EXPLICIT,
+    FRACTION,
+    FRACTION_UNRESOLVED,
+    HOME_PROGRAM,
+    NEGATED,
+    NOT_STATED,
+    PERFORMED,
+    PLANNED,
+    PRIOR_VISIT,
+    UNCERTAIN,
+)
+
+
+def _status(draft, code):
+    """Status of `code` in a draft, or None if the code was never detected at all."""
+    for h in draft.interventions:
+        if h.code == code:
+            return h.status
+    return None
+
+
+def _hit(draft, code):
+    for h in draft.interventions:
+        if h.code == code:
+            return h
+    raise AssertionError(f"{code} not detected in: {[h.code for h in draft.interventions]}")
+
+
+class ClauseScopingTests(unittest.TestCase):
+    def test_negation_does_not_cross_a_sentence_boundary(self):
+        draft = billing.extract(
+            "She reports no shoulder pain at rest. We did therapeutic exercise for twenty minutes."
+        )
+        self.assertEqual(_status(draft, "97110"), PERFORMED)
+
+    def test_negation_does_not_cross_a_comma(self):
+        """"no pain today, we did ther ex" negates the pain, not the treatment. A comma ends a
+        negation's scope in speech, which is what keeps the very common bare "no" from
+        suppressing everything downstream of it."""
+        draft = billing.extract("Shoulder follow-up, no pain today, we did ther ex twenty minutes.")
+        self.assertEqual(_status(draft, "97110"), PERFORMED)
+
+    def test_negation_does_reach_its_own_cue(self):
+        draft = billing.extract("Shoulder visit. We did not do gait training today.")
+        self.assertEqual(_status(draft, "97116"), NEGATED)
+        self.assertNotIn("97116", {h.code for h in draft.billable})
+
+    def test_a_connective_resets_scope(self):
+        draft = billing.extract(
+            "Shoulder. We did not do manual therapy, but then therapeutic exercise for twenty minutes."
+        )
+        self.assertEqual(_status(draft, "97140"), NEGATED)
+        self.assertEqual(_status(draft, "97110"), PERFORMED)
+
+
+class StatusTests(unittest.TestCase):
+    def test_prior_visit_treatment_is_not_billable_today(self):
+        draft = billing.extract("Shoulder. Last visit we did manual therapy.")
+        self.assertEqual(_status(draft, "97140"), PRIOR_VISIT)
+        self.assertEqual(draft.billable, ())
+
+    def test_a_scope_reset_rescues_todays_treatment_from_a_prior_marker(self):
+        """The failure this guard was written for: without SCOPE_RESET_CUES, "today" is just more
+        text and BOTH treatments get attributed to the prior visit, billing nothing."""
+        draft = billing.extract(
+            "Shoulder. Last visit we did manual therapy, today ther ex for twenty minutes."
+        )
+        self.assertEqual(_status(draft, "97140"), PRIOR_VISIT)
+        self.assertEqual(_status(draft, "97110"), PERFORMED)
+
+    def test_marker_after_the_cue_still_scopes_it(self):
+        draft = billing.extract("Shoulder. We did manual therapy last visit.")
+        self.assertEqual(_status(draft, "97140"), PRIOR_VISIT)
+
+    def test_planned_treatment_is_not_billable(self):
+        draft = billing.extract("Shoulder. Next visit we will add gait training.")
+        self.assertEqual(_status(draft, "97116"), PLANNED)
+        self.assertEqual(draft.billable, ())
+
+    def test_the_noun_form_of_a_plan_is_also_not_billable(self):
+        """Regression from the hand-written control (record 108) — a FOUR-code overbill.
+
+        "Interventions planned include therapeutic exercise, neuromuscular re-education, manual
+        therapy, and therapeutic activities" billed all four as performed, because every future
+        cue was a VERB form ("plan to", "will add") and a real evaluation note used the NOUN form.
+        The synthetic corpus structurally could not have caught this: its generator only renders
+        the frames it was given, so it never spoke this sentence.
+        """
+        draft = billing.extract(
+            "Left shoulder evaluation. Interventions planned include therapeutic exercise, "
+            "neuromuscular re-education for deltoid retraining, manual therapy for the elbow "
+            "and scapula, and therapeutic activities for functional reintegration."
+        )
+        self.assertEqual(draft.billable, ())
+        for code in ("97110", "97112", "97140", "97530"):
+            with self.subTest(code=code):
+                self.assertEqual(_status(draft, code), PLANNED)
+
+    def test_home_program_is_not_billable(self):
+        draft = billing.extract("Shoulder. Her home program includes stretching and pulleys.")
+        self.assertEqual(_status(draft, "97110"), HOME_PROGRAM)
+        self.assertEqual(draft.billable, ())
+
+    def test_excluded_hits_are_retained_with_their_reason(self):
+        """Retention is the whole design: a wrong exclusion must be VISIBLE to the clinician
+        rather than showing up as a silently absent code."""
+        draft = billing.extract("Shoulder. We did not do gait training today.")
+        self.assertEqual(len(draft.interventions), 1)
+        self.assertEqual(draft.interventions[0].status, NEGATED)
+        self.assertIn("gait training", draft.interventions[0].clause.lower())
+
+
+class CueStrengthTests(unittest.TestCase):
+    def test_a_weak_technique_name_does_not_bill_on_its_own(self):
+        """"stretching" may be ther ex (patient-performed) or manual therapy (therapist-performed).
+        Auto-billing either is a coin flip on a claim, so it surfaces as a candidate instead."""
+        draft = billing.extract("Shoulder. We worked on stretching for fifteen minutes.")
+        self.assertEqual(_status(draft, "97110"), UNCERTAIN)
+        self.assertEqual(draft.billable, ())
+
+    def test_the_service_name_does_bill(self):
+        draft = billing.extract("Shoulder. Therapeutic exercise for fifteen minutes.")
+        self.assertEqual(_status(draft, "97110"), PERFORMED)
+
+    def test_uncertain_cues_are_surfaced_as_a_gap(self):
+        draft = billing.extract("Shoulder. We worked on balance work for ten minutes.")
+        self.assertTrue(any("confirm or discard" in m for m in draft.missing))
+
+    def test_specific_cue_beats_the_generic_one_it_contains(self):
+        """"manual stretching" is manual therapy, not therapeutic exercise. The overlapping
+        generic cue must be suppressed — the same specific-before-generic contract
+        tests/test_cpt.py locks for the heading table."""
+        draft = billing.extract("Shoulder. Manual stretching for fifteen minutes.")
+        self.assertEqual(_status(draft, "97140"), PERFORMED)
+        self.assertIsNone(_status(draft, "97110"))
+
+    def test_ther_ex_abbreviation_does_not_match_inside_other_exercise(self):
+        """Word boundaries are load-bearing: a naive substring test for "ther ex" fires inside
+        "oTHER EXercise", billing 97110 off a sentence that never named the service."""
+        draft = billing.extract("Shoulder. She tolerated the other exercises well.")
+        self.assertIsNone(_status(draft, "97110"))
+
+
+class MinutesTests(unittest.TestCase):
+    def test_explicit_minutes_before_the_cue(self):
+        draft = billing.extract("Shoulder. Twenty minutes of therapeutic exercise.")
+        hit = _hit(draft, "97110")
+        self.assertEqual((hit.minutes, hit.minutes_basis), (20, EXPLICIT))
+
+    def test_explicit_minutes_after_the_cue(self):
+        draft = billing.extract("Shoulder. Manual therapy for fifteen minutes.")
+        hit = _hit(draft, "97140")
+        self.assertEqual((hit.minutes, hit.minutes_basis), (15, EXPLICIT))
+
+    def test_two_treatments_in_one_clause_get_their_own_minutes(self):
+        """Assignment is one-to-one by proximity, so the same duration can't be claimed twice."""
+        draft = billing.extract(
+            "Shoulder. Manual therapy fifteen minutes and therapeutic exercise twenty minutes."
+        )
+        self.assertEqual(_hit(draft, "97140").minutes, 15)
+        self.assertEqual(_hit(draft, "97110").minutes, 20)
+        self.assertEqual(draft.total_timed_minutes, 35)
+
+    def test_a_fraction_resolves_against_a_stated_session_length(self):
+        draft = billing.extract(
+            "Shoulder. This was a forty-five minute session. "
+            "Therapeutic exercise for a third of the session."
+        )
+        hit = _hit(draft, "97110")
+        self.assertEqual((hit.minutes, hit.minutes_basis), (15, FRACTION))
+
+    def test_a_fraction_with_no_stated_session_length_is_a_gap_not_a_guess(self):
+        draft = billing.extract("Shoulder. Therapeutic exercise for a third of the session.")
+        hit = _hit(draft, "97110")
+        self.assertIsNone(hit.minutes)
+        self.assertEqual(hit.minutes_basis, FRACTION_UNRESOLVED)
+        self.assertTrue(any("no session length was stated" in m for m in draft.missing))
+
+    def test_a_bare_number_is_read_as_minutes_only_in_an_unambiguous_clause(self):
+        draft = billing.extract("Shoulder. Manual therapy fifteen.")
+        hit = _hit(draft, "97140")
+        self.assertEqual((hit.minutes, hit.minutes_basis), (15, BARE_NUMBER))
+        self.assertTrue(any("bare number" in m for m in draft.missing),
+                        "a bare-number reading must be flagged for verification")
+
+    def test_a_bare_number_next_to_a_unit_is_not_minutes(self):
+        for clause, label in [
+            ("Therapeutic exercise, flexion to ninety degrees.", "degrees"),
+            ("Therapeutic exercise, pain four out of ten.", "pain rating"),
+            ("Therapeutic exercise, strength four out of five.", "MMT grade"),
+            ("Therapeutic exercise, three sets of twelve reps.", "reps"),
+            ("Therapeutic exercise, ambulated fifty feet.", "distance"),
+        ]:
+            with self.subTest(unit=label):
+                draft = billing.extract("Shoulder. " + clause)
+                self.assertIsNone(_hit(draft, "97110").minutes, f"{label} was read as minutes")
+
+    def test_unstated_minutes_are_flagged_not_invented(self):
+        draft = billing.extract("Shoulder. We did therapeutic exercise and gait training.")
+        self.assertIsNone(_hit(draft, "97110").minutes)
+        self.assertEqual(_hit(draft, "97110").minutes_basis, NOT_STATED)
+        self.assertEqual(draft.total_timed_minutes, 0)
+        self.assertTrue(any("Minutes not stated" in m for m in draft.missing))
+
+
+class SelfCorrectionTests(unittest.TestCase):
+    def test_the_corrected_value_is_performed_and_neither_is_dropped(self):
+        """Rule 8: keep only the corrected value on a self-correction. The superseded cue becomes
+        `uncertain` rather than vanishing — dropping half of what the therapist said would hide
+        their own ambiguity from the person signing the note."""
+        draft = billing.extract(
+            "Shoulder. We did gait training, sorry, therapeutic activities for twenty minutes."
+        )
+        self.assertEqual(_status(draft, "97530"), PERFORMED)
+        self.assertEqual(_status(draft, "97116"), UNCERTAIN)
+        self.assertEqual({h.code for h in draft.billable}, {"97530"})
+
+    def test_the_retracted_treatment_is_dropped_even_when_the_replacement_is_unrecognized(self):
+        """Regression, found by the eval harness on synthetic record 1021.
+
+        "joint mobilization, I mean strength work" — the corrected-TO phrase is not in the cue
+        table, so only ONE cue matched. An earlier version required two recognized cues before
+        applying the self-correction rule, so the check was skipped and the RETRACTED treatment
+        was billed. Whether we recognize the replacement is irrelevant: the therapist withdrew
+        what came before the marker.
+        """
+        draft = billing.extract(
+            "Follow-up, right shoulder. Then joint mobilization, I mean strength work."
+        )
+        self.assertEqual(_status(draft, "97140"), UNCERTAIN)
+        self.assertEqual(draft.billable, ())
+
+    def test_a_correction_after_the_only_cue_does_not_bill_it(self):
+        draft = billing.extract("Shoulder. We did gait training, sorry, that was last week.")
+        self.assertNotIn("97116", {h.code for h in draft.billable})
+
+
+class IcdTests(unittest.TestCase):
+    def test_a_stated_diagnosis_with_laterality(self):
+        draft = billing.extract(
+            "Initial evaluation, right shoulder. Referring diagnosis is right rotator cuff "
+            "tendinopathy."
+        )
+        codes = {c.code for c in draft.icd_candidates}
+        self.assertIn("M75.101", codes)
+        self.assertTrue(all(c.laterality_stated for c in draft.icd_candidates))
+
+    def test_left_selects_the_left_variant(self):
+        draft = billing.extract("Left shoulder. Diagnosis is left adhesive capsulitis.")
+        self.assertIn("M75.02", {c.code for c in draft.icd_candidates})
+
+    def test_bilateral_with_no_bilateral_code_emits_both_sides(self):
+        draft = billing.extract(
+            "Bilateral shoulders. Diagnosis is bilateral adhesive capsulitis."
+        )
+        codes = {c.code for c in draft.icd_candidates}
+        self.assertEqual({"M75.01", "M75.02"}, codes)
+
+    def test_unstated_laterality_uses_the_unspecified_code_and_flags_it(self):
+        """A guessed side is a claim denial at best. The unspecified variant plus a visible gap is
+        the honest output."""
+        draft = billing.extract("Shoulder evaluation. Diagnosis is adhesive capsulitis.")
+        self.assertIn("M75.00", {c.code for c in draft.icd_candidates})
+        self.assertTrue(any("Laterality not stated" in m for m in draft.missing))
+
+    def test_a_hedged_mention_is_not_a_diagnosis(self):
+        """The single most important ICD negative: a worry is not a billable diagnosis."""
+        draft = billing.extract(
+            "Right shoulder. She is worried about a rotator cuff tear after her sister's surgery."
+        )
+        self.assertEqual(draft.icd_candidates, ())
+
+    def test_a_mention_with_no_diagnosis_context_is_not_a_diagnosis(self):
+        draft = billing.extract("Right shoulder. We talked about rotator cuff tendinopathy.")
+        self.assertEqual(draft.icd_candidates, ())
+
+    def test_specific_diagnosis_beats_the_generic_family(self):
+        draft = billing.extract(
+            "Right shoulder. Diagnosis is a complete rotator cuff tear on the right."
+        )
+        codes = {c.code for c in draft.icd_candidates}
+        self.assertIn("M75.121", codes)
+        self.assertNotIn("M75.101", codes)
+
+    def test_a_seventh_character_caution_reaches_the_clinician(self):
+        draft = billing.extract("Right shoulder. Diagnosis is a right shoulder sprain.")
+        self.assertIn("S43.421", {c.code for c in draft.icd_candidates})
+        self.assertTrue(any("7th character" in m for m in draft.missing))
+
+    def test_a_past_condition_in_a_history_clause_is_not_the_billable_diagnosis(self):
+        """Regression from the hand-written control (record 108).
+
+        "History of present illness, he had increasing left shoulder pain for about four years,
+        was diagnosed with rotator cuff arthropathy, ..." yielded M25.512 for a FOUR-YEAR-OLD
+        symptom, because "history of" was a diagnosis-CONTEXT cue and "diagnosed" sat in the same
+        run-on clause. A history clause must never produce a billing code — it is not what is
+        being treated today.
+        """
+        draft = billing.extract(
+            "Left shoulder. History of present illness, he had increasing left shoulder pain for "
+            "about four years, was diagnosed with rotator cuff arthropathy."
+        )
+        self.assertEqual(draft.icd_candidates, ())
+
+    def test_a_post_surgical_header_frames_the_diagnosis(self):
+        """Regression (record 107): "ten weeks post left SLAP repair, type two labral tear" is how
+        a post-op visit actually opens, and carried no recognized diagnosis context."""
+        draft = billing.extract(
+            "This is a follow-up, ten weeks post left SLAP repair, type two labral tear."
+        )
+        self.assertIn("S43.432", {c.code for c in draft.icd_candidates})
+
+    def test_no_body_part_means_no_icd_at_all(self):
+        draft = billing.extract("Patient did therapeutic exercise for twenty minutes.")
+        self.assertIsNone(draft.body_part)
+        self.assertEqual(draft.icd_candidates, ())
+        self.assertTrue(any("Body region not identified" in m for m in draft.missing))
+
+    def test_a_body_part_with_no_stated_diagnosis_is_flagged(self):
+        draft = billing.extract("Shoulder follow-up. Therapeutic exercise for twenty minutes.")
+        self.assertEqual(draft.body_part, "shoulder")
+        self.assertEqual(draft.icd_candidates, ())
+        self.assertTrue(any("No diagnosis stated" in m for m in draft.missing))
+
+
+class DedupeTests(unittest.TestCase):
+    def test_one_treatment_split_across_the_session_sums_its_minutes(self):
+        draft = billing.extract(
+            "Shoulder. Therapeutic exercise for twenty minutes. "
+            "Then more therapeutic exercise, ten minutes at the end."
+        )
+        self.assertEqual(_hit(draft, "97110").minutes, 30)
+
+    def test_a_performed_mention_is_not_shadowed_by_a_planned_one(self):
+        draft = billing.extract(
+            "Shoulder. Manual therapy for fifteen minutes. "
+            "Next visit we will do more manual therapy."
+        )
+        self.assertEqual(_status(draft, "97140"), PERFORMED)
+        self.assertEqual(_hit(draft, "97140").minutes, 15)
+
+    def test_minutes_are_never_borrowed_across_statuses(self):
+        """A planned treatment's duration must not become today's billable minutes."""
+        draft = billing.extract(
+            "Shoulder. We did gait training. Next visit we will do gait training for thirty minutes."
+        )
+        self.assertEqual(_status(draft, "97116"), PERFORMED)
+        self.assertIsNone(_hit(draft, "97116").minutes)
+        self.assertEqual(draft.total_timed_minutes, 0)
+
+
+class FullDraftTests(unittest.TestCase):
+    TRANSCRIPT = (
+        "Okay, follow-up visit, right shoulder. Referring diagnosis is right rotator cuff "
+        "tendinopathy. Um, today we did therapeutic exercise for twenty-five minutes, "
+        "scapular retraction and external rotation with theraband. Then manual therapy, "
+        "twenty minutes, to the right glenohumeral joint. Then neuromuscular re-education for "
+        "fifteen minutes working on scapular control. We did not do gait training. "
+        "Her home program includes pulleys. Next visit we will add therapeutic activities."
+    )
+
+    def setUp(self):
+        self.draft = billing.extract(self.TRANSCRIPT)
+
+    def test_a_realistic_session_produces_four_units(self):
+        self.assertEqual(self.draft.total_timed_minutes, 60)
+        self.assertEqual(self.draft.units.total_units, 4)
+
+    def test_only_the_performed_treatments_are_billable(self):
+        self.assertEqual({h.code for h in self.draft.billable}, {"97110", "97140", "97112"})
+
+    def test_every_distractor_is_excluded_with_its_reason(self):
+        self.assertEqual(_status(self.draft, "97116"), NEGATED)
+        self.assertEqual(_status(self.draft, "97530"), PLANNED)
+
+    def test_the_diagnosis_is_detected(self):
+        self.assertIn("M75.101", {c.code for c in self.draft.icd_candidates})
+
+    def test_both_unit_methods_are_reported(self):
+        self.assertIsNotNone(self.draft.units)
+        self.assertIsNotNone(self.draft.units_alt)
+        self.assertEqual(self.draft.units.method, billing.CMS_SUBSTITUTION)
+        self.assertEqual(self.draft.units_alt.method, billing.AMA_RULE_OF_EIGHTS)
+
+    def test_confirm_required_is_true(self):
+        self.assertTrue(self.draft.confirm_required)
+
+
+class ConfirmRequiredTests(unittest.TestCase):
+    def test_confirm_required_on_every_path(self):
+        """Cadence drafts billing; the clinician bills. This flag is the machine-readable form of
+        that boundary, so it is asserted on every shape of input rather than once."""
+        for text in [
+            "",
+            "Shoulder. Therapeutic exercise twenty minutes.",
+            "We did not do anything.",
+            "Right shoulder. Diagnosis is right adhesive capsulitis.",
+            "Patient tolerated treatment well.",
+        ]:
+            with self.subTest(text=text[:40]):
+                self.assertTrue(billing.extract(text).confirm_required)
+
+
+class TableIntegrityTests(unittest.TestCase):
+    def test_the_billing_tables_and_gold_labels_are_signed_off(self):
+        """THE SIGN-OFF GATE. This test is EXPECTED TO FAIL until a clinician or certified coder
+        reviews the billing data, and that failure is the point — a wrong code rendered as a
+        confident chip is worse than no chip, which is exactly the failure rule 12 was written
+        about. It deliberately reports EVERY outstanding item at once rather than existing as
+        several separate red tests, so there is one gate with one complete list.
+
+        See docs/go-live-checklist.md section 4b.
+        """
+        import json
+        from pathlib import Path
+
+        outstanding = []
+        self.assertTrue(coding_tables.ICD10CM_YEAR)
+        if not (coding_tables.ICD_TABLE_VERIFIED_BY and coding_tables.ICD_TABLE_VERIFIED_ON):
+            outstanding.append(
+                "  * app/generate/coding_tables.py: ICD_TABLE_VERIFIED_BY / _ON are blank — the "
+                f"shoulder ICD-10 table needs review against ICD-10-CM {coding_tables.ICD10CM_YEAR}."
+            )
+
+        # The hand-written control set is what every accuracy number is measured against. Its
+        # billing gold was hand-READ from the transcripts (never produced by the extractor, which
+        # would be circular), but hand-read is not the same as clinician-verified.
+        corpus = Path(__file__).resolve().parent.parent / "evals" / "data" / "shoulder.jsonl"
+        if corpus.exists():
+            unverified = [
+                json.loads(line)["id"]
+                for line in corpus.read_text(encoding="utf-8").splitlines() if line.strip()
+                if not (json.loads(line).get("gold_provenance") or {}).get("verified_by")
+            ]
+            if unverified:
+                outstanding.append(
+                    f"  * evals/data/shoulder.jsonl: records {unverified} have a blank "
+                    "gold_provenance.verified_by — the non-circular control's billing labels are "
+                    "hand-read, not clinician-verified (CLAUDE.md rule 21b)."
+                )
+
+        self.assertEqual(
+            outstanding, [],
+            "Billing data still needs clinical sign-off before any code reaches a claim:\n"
+            + "\n".join(outstanding),
+        )
+
+    def test_every_body_part_has_cues_and_an_icd_table(self):
+        for part in coding_tables.BODY_PARTS:
+            with self.subTest(part=part):
+                self.assertIn(part, coding_tables.BODY_PART_CUES)
+                self.assertTrue(coding_tables.ICD_BY_BODY_PART.get(part))
+
+    def test_every_intervention_cue_maps_to_a_known_cpt_code(self):
+        from app.generate.cpt import _CPT_RULES
+        known = {code for _, code, _ in _CPT_RULES}
+        for rule in coding_tables.INTERVENTION_CUES:
+            with self.subTest(cue=rule.phrase):
+                self.assertIn(rule.code, known)
+                self.assertIn(rule.strength, ("strong", "weak"))
+
+
+if __name__ == "__main__":
+    unittest.main()

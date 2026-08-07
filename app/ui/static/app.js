@@ -132,14 +132,11 @@
   // sitting INSIDE section bodies, so the save hint reflects them too — a note can have
   // missing_info: none yet still carry inline flags, and "Looks complete" would then mislead.
   function countGapFlags(sections){ return (sections||[]).reduce((n,s)=>n+(((s.body||"").match(/\[\[NEEDS:/g))||[]).length,0); }
-  // Outpatient-PT timed CPT codes (billed in 15-min units, so the 8-minute rule applies). Everything
-  // else in our map is untimed (billed once per session). Used only to LABEL the billing list so the
-  // biller knows which need unit math — we never compute units ourselves.
-  const TIMED_CPT=new Set(["97032","97033","97034","97035","97036","97110","97112","97113","97116","97124","97140","97530","97535","97542","97760"]);
-  function timedTag(code){ return TIMED_CPT.has(code)?"timed":"untimed"; }
-  // Pull the suggested CPT codes (with each section's stated minutes) out of the note bodies so the
-  // review can show a consolidated billing list. Deliberately does NOT sum/convert to units — that's
-  // payer-specific and the biller's call; we just surface code + minutes per intervention.
+  // Pull the suggested CPT codes (with each section's stated minutes) out of the note bodies.
+  // This is the FALLBACK path, used for a SAVED note (the database stores sections, not the
+  // billing draft) and for a revised note. It reads markers out of the note; it deliberately
+  // holds no code table of its own — the timed/untimed set lives once, in Python
+  // (app/generate/cpt.py TIMED_CODES), so there is nothing here to drift out of sync with it.
   function billingCodes(sections){
     const out=[];
     (sections||[]).forEach(s=>{
@@ -150,13 +147,72 @@
     });
     return out;
   }
-  // Consolidated billing block for the review / saved note. Suggestions only — no unit math.
-  function billingHTML(sections){
+  const STATUS_LABEL={negated:"not performed today", prior_visit:"prior visit", planned:"planned",
+                      home_program:"home program", uncertain:"needs confirming"};
+  // The rich card: the server's deterministic draft from the DICTATION — codes, per-intervention
+  // minutes, both unit methods, and the excluded lines with their reasons.
+  function billingDraftHTML(b){
+    const billable=(b.interventions||[]).filter(x=>x.status==="performed");
+    const excluded=(b.interventions||[]).filter(x=>x.status!=="performed");
+    const icd=b.icd_candidates||[];
+    if(!billable.length && !excluded.length && !icd.length) return "";
+    const codeList=billable.map(c=>c.code).concat(icd.map(c=>c.code)).join(", ");
+    let h='<div class="billing"><h3>Billing draft <span class="bhint">— confirm every line before submitting</span> <button class="btn btn-ghost btn-sm copy-codes" data-codes="'+esc(codeList)+'">Copy codes</button></h3>';
+
+    if(icd.length){
+      h+='<p class="bsub">Diagnosis (ICD-10)</p><ul>';
+      icd.forEach(c=>{
+        h+='<li><span class="bcode">'+esc(c.code)+'</span> '+esc(c.label)
+          +(c.laterality_stated?'':' <span class="bwarn">side not stated</span>')
+          +'<span class="bcue">“'+esc(c.cue)+'”</span></li>';
+      });
+      h+='</ul>';
+    }
+    if(billable.length){
+      h+='<p class="bsub">Treatments performed</p><ul>';
+      billable.forEach(c=>{
+        h+='<li><span class="bcode">'+esc(c.code)+'</span> '+esc(c.label)
+          +' <span class="bmin">('+(c.timed?'timed':'untimed')
+          +(c.minutes!=null?' · '+c.minutes+' min':'; minutes not stated')+')</span>'
+          +'<span class="bcue">“'+esc(c.cue)+'”</span></li>';
+      });
+      h+='</ul>';
+    }
+    if(b.units){
+      h+='<p class="bunits"><b>'+b.total_timed_minutes+' timed min</b> → <b>'+b.units.total_units
+        +(b.units.total_units===1?' unit':' units')+'</b> <span class="bhint">(CMS substitution)</span>';
+      // Two payer rules genuinely disagree; showing one number would be picking a side.
+      if(b.units_alt && b.units_alt.total_units!==b.units.total_units){
+        h+='<br><span class="bwarn">AMA rule of eights gives '+b.units_alt.total_units
+          +(b.units_alt.total_units===1?' unit':' units')+' — payers differ; the biller decides.</span>';
+      }
+      if(b.units.ambiguous) h+='<br><span class="bwarn">'+esc(b.units.note)+'</span>';
+      h+='</p>';
+    }
+    if(excluded.length){
+      h+='<p class="bsub">Mentioned but not billed</p><ul class="bexcl">';
+      excluded.forEach(c=>{
+        h+='<li><span class="bcode">'+esc(c.code)+'</span> '+esc(c.label)
+          +' <span class="bwarn">'+esc(STATUS_LABEL[c.status]||c.status)+'</span>'
+          +'<span class="bcue">“'+esc(c.cue)+'”</span></li>';
+      });
+      h+='</ul>';
+    }
+    (b.conflicts||[]).forEach(c=>{
+      h+='<p class="bconflict'+(c.severity==="high"?' bconflict-hi':'')+'">'+esc(c.detail)+'</p>';
+    });
+    (b.missing||[]).forEach(m=>{ h+='<p class="bmissing">⌖ '+esc(m)+'</p>'; });
+    return h+'<p class="bnote">Read from what you dictated, then mapped to codes from a fixed table — Cadence never writes a code of its own. Confirm or change every code and every duration; units and modifiers are the biller\'s call.</p></div>';
+  }
+  // Consolidated billing block. Prefers the server draft; falls back to the note\'s own CPT chips
+  // for a saved note, where only the sections were persisted.
+  function billingHTML(sections, billing){
+    if(billing) return billingDraftHTML(billing);
     const codes=billingCodes(sections);
     if(!codes.length) return "";
     const codeList=codes.map(c=>c.code).join(", ");
     let h='<div class="billing"><h3>Suggested billing codes <span class="bhint">— confirm before submitting</span> <button class="btn btn-ghost btn-sm copy-codes" data-codes="'+esc(codeList)+'">Copy codes</button></h3><ul>';
-    codes.forEach(c=>{ h+='<li><span class="bcode">'+esc(c.code)+'</span> '+esc(c.label)+' <span class="bmin">('+timedTag(c.code)+')'+(c.minutes!=null?' · '+c.minutes+' min':'')+'</span></li>'; });
+    codes.forEach(c=>{ h+='<li><span class="bcode">'+esc(c.code)+'</span> '+esc(c.label)+(c.minutes!=null?' <span class="bmin">· '+c.minutes+' min</span>':'')+'</li>'; });
     return h+'</ul><p class="bnote">Deterministic suggestions from the stated interventions — confirm each code, and apply units / the 8-minute rule / modifiers per payer rules.</p></div>';
   }
   // Render the inline [[...]] markers as readable bracketed text for a plain-text copy (so a note
@@ -171,10 +227,31 @@
     const p=PATIENTS_BY_ID[r.patientId]||PATIENTS_BY_ID[currentPatient];
     let t=(r.formName||"Note")+"\n"+((p&&p.name)||"")+" · "+fmtDate(r.date)+"\n\n";
     (r.sections||[]).forEach(s=>{ t+=s.heading+"\n"+markerToText(s.body).trim()+"\n\n"; });
-    const codes=billingCodes(r.sections);
-    if(codes.length){
-      t+="Suggested billing codes (confirm before submitting):\n";
-      codes.forEach(c=>{ t+="  "+c.code+" "+c.label+" ("+timedTag(c.code)+")"+(c.minutes!=null?" — "+c.minutes+" min":"")+"\n"; });
+    const b=r.billing;
+    if(b){
+      const billable=(b.interventions||[]).filter(x=>x.status==="performed");
+      (b.icd_candidates||[]).forEach(c=>{
+        if(!t.includes("Billing draft")) t+="Billing draft (confirm every line before submitting):\n";
+        t+="  ICD-10 "+c.code+" "+c.label+(c.laterality_stated?"":" [side not stated]")+"\n";
+      });
+      if(billable.length && !t.includes("Billing draft")) t+="Billing draft (confirm every line before submitting):\n";
+      billable.forEach(c=>{
+        t+="  "+c.code+" "+c.label+" ("+(c.timed?"timed":"untimed")
+          +(c.minutes!=null?" — "+c.minutes+" min":"; minutes not stated")+")\n";
+      });
+      if(b.units){
+        t+="  Total timed: "+b.total_timed_minutes+" min = "+b.units.total_units+" unit(s) (CMS)";
+        if(b.units_alt && b.units_alt.total_units!==b.units.total_units){
+          t+="; "+b.units_alt.total_units+" unit(s) (AMA rule of eights) — payers differ";
+        }
+        t+="\n";
+      }
+    } else {
+      const codes=billingCodes(r.sections);
+      if(codes.length){
+        t+="Suggested billing codes (confirm before submitting):\n";
+        codes.forEach(c=>{ t+="  "+c.code+" "+c.label+(c.minutes!=null?" — "+c.minutes+" min":"")+"\n"; });
+      }
     }
     return t.trim()+"\n";
   }
@@ -886,6 +963,10 @@
         patientId: currentPatient,
         dictationRaw: extraInfo ? (summary+"\n\nADDITIONAL DETAILS: "+extraInfo) : summary,
         usedPrior: !!data.used_prior,
+        // The server's deterministic billing draft (app/generate/billing.py), derived from the
+        // DICTATION. Null on a revise, which has only the note's prose to work from — the client
+        // then keeps whatever draft the original generate produced.
+        billing: data.billing || (lastResult && lastResult.billing) || null,
         date: new Date(),
       };
       renderResult(lastResult);
@@ -974,7 +1055,7 @@
       missing.forEach(x=> html+="<li>"+esc(x)+"</li>");
       html+='</ul><div class="resolve"><textarea id="resolveBox" placeholder="Add the missing details (e.g. \'manual therapy 10 minutes, BP 128/78, HR 72\') — type or dictate."></textarea><div class="resolve-actions"><button class="btn btn-mic" id="resolveMic"><span class="pulse"></span><span id="resolveMicLabel">Dictate</span></button><button class="btn btn-amber" id="resolveBtn">Add details &amp; update note</button></div><p class="mic-help-sm" id="resolveMicHelp"></p></div></div>';
     }
-    html+=billingHTML(r.sections);
+    html+=billingHTML(r.sections, r.billing);
     html+=officeAllyHTML(r.sections);
     html+=sheetHTML(r.formName, p, r.sections, r.date);
     // Ask-for-changes: the clinician tells the model what to adjust in plain language and it
@@ -1515,8 +1596,140 @@
     });
   }
 
+  // ---------- Evals page ----------
+  // Two-step by design: "Generate samples" is instant and shows the gold labels, so you can see
+  // what the generator produced BEFORE committing tens of minutes of CPU to sweeping it.
+  // Progress is POLLED rather than streamed — a sweep must survive a page reload, and a small
+  // status object every 2s is resumable for free.
+  const evalsMount=$("evalsMount");
+  let evalOpts=null, evalSamples=[], evalPoll=null, evalRunId=null;
+
+  function renderEvals(){
+    if(evalPoll){ clearInterval(evalPoll); evalPoll=null; }
+    evalsMount.innerHTML='<div class="loadwrap"><span class="spin"></span></div>';
+    fetch("/api/evals/options").then(r=>{
+      if(!r.ok) throw new Error();
+      return r.json();
+    }).then(o=>{ evalOpts=o; drawEvalForm(); }).catch(()=>{
+      evalsMount.innerHTML='<div class="files-empty">The evals tools aren\'t available in this install.</div>';
+    });
+  }
+
+  function sel(id,label,values,current){
+    let h='<div class="field"><label for="'+id+'">'+esc(label)+'</label><select id="'+id+'">';
+    values.forEach(v=>{ h+='<option value="'+esc(v)+'"'+(v===current?" selected":"")+">"+esc(v)+"</option>"; });
+    return h+"</select></div>";
+  }
+
+  function drawEvalForm(){
+    let h='<div class="controls">'
+      +sel("evBodyPart","Body part",evalOpts.body_parts,evalOpts.body_parts[0])
+      +sel("evNoteType","Note type",evalOpts.note_types,"followup")
+      +sel("evComplexity","Complexity",evalOpts.complexities,"medium")
+      +'<div class="field"><label for="evCount">Samples</label><input id="evCount" type="number" min="1" max="200" value="10"></div>'
+      +'<div class="field"><label for="evSeed">Seed</label><input id="evSeed" type="number" value="1234"></div>'
+      +'</div>';
+    if(!evalOpts.icd_table_verified){
+      h+='<div class="needs"><h3>ICD table not yet verified</h3><p style="margin:0;font-size:13px">The shoulder ICD-10 table in <code>app/generate/coding_tables.py</code> has not been signed off by a clinician or certified coder (ICD-10-CM '+esc(evalOpts.icd10cm_year)+'). ICD scores below are still meaningful as a measure of <em>detection</em>, but the codes themselves must be reviewed before any of this is used on a real claim.</p></div>';
+    }
+    h+='<div class="savebar"><button class="btn btn-ghost" id="evGenBtn">Generate samples</button>'
+      +'<button class="btn btn-primary" id="evRunBtn">Run sweep</button>'
+      +'<label class="evchk"><input type="checkbox" id="evControl" checked> include hand-written control set</label>'
+      +'<span class="savehint" id="evHint">Generate samples first to see what will be tested.</span></div>'
+      +'<div id="evBody"></div>';
+    evalsMount.innerHTML=h;
+    $("evGenBtn").addEventListener("click", genEvalSamples);
+    $("evRunBtn").addEventListener("click", startEvalRun);
+  }
+
+  function evalConfig(){
+    return {
+      body_part:$("evBodyPart").value, note_type:$("evNoteType").value,
+      complexity:$("evComplexity").value,
+      count:Math.max(1,parseInt($("evCount").value,10)||10),
+      seed:parseInt($("evSeed").value,10)||1234,
+    };
+  }
+
+  async function genEvalSamples(){
+    $("evHint").textContent="Generating…";
+    const r=await fetch("/api/evals/samples",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(evalConfig())});
+    if(!r.ok){ $("evHint").textContent="Couldn't generate samples."; return; }
+    const data=await r.json();
+    evalSamples=data.samples||[];
+    $("evHint").textContent=evalSamples.length+" samples ready — review, then Run sweep.";
+    let h='<div class="billing"><h3>Generated samples <span class="bhint">— fake sessions with their correct answers</span></h3>';
+    evalSamples.forEach(s=>{
+      h+='<div class="evsample"><p class="evtx">'+esc(s.transcript)+'</p><p class="evgold">'
+        +'<b>Should find:</b> '+esc((s.icd_codes||[]).join(", ")||"no ICD")+' · '
+        +esc((s.interventions||[]).map(i=>i.code+(i.minutes!=null?" "+i.minutes+"m":"")).join(", "))
+        +' · <b>'+s.total_timed_minutes+' timed min = '+s.expected_units+' units</b>'
+        +(s.expected_units_ama!==s.expected_units?' (AMA: '+s.expected_units_ama+')':'')
+        +'<br><b>Should NOT bill:</b> '+esc((s.distractors||[]).map(d=>d.code+" ("+d.reason+")").join(", ")||"—")
+        +'</p></div>';
+    });
+    $("evBody").innerHTML=h+"</div>";
+  }
+
+  async function startEvalRun(){
+    const cfg=evalConfig();
+    cfg.include_handwritten=$("evControl").checked;
+    const r=await fetch("/api/evals/runs",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(cfg)});
+    if(r.status===409){ $("evHint").textContent="A sweep is already running — one at a time."; return; }
+    if(!r.ok){ $("evHint").textContent="Couldn't start the sweep."; return; }
+    const job=await r.json();
+    evalRunId=job.run_id;
+    if(evalPoll) clearInterval(evalPoll);
+    evalPoll=setInterval(pollEvalRun, 2000);
+    pollEvalRun();
+  }
+
+  function fmtEta(s){
+    if(!s) return "";
+    const m=Math.round(s/60);
+    return m>=1 ? ("~"+m+" min left") : ("~"+Math.round(s)+"s left");
+  }
+
+  async function pollEvalRun(){
+    if(!evalRunId) return;
+    const r=await fetch("/api/evals/runs/"+encodeURIComponent(evalRunId));
+    if(!r.ok) return;
+    const j=await r.json();
+    const a=j.partial_aggregate||{};
+    let h='<div class="billing"><h3>Sweep '+esc(j.run_id)+' <span class="bhint">— '+esc(j.status)+'</span>'
+      +(j.status==="running"?' <button class="btn btn-ghost btn-sm" id="evCancel">Stop</button>':'')+'</h3>'
+      +'<p class="bunits"><b>'+j.done+' / '+j.total+'</b> generations · '+esc(j.current_record||"")
+      +' · '+fmtEta(j.eta_seconds)+'</p>';
+    if(j.error) h+='<p class="bmissing">⌖ '+esc(j.error)+'</p>';
+    if(a.records){
+      // Safety numbers first: a leak is a wrong claim, an accuracy dip is only an incomplete draft.
+      const unsafe=(a.distractor_leaks||0)+(a.untimed_leaks||0)+(a.laterality_errors||0)+(a.minutes_fabricated||0);
+      h+='<p class="bsub">Wrong claims (must be zero)</p><p class="'+(unsafe?"bmissing":"bunits")+'">'
+        +(a.distractor_leaks||0)+' billed something the therapist said was not done today · '
+        +(a.untimed_leaks||0)+' untimed minutes counted · '
+        +(a.laterality_errors||0)+' wrong-side diagnosis · '
+        +(a.minutes_fabricated||0)+' invented durations</p>';
+      const pct=v=>v==null?"n/a":Math.round(v*100)+"%";
+      h+='<p class="bsub">Accuracy</p><ul>'
+        +'<li>Treatment codes: '+pct(a.cpt_detection_recall)+' found, '+pct(a.cpt_detection_precision)+' correct</li>'
+        +'<li>Diagnosis codes: '+pct(a.icd_recall)+' found, '+pct(a.icd_precision)+' correct</li>'
+        +'<li>Minutes: '+pct(a.minutes_exact)+' exact ('+pct(a.minutes_within_2)+' within 2 min), '
+        +(a.minutes_not_extracted||0)+' left as a gap for the clinician</li>'
+        +'<li>Units: '+pct(a.units_exact)+' exact · CMS and AMA disagreed on '+(a.method_disagreements||0)+'</li>'
+        +'</ul>';
+    }
+    if(j.results_file) h+='<p class="bnote">Saved to evals/results/'+esc(j.results_file)+'</p>';
+    h+='</div>';
+    $("evBody").innerHTML=h;
+    const c=$("evCancel");
+    if(c) c.addEventListener("click", ()=>fetch("/api/evals/runs/"+encodeURIComponent(evalRunId)+"/cancel",{method:"POST"}));
+    if(j.status!=="running"){ clearInterval(evalPoll); evalPoll=null; }
+  }
+
   // ---------- Nav ----------
-  const PAGES={home:$("page-home"), patients:$("page-patients"), templates:$("page-templates"), status:$("page-status")};
+  const PAGES={home:$("page-home"), patients:$("page-patients"), templates:$("page-templates"), evals:$("page-evals"), status:$("page-status")};
   let currentPage="home";
   function showPage(name){
     if(!PAGES[name]) return;
@@ -1527,6 +1740,7 @@
     });
     if(name==="patients") renderRoster();
     else if(name==="templates") renderTemplates();
+    else if(name==="evals") renderEvals();
     else if(name==="status") renderStatus();
   }
   Array.prototype.forEach.call(document.querySelectorAll(".nav-tab"), t=>{

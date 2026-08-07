@@ -188,6 +188,22 @@ textarea:focus{outline:2px solid var(--teal);outline-offset:1px;border-color:var
 .bcode{font-family:"IBM Plex Mono",monospace;font-weight:600;color:#1a56b3}
 .bmin{color:#5a7590}
 .bnote{margin:8px 0 0;font-size:12px;color:#5a7590}
+/* Billing draft card (server-derived, app/generate/billing.py) */
+.billing .bsub{margin:10px 0 4px;font-size:12px;font-weight:700;color:#1a3a5c;text-transform:uppercase;letter-spacing:.04em}
+.billing .bsub:first-of-type{margin-top:2px}
+.bcue{display:block;font-size:12px;color:#6b8299;font-style:italic;margin-top:1px}
+.bunits{margin:10px 0 0;padding:8px 10px;background:#dcebf9;border-radius:8px;font-size:13px;color:#1a3a5c}
+.bwarn{color:#8a5a00;font-weight:600}
+.bexcl li{color:#6b8299}
+.bconflict{margin:8px 0 0;font-size:12.5px;color:#5a7590;padding-left:10px;border-left:2px solid #cfe0f0}
+.bconflict-hi{color:#8a5a00;border-left-color:#e0b050;font-weight:500}
+.bmissing{margin:6px 0 0;font-size:12.5px;color:#8a5a00}
+/* Evals tab */
+.evchk{display:flex;align-items:center;gap:6px;font-size:13px;color:#5a7590}
+.evsample{border-top:1px solid #cfe0f0;padding:10px 0}
+.evsample:first-of-type{border-top:0}
+.evtx{margin:0 0 6px;font-size:13px;color:#25415c;line-height:1.5}
+.evgold{margin:0;font-size:12px;color:#5a7590;font-family:"IBM Plex Mono",monospace;line-height:1.6}
 
 /* Ask-for-changes: plain-language revision of the generated note */
 .revise{background:var(--teal-tint);border:1px solid var(--teal-soft);border-radius:11px;padding:13px 15px;margin-top:16px}

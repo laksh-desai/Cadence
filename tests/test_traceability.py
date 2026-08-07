@@ -323,5 +323,44 @@ class CombinedVerificationTests(unittest.TestCase):
         self.assertEqual(out, "Pain 4/10.")
 
 
+class DegreesAndPainAnchoringRegressionTests(unittest.TestCase):
+    """Real-run false positives (synthetic-run-outputs): ROM stated as a bare number ("flexion
+    ninety") and pain best/current stated as bare numbers ("best two, currently four") were wrongly
+    flagged as fabricated. Lock the fix — and that a genuine fabrication is STILL flagged (no new
+    false negatives)."""
+
+    def test_rom_degrees_bare_number_anchors(self):
+        note = "Range of Motion: shoulder flexion 90 degrees, abduction 80 degrees, external rotation 15 degrees"
+        transcript = "active flexion ninety, abduction eighty, external rotation fifteen"
+        self.assertEqual(unanchored_values(note, transcript), [])
+
+    def test_fabricated_rom_degrees_still_flagged(self):
+        note = "Range of Motion: flexion 150 degrees"
+        self.assertIn("150 degrees", {a.value for a in unanchored_values(note, "active flexion ninety")})
+
+    def test_rom_degrees_does_not_anchor_to_blood_pressure_component(self):
+        # "80 degrees" must NOT be anchored by the "80" inside a blood pressure "130/80".
+        note = "Range of Motion: knee flexion 80 degrees"
+        transcript = "blood pressure one thirty over eighty, heart rate seventy"
+        self.assertIn("80 degrees", {a.value for a in unanchored_values(note, transcript)})
+
+    def test_pain_best_current_bare_numbers_anchor(self):
+        note = "Pain: Worst 7/10, Best 2/10, Current 4/10"
+        transcript = "pain worst is like seven out of ten, best two, right now about four"
+        self.assertEqual(unanchored_values(note, transcript), [])
+
+    def test_pain_currently_variant_anchors(self):
+        note = "Pain: Worst 8/10, Best 3/10, Current 5/10"
+        transcript = "worst eight out of ten, best three, currently five"
+        self.assertEqual(unanchored_values(note, transcript), [])
+
+    def test_fabricated_pain_score_still_flagged(self):
+        note = "Pain: Best 6/10"
+        self.assertIn("6/10", {a.value for a in unanchored_values(note, "pain worst seven out of ten, best two")})
+
+    def test_pain_shorthand_does_not_touch_a_med_dose(self):
+        self.assertNotIn("5/10", normalize_for_matching("takes current 5 mg dose"))
+
+
 if __name__ == "__main__":
     unittest.main()

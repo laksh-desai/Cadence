@@ -9,7 +9,9 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.generate import chunked, cpt, forms as forms_store, ollama_client, postprocess, traceability
+from app.generate import (
+    billing, chunked, cpt, forms as forms_store, ollama_client, postprocess, traceability,
+)
 from app.generate.forms import FORMS, VALID_MODES
 from app.generate.ollama_client import OllamaUnavailableError, generate_note
 from app.generate.parser import parse_plain
@@ -19,10 +21,14 @@ from app.integrations.sheets_client import SheetsClient, load_sheets_config
 from app.storage import carry_forward, db, repository
 from app.transcribe import medasr_client
 from app.ui.schemas import (
+    BillingLineModel,
+    BillingModel,
+    ConflictModel,
     FormOut,
     FormStep,
     GenerateRequest,
     GenerateResponse,
+    IcdCandidateModel,
     IntegrationStatus,
     NoteListItem,
     NoteOut,
@@ -38,6 +44,7 @@ from app.ui.schemas import (
     TemplateCreate,
     TemplateUpdate,
     TranscribeResponse,
+    UnitAllocationModel,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -124,6 +131,18 @@ async def index():
 
 
 app.mount("/static", _NoCacheStaticFiles(directory=STATIC_DIR), name="static")
+
+
+try:
+    from app.ui import evals_api
+
+    app.include_router(evals_api.router)
+except Exception:  # noqa: BLE001
+    # The evals package is developer tooling. If it is missing or broken, the clinical app must
+    # still start — same posture as the optional MedASR load in the lifespan above. The Evals tab
+    # then simply 404s instead of the whole server failing to boot.
+    logging.getLogger("cadence").warning("evals API unavailable; the Evals tab is disabled",
+                                         exc_info=True)
 
 
 @app.get("/api/status", response_model=StatusResponse)
@@ -360,15 +379,57 @@ def _generation_setup(body: GenerateRequest):
     return form, prior_block, used_prior, patient_ctx
 
 
-def _finalize_note(form, text, was_condensed, still_over, transcript, used_prior) -> GenerateResponse:
+def _billing_draft(form, bill_from: str | None, sections: list[dict] | None):
+    """The dictation-derived billing draft, or None when billing doesn't apply.
+
+    `bill_from` must be the raw DICTATION, never the generated note. The revise path passes None
+    for exactly this reason: its "transcript" is the note's own prose, and scanning model-written
+    prose for interventions is the misfire CLAUDE.md rule 12 forbids.
+    """
+    if not bill_from or form.id in cpt._NON_BILLING_FORMS:
+        return None
+    draft = billing.extract(bill_from)
+    if sections:
+        draft = billing.reconcile(draft, sections)
+    return BillingModel(
+        body_part=draft.body_part,
+        interventions=[
+            BillingLineModel(
+                code=h.code, label=h.label, timed=h.timed, status=h.status, cue=h.cue,
+                cue_strength=h.cue_strength, clause=h.clause, minutes=h.minutes,
+                minutes_basis=h.minutes_basis,
+            ) for h in draft.interventions
+        ],
+        icd_candidates=[
+            IcdCandidateModel(
+                code=c.code, label=c.label, cue=c.cue, clause=c.clause, laterality=c.laterality,
+                laterality_stated=c.laterality_stated, caution=c.caution,
+            ) for c in draft.icd_candidates
+        ],
+        total_timed_minutes=draft.total_timed_minutes,
+        untimed_codes=list(draft.untimed_codes),
+        units=UnitAllocationModel(**vars(draft.units)) if draft.units else None,
+        units_alt=UnitAllocationModel(**vars(draft.units_alt)) if draft.units_alt else None,
+        missing=list(draft.missing),
+        conflicts=[ConflictModel(kind=c.kind, severity=c.severity, code=c.code, detail=c.detail)
+                   for c in draft.conflicts],
+    )
+
+
+def _finalize_note(form, text, was_condensed, still_over, transcript, used_prior, *,
+                   bill_from: str | None = None) -> GenerateResponse:
     """Shared back of the generate path: parse the raw note, then the deterministic post-generation
     pipeline — postprocess safeguards, the verification/anti-hallucination flags (anchored against the
-    RAW dictation), and CPT suggestion. Identical whether the note was streamed or not."""
+    RAW dictation), CPT suggestion, and the billing draft. Identical whether the note was streamed
+    or not."""
     parsed = parse_plain(text)
     if parsed is None:
+        # The billing draft comes from the DICTATION, so it survives a model that ignored the
+        # output contract entirely — a failed generation still leaves the clinician usable codes.
         return GenerateResponse(
             sections=[], missing_info=[], form_id=form.id, form_name=form.name,
             used_prior=used_prior, raw_text=text,
+            billing=_billing_draft(form, bill_from, None),
         )
     sections = postprocess.apply(form.id, parsed["sections"])
     sections = traceability.add_verification_flags(sections, transcript)
@@ -386,6 +447,7 @@ def _finalize_note(form, text, was_condensed, still_over, transcript, used_prior
         sections=[SectionModel(**s) for s in sections],
         missing_info=missing,
         form_id=form.id, form_name=form.name, used_prior=used_prior, raw_text=None,
+        billing=_billing_draft(form, bill_from, sections),
     )
 
 
@@ -403,7 +465,8 @@ async def generate(body: GenerateRequest):
     except OllamaUnavailableError as e:
         raise HTTPException(502, str(e)) from e
     transcript = " ".join(filter(None, [body.summary, body.extra_info]))
-    return _finalize_note(form, text, was_condensed, still_over, transcript, used_prior)
+    return _finalize_note(form, text, was_condensed, still_over, transcript, used_prior,
+                          bill_from=transcript)
 
 
 @app.post("/api/generate/stream")
@@ -431,7 +494,8 @@ async def generate_stream(body: GenerateRequest):
             async for chunk in ollama_client.stream_note(prompt, model=model):
                 parts.append(chunk)
                 yield _event({"type": "token", "text": chunk})
-            result = _finalize_note(form, "".join(parts), was_condensed, still_over, transcript, used_prior)
+            result = _finalize_note(form, "".join(parts), was_condensed, still_over, transcript,
+                                    used_prior, bill_from=transcript)
             yield _event({"type": "done", "result": result.model_dump()})
         except OllamaUnavailableError as e:
             yield _event({"type": "error", "detail": str(e)})
@@ -474,7 +538,13 @@ async def revise_stream(body: ReviseRequest):
             async for chunk in ollama_client.stream_note(prompt, model=model):
                 parts.append(chunk)
                 yield _event({"type": "token", "text": chunk})
-            result = _finalize_note(form, "".join(parts), False, False, transcript, False)
+            # bill_from=None is deliberate and load-bearing. `transcript` here is the NOTE's own
+            # prose plus the instruction, not the dictation — scanning model-written prose for
+            # billable interventions is precisely the misfire rule 12 forbids. The client keeps
+            # showing the billing card from the original generate, which was derived from the
+            # real dictation and is still the correct draft for this visit.
+            result = _finalize_note(form, "".join(parts), False, False, transcript, False,
+                                    bill_from=None)
             yield _event({"type": "done", "result": result.model_dump()})
         except OllamaUnavailableError as e:
             yield _event({"type": "error", "detail": str(e)})
