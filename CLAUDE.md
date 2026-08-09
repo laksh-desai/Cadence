@@ -173,7 +173,9 @@ every note-generation prompt:
     stay clean section/CPT names (e.g. "## Therapeutic Exercise"); a heading like
     "## Minutes: 20 Therapeutic Exercise" is wrong. State this explicitly in the
     output-format instructions — local models default to folding it into the heading
-    if not told otherwise.
+    if not told otherwise. **Now also enforced deterministically** by
+    `postprocess.split_folded_headings`, which moves a folded heading's content down into the body
+    and keeps "Minutes: N" together with its number — see rule 19's backstop list.
 11. **MedGemma 4B reliably over-tags `[[CARRIED FORWARD]]` and invents empty
     "not performed" treatment sections, regardless of how explicitly the prompt
     forbids it** (confirmed across repeated runs with progressively more directive
@@ -212,6 +214,69 @@ every note-generation prompt:
     the editable review step before signing — Cadence drafts codes, the clinician bills.
     ICD-10 stays banned entirely (open-ended, no safe deterministic map). The `[[CPT: ...]]`
     marker renders as a distinct blue "code" chip (vs the amber gap chip) in `app.js`.
+    **NARROWED (2026-08) — ICD-10 is no longer banned outright, and billing is now also read from
+    the DICTATION.** Three amendments, each deliberately as narrow as its justification:
+    (a) **ICD-10 from a per-body-part CLOSED table only.** The original ban's reasoning —
+    "open-ended, no safe deterministic map" — holds for ICD-10-CM as a whole (~70k codes) but not
+    for a single body region's outpatient-PT differential, which is a closed set of ~8-14 codes the
+    therapist names aloud as the referring/working diagnosis. **Six regions are covered — shoulder,
+    knee, lumbar, cervical, hip, ankle/foot — and each is a SEPARATE closed table, not one merged
+    list.** Adding a region is a data-only change (an `ICD_BY_BODY_PART` entry, a `BODY_PART_CUES`
+    entry, a `TABLE_PROVENANCE` entry, and a phrase bank in `evals/synth/banks.py`); no logic in
+    `billing.py`, `score.py`, `server.py`, or `app.js` changes, and the UI picker reads
+    `BODY_PARTS` over the API. Two structural points that only appear once there is more than one
+    region: `body_part_for` returns **None on a tie** rather than picking a winner, because a wrong
+    table yields a confidently-wrong chip; and `IcdRule.lateralized` is False where ICD-10-CM gives
+    one code regardless of side (most lumbar/cervical codes, plantar fasciitis), so no "confirm
+    right or left" gap is raised for a distinction the code set does not make. Sign-off is
+    **per region** (`TABLE_PROVENANCE`), so the practice can verify the regions it actually sees
+    first and unverified ones stay visibly unverified. The narrowing is exactly that wide:
+    `app/generate/coding_tables.py:ICD_BY_BODY_PART`, matched only inside a clause that FRAMES
+    something as the diagnosis (`ICD_CONTEXT_CUES`) and never one that hedges it
+    (`ICD_HEDGE_CUES`, so "worried about a rotator cuff tear" yields nothing), laterality taken
+    only from what was said (unstated → the "unspecified" variant PLUS a gap flag, never a guessed
+    side), all candidates returned and none auto-picked. **The model still never authors a code** —
+    `postprocess.flag_code_sections` / `flag_code_field_lines` are unchanged and still strip
+    anything it writes. The table carries `ICD10CM_YEAR` / `ICD_TABLE_VERIFIED_BY` /
+    `ICD_TABLE_VERIFIED_ON`, and `tests/test_billing_extract.py` **FAILS while the latter two are
+    blank** — a stale or unverified code rendered as a confident chip is worse than no chip, which
+    is the exact failure this rule was written about.
+    (b) **Scanning the DICTATION is permitted where scanning the NOTE is not.** The prohibition
+    above is about the note's prose. The dictation carries the same class of risk through different
+    failure modes — negation, prior visits, plans, home program, self-correction — so
+    `app/generate/billing.py` guards it in four layers: clause-scoped matching (never a
+    whole-transcript substring test), strong vs weak cue tiers (a technique name like "stretching"
+    never bills on its own authority), a status enum (`performed | negated | prior_visit | planned |
+    home_program | uncertain`) that EXCLUDES WITH A VISIBLE REASON rather than dropping, and
+    `confirm_required=True` hard-coded and asserted on every path. **Policy on the asymmetry: a
+    MISSED intervention is a safe failure the clinician adds back; a LEAKED negated or prior-visit
+    one is an OVERBILL. Tune toward precision.** Measured by `distractor_leaks` in
+    `evals/score.py`. This is not theoretical — the eval harness caught a real leak before ship
+    (synthetic record 1021: "joint mobilization, I mean strength work" billed the RETRACTED
+    treatment, because the self-correction check wrongly required the replacement phrase to also
+    be a recognized cue).
+    (c) **Units are computed, but never as a single number.** `billing.units_for_minutes` is the
+    8-minute rule over TIMED codes only — the service-based modalities (97010, 97012, 97014, 97016,
+    97018, 97022, 97024, 97150) and the 97161/2/3 evaluations are excluded via `cpt.TIMED_CODES`,
+    because counting their minutes inflates the unit total. Since CMS substitution and the AMA rule
+    of eights genuinely disagree (97110=8min + 97140=8min → 1 unit vs 2), BOTH are returned, each
+    labelled with its method, and the disagreement is shown. This does not reopen "units are left
+    to the biller" — it surfaces the arithmetic with its assumptions named, and the biller still
+    decides. The draft is response metadata (`GenerateResponse.billing`), deliberately NOT a note
+    section, so nothing above changes about what the model is allowed to write.
+    **Confirmed on REAL generations (2026-08, MedGemma 4B, 3-record sweep), and the result is the
+    argument for the whole design:** on 2 of 3 notes the model folded the section CONTENT into the
+    `## ` headings and left EVERY body empty (8/14 headings over 80 chars, longest 339) — which per
+    `evals/score.py:MAX_HEADING_CHARS` silently no-ops the ENTIRE rule-20 verification layer, since
+    it inspects `body` only. **Billing was nonetheless 100% correct on those same notes** (CPT 3/3,
+    minutes 3/3 exact, units exact, zero leaks), because it is derived from the DICTATION and never
+    from the note. This is why `_billing_draft` is also computed on the `parse_plain is None`
+    early-return path: the billing draft is the one part of the pipeline that survives the model
+    ignoring its output contract. The same run also showed the two code sources earning their
+    keep — the model titled a section "## Simulated Overhead Painting Task", which
+    `cpt.suggest_codes` cannot match to 97530 by heading, so the note-side chip was missing
+    entirely while the dictation-side extraction found it and `billing.reconcile` raised it as a
+    `dictation_only` rule-15 omission.
 13. **Carry-forward reconciliation ("update, don't copy") is not reliable for every
     section, even when the prior snapshot and today's data are both available in the
     prompt.** Confirmed case: a real second-visit test (used_prior: true, snapshot
@@ -353,6 +418,16 @@ every note-generation prompt:
     pattern, move it into `postprocess.py`; reserve prompting for the classes that have no
     safe mechanical rewrite (arbitrary invented prose, cross-section paraphrase, meaning
     inversion), and lean on clinician review there.
+    **The 2026-08 addition to that backstop list is `postprocess.split_folded_headings`** — the
+    model writing a section's CONTENT on the `## ` line and leaving the body empty, measured on
+    2 of 3 notes in a real sweep (8/14 headings over 80 chars, longest 339). It was the worst
+    failure of this class precisely because it was INVISIBLE: `traceability.add_verification_flags`
+    inspects `body` only, so the entire rule-20 layer silently no-opped while the note scored clean
+    on every other invariant — and `app.js:renderEditView` gives a textarea only for the body, so
+    the content was not even correctable by the clinician. Text is MOVED, never rewritten. Since
+    the repair now runs at the same threshold `evals/score.py` checks, that invariant went
+    permanently green, so `folded_headings_raw` counts the fold on the RAW parse BEFORE the repair
+    — otherwise a worsening model would be silently absorbed.
 20. **Local verification layer — deterministic hallucination flags in the note**
     (`app/generate/traceability.py`, run in `/api/generate` after postprocess via
     `add_verification_flags`). Appends amber `[[NEEDS: ...]]` markers for two model-independent
@@ -395,6 +470,117 @@ every note-generation prompt:
     "edema not documented" alone); a second flagged an invented cane/walker goal and a fabricated
     40-minute session intensity, and surfaced the two edge cases fixed above. All flags reuse
     `[[NEEDS: ...]]` because that is the only marker the UI renders in amber.
+
+21. **Synthetic evals measure the extractor, not the world — keep the non-circular control.**
+    `evals/synth/` generates labeled dictations LABEL-FIRST (draw the diagnosis, interventions,
+    minutes and units, THEN render speech expressing them), seeded per-sample so a corpus is
+    deterministic and growing it never rewrites earlier records. Ground truth is therefore exact by
+    construction, and no LLM's guess ever becomes a gold label. **But the generator and the
+    extractor share an author**, so a synthetic-only score can sit at 100% while both are wrong
+    about how a real therapist talks. Three things keep that honest, and none is optional:
+    (a) `evals/synth/banks.py` deliberately includes PARAPHRASES the cue table does not know
+    ("hands-on work", "functional activities", "strength work"). A sample using one is still
+    labeled with the correct code, so the extractor genuinely misses it and recall genuinely drops
+    — that gap is the signal. Do NOT "fix" a low recall by copying paraphrases into
+    `coding_tables.INTERVENTION_CUES` without first deciding whether the phrase is unambiguous
+    enough to bill on.
+    (b) The 8 hand-written `evals/data/shoulder.jsonl` records stay as the control, and their
+    billing gold fields must be labeled BY HAND — never by running the extractor and accepting its
+    output, which would make the measurement perfectly circular. **The control immediately earned
+    its cost**: on its first run it caught three defects the synthetic corpus could not, because
+    the generator only ever renders phrasings it was given —
+    (i) a FOUR-CODE OVERBILL on record 108, where "Interventions **planned** include therapeutic
+    exercise, neuromuscular re-education, manual therapy, and therapeutic activities" billed all
+    four as performed, because every `TEMPORAL_FUTURE_CUES` entry was a VERB form ("plan to",
+    "will add") and a real evaluation note used the NOUN form;
+    (ii) a false-positive ICD (M25.512) from a HISTORY clause, because "history of" was a
+    diagnosis-CONTEXT cue, so a four-year-old symptom became a billable diagnosis; and
+    (iii) a missed ICD on a post-surgical header ("ten weeks post left SLAP repair, type two
+    labral tear"), which carried no recognized diagnosis context.
+    All three are fixed with regression tests. **The current gold labels were hand-read from the
+    transcripts by Claude, NOT by the clinician** — `gold_provenance.verified_by` in the JSONL is
+    still blank and must be filled by the clinician or a coder before these numbers mean anything
+    clinically. One known remaining gap is deliberate: record 106 states its diagnosis as a bare
+    header phrase ("Follow up, ..., left shoulder impingement, week two") with no framing at all,
+    and is left unmatched rather than loosening the context rule — a missed ICD is a safe failure,
+    a false one is a claim.
+    (c) `evals/results.py` reports every aggregate three ways — `synthetic`, `handwritten`, `all`.
+    Reading only `all` hides the comparison. **The DIRECTION of the gap is the diagnosis, and the
+    two directions mean opposite things:**
+    *synthetic scoring HIGHER* is the circularity failure — the generator taught the extractor its
+    own vocabulary and the score is measuring that agreement rather than the world.
+    *synthetic scoring LOWER* means the generator is stress-testing harder than reality, which is
+    the intended state and is where the corpus currently sits (2026-08: synthetic CPT 86% billed
+    vs hand-written 100%, because `banks.py` deliberately speaks paraphrases the cue table does not
+    know while a real therapist mostly says the service's own name).
+    The two sets are complementary, not redundant, and neither replaces the other: the synthetic
+    corpus stresses **vocabulary** (unknown phrasings for a known service), and the hand-written
+    control stresses **structure** (how minutes, negations, and post-op framings are actually
+    spoken — "we spent about twenty-five minutes on", "held off on the e-stim", "she's four weeks
+    out from"). Every defect found so far came from the structural axis, which is exactly the axis
+    a template generator cannot probe.
+    Same spirit as rule 19's "re-verify with a REAL generation, never unit tests alone": a green
+    eval is evidence, not proof.
+    **The ICD half of this was CIRCULAR for a while and nobody noticed** — worth knowing because it
+    is the easiest mistake to repeat. `_draw_diagnosis` picked the spoken diagnosis with
+    `rng.choice(rule.cues)`, straight out of the extractor's OWN cue list, so ICD recall read 100%
+    across 144 records while measuring nothing but that the extractor recognizes the strings it was
+    told to recognize. The CPT side had had a deliberate paraphrase gap all along; the ICD side had
+    no equivalent. Adding `banks.DIAGNOSIS_PARAPHRASES` (real wordings the table does NOT know)
+    dropped honest recall to **79% — and to 9% on paraphrased samples**. After admitting the
+    unambiguous ones it is **92% with 0 false positives and 0 laterality errors**.
+    **The rejections are the interesting half.** A paraphrase is only admitted if it NAMES the
+    diagnosis; a SYMPTOM with several causes is left unmatched on purpose — "heel pain" (fat pad,
+    calcaneal stress fracture, Sever's), "anterior knee pain", "lateral hip pain" (bursitis vs
+    gluteal tendinopathy), "stiff shoulder" (M25.61 stiffness vs M75.0 capsulitis). The sharpest is
+    **"PF", which means plantar fascia to a foot therapist and patellofemoral to a knee therapist**
+    and can never be safely expanded. Two of these had been written into the generator as gold
+    LABELS, which is worse than a missing cue: labelling a symptom with one specific diagnosis
+    scores a correct extraction as a failure and creates pressure to admit an unsafe cue. Same
+    class as the "quad tendon irritation" bug (the quadriceps and patellar tendons are different
+    structures). **When honest recall looks low, check the gold labels before touching the cue
+    table.**
+    (d) **Read the ERROR DIRECTION, not just the accuracy percentage.** "units exact 57%" reads
+    alarming and is nearly meaningless on its own; the number that carries billing risk is
+    `units_overstated` (0 across 162 records), because over-counting is an overbill while
+    under-counting is a safe gap the clinician fills from the visible missing-minutes flag. The
+    same split applies to detection: `cpt_detection_recall` (87%) is what Cadence bills without
+    asking, `cpt_surfaced_recall` (100%) is what it bills OR raises for confirmation, and the gap
+    between them is clinician work rather than error. A metric that hides direction invites the
+    wrong fix — chasing "units exact" upward would mean auto-billing ambiguous phrases, which is
+    exactly the trade rule 12 forbids.
+    **The sharpest instance of this, worth internalising:** `units_exact` sat at 56% on the
+    synthetic corpus, which reads like broken arithmetic. It was not. In every failing record the
+    code WAS detected, the minutes WERE extracted exactly, and the only thing standing between the
+    draft and the gold answer was a confirmation click on a weak-cue line. `units_exact_if_confirmed`
+    is **100% across all 162 records** — the unit math has never once been wrong. The 56% was
+    measuring the weak-cue policy wearing an arithmetic label. Hence `BillingDraft.units_if_confirmed`,
+    computed server-side (never in JavaScript — the 8-minute rule lives in ONE place, the same
+    reason `TIMED_CPT` was deleted from `app.js`) and surfaced in the review card as "confirming
+    the lines above would add N timed min → X units instead of Y", so the clinician sees the
+    consequence of the click rather than a number that silently under-reports.
+
+22. **Clinician corrections are captured, and the only trainable corpus is the synthetic one.**
+    Two halves, and the second is a hard constraint rather than a preference.
+    (a) **Capture.** Every clinician correction used to be destroyed: `app.js` wrote edits into the
+    section body in place, and the "Ask for changes" instruction — the clinician saying in their own
+    words what was wrong, the highest-signal correction data the app sees — was never persisted at
+    all. The `notes` table now stores `original_sections_json`, `revise_instructions_json`,
+    `edited_section_count`, and generation provenance (`model_id`, `template_spec_sha`, …). **NULL
+    means "not captured" and 0 means "accepted as generated"** — a `NOT NULL DEFAULT 0` on the edit
+    count would make every pre-capture note look blindly-accepted and destroy the exact signal being
+    built. This is real patient content: it stays in the encrypted row, is deliberately NOT on the
+    HTTP read surface, and `tests/test_correction_capture.py` enforces that no export path exists.
+    (b) **Training.** There is no GPU on either machine (dev box `torch+cpu`; target ThinkPad has
+    Intel UHD 620), a 4B QLoRA needs 10-16 GB VRAM, so training is NECESSARILY off-device — and
+    off-device is a third party that is not Google Workspace. **Therefore the only trainable corpus
+    Cadence can ever have is `(synthetic dictation → clinician-corrected note)`. Real corrected
+    notes can inform prompt rules, backstops, and measurement; they can never be training data.**
+    That does not change if the corpus grows or a deadline tightens — it follows from where the
+    compute lives. The `synthetic` column exists so a future export must filter `WHERE synthetic=1`
+    at the SQL level rather than trusting someone to remember which patient was fake. Full recipe,
+    including why deterministically-rendered targets are the wrong shortcut (they teach templated
+    prose, violating rule 9, and are circular per rule 21): `docs/finetune-when-viable.md`.
 
 ## Standing workflow instruction
 

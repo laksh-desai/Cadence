@@ -77,6 +77,24 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "sheet_synced_at" not in existing:
         conn.execute("ALTER TABLE patients ADD COLUMN sheet_synced_at TEXT")
 
+    # Correction capture (see the column comments in schema.sql). Both halves are required:
+    # executescript's CREATE TABLE IF NOT EXISTS is a no-op on an existing table, and this block
+    # is a no-op on a fresh one. Every column is nullable except `synthetic`, so a pre-migration
+    # note reads as "not captured" rather than "accepted as generated".
+    note_cols = {row[1] for row in conn.execute("PRAGMA table_info(notes)")}
+    for column, ddl in (
+        ("original_sections_json", "TEXT"),
+        ("revise_instructions_json", "TEXT"),
+        ("edited_section_count", "INTEGER"),
+        ("model_id", "TEXT"),
+        ("fast_tier", "INTEGER"),
+        ("template_spec_sha", "TEXT"),
+        ("template_customized", "INTEGER"),
+        ("synthetic", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if column not in note_cols:
+            conn.execute(f"ALTER TABLE notes ADD COLUMN {column} {ddl}")
+
 
 def get_connection() -> sqlite3.Connection:
     if _runtime_db_path is None:

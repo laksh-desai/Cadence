@@ -24,6 +24,7 @@
     <button class="nav-tab active" data-page="home">Home</button>
     <button class="nav-tab" data-page="patients">All Patients</button>
     <button class="nav-tab" data-page="templates">Templates</button>
+    <button class="nav-tab" data-page="evals">Evals</button>
     <button class="nav-tab" data-page="status">Status</button>
   </nav>
 
@@ -122,6 +123,14 @@
     </div>
     <p class="pagelede">The outline Cadence fills for each note type — read it while you dictate so you cover everything, or edit it to change what the note asks for. Editing an outline changes what the local model is told to produce; every note is still clinician-reviewed. Duplicate a template to start a variant, and reset any built-in back to its original.</p>
     <div id="templatesMount"></div>
+  </section>
+
+  <section id="page-evals" class="page hidden">
+    <div class="pagehead">
+      <h1>Billing Accuracy Evals</h1>
+    </div>
+    <p class="pagelede">Measure how well Cadence reads billing codes, treatment minutes, and units out of a dictation. Cadence writes realistic fake sessions <em>together with the right answers</em>, runs them through the real pipeline, and scores what it got. No real patient data is involved and nothing is saved to any patient's file. Generating samples is instant; running a sweep uses the local model and takes roughly a minute or two per note, during which note generation will be slow.</p>
+    <div id="evalsMount"></div>
   </section>
 
   <section id="page-status" class="page hidden">

@@ -89,6 +89,16 @@ def normalize_for_matching(text: str) -> str:
     # "X over Y" -> "X/Y" — some clinicians say pain "four over ten". Only affects values that then
     # match a pattern (N/10, N/5); "4 over 6 weeks" -> "4/6 weeks" matches nothing, so it's harmless.
     s = re.sub(r"\b(\d+)\s+over\s+(\d+)\b", r"\1/\2", s)
+    # Pain-scale shorthand: once "worst N out of ten" establishes the 0-10 scale, clinicians routinely
+    # give the best/current values as BARE numbers ("best two, currently four", "right now about four").
+    # Attach /10 to a 0-10 value right after worst/best/current(ly)/now so the note's "2/10"/"4/10"
+    # anchors to the dictation instead of being false-flagged as fabricated (observed on real runs).
+    # Guarded so it never touches a value that already has /10 or that carries a real unit (dose, %, etc).
+    s = re.sub(
+        r"\b(worst|best|current|currently|now)\s+(?:is\s+|at\s+|about\s+|around\s+)?(10|[0-9])\b"
+        r"(?!\s*(?:/|mg|ml|milligram|gram|mcg|microgram|percent|%|degree|feet|foot|ft|minute|second|"
+        r"week|day|pound|lb|out of))",
+        r"\1 \2/10", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -138,7 +148,14 @@ def anchor_note_to_transcript(note_text: str, transcript: str) -> list[Anchor]:
     norm_transcript = normalize_for_matching(transcript)
     results: list[Anchor] = []
     for v in extract_values(note_text):
-        hit = v.value if _contains_value(norm_transcript, v.value) else None
+        if v.kind == "degrees":
+            # ROM is almost always dictated as a bare number ("flexion ninety"), while the note writes
+            # "90 degrees" — so anchor on the NUMBER, not "90 degrees", else every real ROM value
+            # false-flags (observed repeatedly on real runs). The number boundary rejects fractions and
+            # BP components ("130/80"), so it can't anchor to a blood pressure.
+            hit = v.value if _contains_number(norm_transcript, v.value.split()[0]) else None
+        else:
+            hit = v.value if _contains_value(norm_transcript, v.value) else None
         results.append(Anchor(kind=v.kind, value=v.value, anchored=hit is not None, transcript_hit=hit))
     return results
 
@@ -152,6 +169,13 @@ def _contains_value(norm_transcript: str, value: str) -> bool:
     # Word-boundary-ish match so "4/5" doesn't spuriously match inside "14/5" etc. The value
     # already carries its own delimiters (/ , space+unit), so a direct search is safe here.
     return re.search(rf"(?<![\d/]){re.escape(value)}", norm_transcript) is not None
+
+
+def _contains_number(norm_transcript: str, num: str) -> bool:
+    """True if `num` appears in the transcript as a standalone number — not inside a fraction/range/
+    decimal ("130/80", "3+/5", "5.5") — so a degrees value anchors to a spoken bare number but never
+    to a blood-pressure component or an MMT grade."""
+    return re.search(rf"(?<![\d./+-]){re.escape(num)}(?![\d./+-])", norm_transcript) is not None
 
 
 _EXISTING_MARKER_RE = re.compile(r"\[\[NEEDS:[^\]]*\]\]")

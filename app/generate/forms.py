@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -106,6 +107,20 @@ def is_custom(form_id: str) -> bool:
 def is_customized(form_id: str) -> bool:
     """A built-in whose shipped outline has been overridden by the user."""
     return is_builtin(form_id) and _override_path(form_id).exists()
+
+
+def spec_sha(form_id: str) -> str | None:
+    """Short hash of the outline that was actually fed to the model.
+
+    Stamped onto a saved note so a captured correction stays interpretable: templates are
+    runtime-editable, so without this there is no way to tell later whether a note was generated
+    against the outline the template currently holds. The spec IS the generation prompt, so a
+    changed spec means a differently-instructed model.
+    """
+    form = FORMS.get(form_id)
+    if form is None:
+        return None
+    return hashlib.sha256(form.spec.encode("utf-8")).hexdigest()[:16]
 
 
 def _read_override(form_id: str) -> str | None:

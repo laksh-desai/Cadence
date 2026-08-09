@@ -6,7 +6,12 @@ import os
 import httpx
 
 # Quality tier: the medical-tuned 4B used for every note the clinician signs.
-MODEL = "williamljx/medgemma-4b-it-Q4_K_M-GGUF"
+# Env-overridable so a fine-tuned build can be A/B'd against the base with no code edit and no
+# rebuild — `set CADENCE_MODEL=cadence-medgemma:v1` then re-run the sweep. This and `model_for()`
+# below are the ONLY places a quality-tier model name is chosen; every path (generate, stream,
+# revise, the eval runner, and chunked's condense callback) routes through them.
+# See docs/finetune-when-viable.md.
+MODEL = os.environ.get("CADENCE_MODEL", "williamljx/medgemma-4b-it-Q4_K_M-GGUF")
 # Fast-draft tier: a much smaller general model for a quick first pass the clinician then edits
 # (or re-runs on the quality model before signing). Same Gemma family, ~2B params, so ~2-4x faster
 # on this CPU-only box. Deliberately NOT the default -- it is not medical-tuned; every note is

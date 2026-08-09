@@ -11,8 +11,22 @@ app/storage/.runtime/
 *.sqlite
 *.sqlite3
 
-# Eval harness output (generated notes from the synthetic corpus — regenerable, noisy diffs).
-evals/runs/
+# Per-generation debug artifacts: one JSON + one .note.md per note. Regenerable, and they churn
+# on every sweep because the model is nondeterministic — noisy diffs with little review value.
+# The trailing * also covers the --out variants (evals/runs_baseline/, evals/runs_after/).
+evals/runs*/
+
+# Per-sweep SCORED RESULTS ARE COMMITTED so teammates can review a run and diff it against a
+# later one (scripts/eval_compare.py). Small, structured, and meaningful in a PR.
+#
+# EXCEPT when the sweep touched real dictation. `RecordResult.flags[].context` embeds a ~120-char
+# TRANSCRIPT EXCERPT so a reviewer can adjudicate a flag — harmless for synthetic patients, but
+# real patient speech if the corpus included a *.local.jsonl file. `evals/results.py:write_run`
+# detects that and names the output `*.local.json`, which stays out of git. Same convention as
+# the corpus files below, so there is one rule to remember: `.local` means "never leaves here".
+evals/results/*.local.json
+evals/results/index.local.jsonl
+
 # Any corpus file holding REAL dictation rather than synthetic records. The synthetic
 # corpus in evals/data/*.jsonl IS committed so eval results are reproducible.
 evals/data/*.local.jsonl
