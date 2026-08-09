@@ -216,8 +216,19 @@ every note-generation prompt:
     the DICTATION.** Three amendments, each deliberately as narrow as its justification:
     (a) **ICD-10 from a per-body-part CLOSED table only.** The original ban's reasoning —
     "open-ended, no safe deterministic map" — holds for ICD-10-CM as a whole (~70k codes) but not
-    for a single body region's outpatient-PT differential, which is a closed set of ~12 codes the
-    therapist names aloud as the referring/working diagnosis. The narrowing is exactly that wide:
+    for a single body region's outpatient-PT differential, which is a closed set of ~8-14 codes the
+    therapist names aloud as the referring/working diagnosis. **Six regions are covered — shoulder,
+    knee, lumbar, cervical, hip, ankle/foot — and each is a SEPARATE closed table, not one merged
+    list.** Adding a region is a data-only change (an `ICD_BY_BODY_PART` entry, a `BODY_PART_CUES`
+    entry, a `TABLE_PROVENANCE` entry, and a phrase bank in `evals/synth/banks.py`); no logic in
+    `billing.py`, `score.py`, `server.py`, or `app.js` changes, and the UI picker reads
+    `BODY_PARTS` over the API. Two structural points that only appear once there is more than one
+    region: `body_part_for` returns **None on a tie** rather than picking a winner, because a wrong
+    table yields a confidently-wrong chip; and `IcdRule.lateralized` is False where ICD-10-CM gives
+    one code regardless of side (most lumbar/cervical codes, plantar fasciitis), so no "confirm
+    right or left" gap is raised for a distinction the code set does not make. Sign-off is
+    **per region** (`TABLE_PROVENANCE`), so the practice can verify the regions it actually sees
+    first and unverified ones stay visibly unverified. The narrowing is exactly that wide:
     `app/generate/coding_tables.py:ICD_BY_BODY_PART`, matched only inside a clause that FRAMES
     something as the diagnosis (`ICD_CONTEXT_CUES`) and never one that hedges it
     (`ICD_HEDGE_CUES`, so "worried about a rotator cuff tear" yields nothing), laterality taken
@@ -482,10 +493,31 @@ every note-generation prompt:
     and is left unmatched rather than loosening the context rule — a missed ICD is a safe failure,
     a false one is a claim.
     (c) `evals/results.py` reports every aggregate three ways — `synthetic`, `handwritten`, `all`.
-    A large gap between the first two means the generator has taught the extractor its own blind
-    spots. Reading only `all` hides exactly that.
+    Reading only `all` hides the comparison. **The DIRECTION of the gap is the diagnosis, and the
+    two directions mean opposite things:**
+    *synthetic scoring HIGHER* is the circularity failure — the generator taught the extractor its
+    own vocabulary and the score is measuring that agreement rather than the world.
+    *synthetic scoring LOWER* means the generator is stress-testing harder than reality, which is
+    the intended state and is where the corpus currently sits (2026-08: synthetic CPT 86% billed
+    vs hand-written 100%, because `banks.py` deliberately speaks paraphrases the cue table does not
+    know while a real therapist mostly says the service's own name).
+    The two sets are complementary, not redundant, and neither replaces the other: the synthetic
+    corpus stresses **vocabulary** (unknown phrasings for a known service), and the hand-written
+    control stresses **structure** (how minutes, negations, and post-op framings are actually
+    spoken — "we spent about twenty-five minutes on", "held off on the e-stim", "she's four weeks
+    out from"). Every defect found so far came from the structural axis, which is exactly the axis
+    a template generator cannot probe.
     Same spirit as rule 19's "re-verify with a REAL generation, never unit tests alone": a green
     eval is evidence, not proof.
+    (d) **Read the ERROR DIRECTION, not just the accuracy percentage.** "units exact 57%" reads
+    alarming and is nearly meaningless on its own; the number that carries billing risk is
+    `units_overstated` (0 across 162 records), because over-counting is an overbill while
+    under-counting is a safe gap the clinician fills from the visible missing-minutes flag. The
+    same split applies to detection: `cpt_detection_recall` (87%) is what Cadence bills without
+    asking, `cpt_surfaced_recall` (100%) is what it bills OR raises for confirmation, and the gap
+    between them is clinician work rather than error. A metric that hides direction invites the
+    wrong fix — chasing "units exact" upward would mean auto-billing ambiguous phrases, which is
+    exactly the trade rule 12 forbids.
 
 ## Standing workflow instruction
 

@@ -162,8 +162,13 @@ class RoundTripTests(unittest.TestCase):
         self.assertEqual(back.minutes.fabricated, original.minutes.fabricated)
         self.assertEqual(back.units.computed_units, original.units.computed_units)
         self.assertEqual(back.units.untimed_leak, original.units.untimed_leak)
+        self.assertEqual(back.units.overstated, original.units.overstated)
+        self.assertEqual(back.billing_detection.surfaced, original.billing_detection.surfaced)
+        self.assertEqual(back.billing_detection.surfaced_recall,
+                         original.billing_detection.surfaced_recall)
         self.assertEqual(back.agreement.both, original.agreement.both)
         self.assertEqual(back.is_synthetic, original.is_synthetic)
+        self.assertEqual(back.body_part, original.body_part)
 
     def test_to_dict_keys_are_all_read_back(self):
         """Guards the pairing directly: a block added to to_dict() without a matching branch in
@@ -187,9 +192,14 @@ class AggregateTests(unittest.TestCase):
         draft = billing.reconcile(billing.extract(rec.transcript, body_part=rec.body_part), [])
         result = runner.score_one(rec, FORMS["followup"], [], [], False, 1.0, 1, True, draft)
         agg = runner.aggregate([result])
-        for key in ("distractor_leaks", "untimed_leaks", "laterality_errors", "minutes_fabricated"):
+        for key in ("distractor_leaks", "untimed_leaks", "laterality_errors",
+                    "minutes_fabricated", "units_overstated"):
             self.assertIn(key, agg)
             self.assertEqual(agg[key], 0)
+        # Surfaced recall must be reported alongside billed recall: the gap between them is
+        # clinician work, not error, and collapsing them hides which one moved.
+        self.assertIn("cpt_surfaced_recall", agg)
+        self.assertGreaterEqual(agg["cpt_surfaced_recall"], agg["cpt_detection_recall"])
 
     def test_results_split_synthetic_from_handwritten(self):
         """The non-circular control must stay separable — a synthetic-only score can look good

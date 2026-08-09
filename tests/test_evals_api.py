@@ -24,21 +24,28 @@ class OptionsTests(unittest.TestCase):
         """The pickers read this, so adding a body part is a data-only change with no JS edit."""
         from app.generate import coding_tables
         data = self.client.get("/api/evals/options").json()
-        self.assertIn("shoulder", data["body_parts"])
         self.assertEqual(set(data["note_types"]), {"initial", "followup"})
         self.assertEqual(set(data["complexities"]), {"low", "medium", "high"})
         for part in data["body_parts"]:
             self.assertIn(part, coding_tables.BODY_PARTS)
+        # Every region with an ICD table AND a phrase bank must be offered — a region that has
+        # tables but never reaches the picker is invisible work.
+        from evals.synth import banks
+        expected = [p for p in coding_tables.BODY_PARTS if p in banks.TREATMENTS_BY_BODY_PART]
+        self.assertEqual(data["body_parts"], expected)
+        self.assertGreater(len(expected), 1, "multi-body-part support regressed to one region")
 
-    def test_the_icd_verification_state_is_exposed(self):
-        """The UI shows a warning banner while the code table is unsigned-off, so the flag has to
-        reach the client rather than living only in a test."""
+    def test_the_icd_verification_state_is_exposed_per_body_part(self):
+        """The UI banners unverified regions, so the per-region flag has to reach the client
+        rather than living only in a test."""
         from app.generate import coding_tables
         data = self.client.get("/api/evals/options").json()
-        self.assertEqual(
-            data["icd_table_verified"],
-            bool(coding_tables.ICD_TABLE_VERIFIED_BY and coding_tables.ICD_TABLE_VERIFIED_ON),
-        )
+        for part in data["body_parts"]:
+            with self.subTest(part=part):
+                self.assertEqual(data["icd_verified_by_part"][part],
+                                 coding_tables.is_verified(part))
+        self.assertEqual(sorted(data["unverified_body_parts"]),
+                         sorted(p for p in data["body_parts"] if not coding_tables.is_verified(p)))
 
 
 class SampleEndpointTests(unittest.TestCase):

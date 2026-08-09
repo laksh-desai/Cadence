@@ -50,6 +50,11 @@ UNCERTAIN = "uncertain"
 #: draft with its reason so the clinician can see what was excluded and why.
 BILLABLE_STATUS = PERFORMED
 
+#: Statuses that both assert the treatment HAPPENED TODAY — it is only the code that is in doubt
+#: for `uncertain`. Minutes may be carried between these two; they must never be carried from
+#: `planned`, `prior_visit`, `negated`, or `home_program`, which assert the opposite.
+TODAY_STATUSES = frozenset({PERFORMED, UNCERTAIN})
+
 # --- how minutes were arrived at --------------------------------------------------
 EXPLICIT = "explicit"                      # "twenty minutes of ther ex"
 FRACTION = "fraction"                      # "a third of the session", with a stated session total
@@ -642,10 +647,19 @@ def _dedupe(hits: list[InterventionHit]) -> list[InterventionHit]:
         if cur is None:
             by_code[h.code] = h
         elif order[h.status] < order[cur.status]:
-            # A better status wins OUTRIGHT — minutes are never carried across from a mention with
-            # a different status. Borrowing a planned or prior-visit duration for today's
-            # performed treatment would be inventing a billable value out of a non-billable one.
-            by_code[h.code] = h
+            # A better status wins. Minutes carry across ONLY between statuses that both assert
+            # the treatment happened today, and only to FILL a blank — never to add. Borrowing a
+            # planned or prior-visit duration would invent a billable value out of a non-billable
+            # one; filling a blank from an `uncertain` mention of the same code cannot over-count,
+            # because nothing is summed.
+            #
+            # Found by the all-region eval on synthetic record 2021: "strength work, eight
+            # minutes" (weak cue -> uncertain) followed by "electrical stimulation, I mean ther ex"
+            # (strong cue -> performed, no minutes) silently dropped the 8 minutes on the floor.
+            carry = (h.minutes is None and cur.minutes is not None
+                     and h.status in TODAY_STATUSES and cur.status in TODAY_STATUSES)
+            by_code[h.code] = (replace(h, minutes=cur.minutes, minutes_basis=cur.minutes_basis)
+                               if carry else h)
         elif h.status == cur.status and h.minutes:
             # Same status, both stated: the therapist split one treatment across the session
             # ("ther ex twenty minutes ... more ther ex, ten minutes at the end").

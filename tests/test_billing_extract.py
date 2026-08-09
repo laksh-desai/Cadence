@@ -158,6 +158,22 @@ class CueStrengthTests(unittest.TestCase):
         self.assertEqual(_status(draft, "97140"), PERFORMED)
         self.assertIsNone(_status(draft, "97110"))
 
+    def test_traction_is_disambiguated_by_what_the_therapist_said(self):
+        """MECHANICAL traction (97012) is a service-based modality; MANUAL traction (97140) is a
+        timed hands-on technique. They bill completely differently, so bare "traction" — how a
+        spine dictation usually says it — must surface for confirmation rather than guess.
+
+        Found by the all-region eval: bare "traction" was the ONLY code in the whole corpus that
+        was never even surfaced, because the table knew "mechanical traction" and nothing else.
+        """
+        self.assertEqual(_status(billing.extract("Low back. Mechanical traction fifteen minutes."),
+                                 "97012"), PERFORMED)
+        self.assertEqual(_status(billing.extract("Neck. Manual traction for ten minutes."),
+                                 "97140"), PERFORMED)
+        bare = billing.extract("Low back. We also did traction in supine.")
+        self.assertEqual(_status(bare, "97012"), UNCERTAIN)
+        self.assertEqual(bare.billable, ())
+
     def test_ther_ex_abbreviation_does_not_match_inside_other_exercise(self):
         """Word boundaries are load-bearing: a naive substring test for "ther ex" fires inside
         "oTHER EXercise", billing 97110 off a sentence that never named the service."""
@@ -327,12 +343,20 @@ class IcdTests(unittest.TestCase):
         self.assertEqual(draft.icd_candidates, ())
 
     def test_a_post_surgical_header_frames_the_diagnosis(self):
-        """Regression (record 107): "ten weeks post left SLAP repair, type two labral tear" is how
-        a post-op visit actually opens, and carried no recognized diagnosis context."""
+        """Regressions from the hand-written control set. Both are how a post-op visit actually
+        opens, and neither carried a recognized diagnosis context:
+          * record 107 — "ten weeks post left SLAP repair, type two labral tear"
+          * record 201 — "she's four weeks out from a right total knee replacement"
+        """
         draft = billing.extract(
             "This is a follow-up, ten weeks post left SLAP repair, type two labral tear."
         )
         self.assertIn("S43.432", {c.code for c in draft.icd_candidates})
+
+        draft = billing.extract(
+            "Follow up, right knee, she's four weeks out from a right total knee replacement."
+        )
+        self.assertIn("Z47.1", {c.code for c in draft.icd_candidates})
 
     def test_no_body_part_means_no_icd_at_all(self):
         draft = billing.extract("Patient did therapeutic exercise for twenty minutes.")
@@ -363,14 +387,45 @@ class DedupeTests(unittest.TestCase):
         self.assertEqual(_status(draft, "97140"), PERFORMED)
         self.assertEqual(_hit(draft, "97140").minutes, 15)
 
-    def test_minutes_are_never_borrowed_across_statuses(self):
+    def test_minutes_are_never_borrowed_from_a_not_today_status(self):
         """A planned treatment's duration must not become today's billable minutes."""
+        for text, why in [
+            ("Shoulder. We did gait training. Next visit we will do gait training for thirty minutes.",
+             "planned"),
+            ("Shoulder. We did gait training. Last visit we did gait training for thirty minutes.",
+             "prior_visit"),
+            ("Shoulder. We did gait training. Her home program has gait training for thirty minutes.",
+             "home_program"),
+        ]:
+            with self.subTest(source=why):
+                draft = billing.extract(text)
+                self.assertEqual(_status(draft, "97116"), PERFORMED)
+                self.assertIsNone(_hit(draft, "97116").minutes)
+                self.assertEqual(draft.total_timed_minutes, 0)
+
+    def test_minutes_do_carry_between_two_today_mentions_of_one_code(self):
+        """Regression from the all-region eval (synthetic record 2021).
+
+        "strength work, eight minutes" is a WEAK cue, so it lands as `uncertain`; a later strong
+        cue for the same code ("...I mean ther ex") lands as `performed` with no minutes. Both
+        assert today's session — only the CODE was ever in doubt — so the 8 minutes belongs to the
+        performed line. An earlier version let the better status win outright and dropped it.
+        """
         draft = billing.extract(
-            "Shoulder. We did gait training. Next visit we will do gait training for thirty minutes."
+            "Left knee. Then strength work, eight minutes. "
+            "Then electrical stimulation, I mean ther ex."
         )
-        self.assertEqual(_status(draft, "97116"), PERFORMED)
-        self.assertIsNone(_hit(draft, "97116").minutes)
-        self.assertEqual(draft.total_timed_minutes, 0)
+        self.assertEqual(_status(draft, "97110"), PERFORMED)
+        self.assertEqual(_hit(draft, "97110").minutes, 8)
+        self.assertEqual(draft.total_timed_minutes, 8)
+
+    def test_carrying_minutes_fills_a_blank_and_never_sums(self):
+        """The carry can only ever fill a None. If it added, two mentions of one treatment block
+        would double-count it — the overbill direction."""
+        draft = billing.extract(
+            "Left knee. Then strength work, eight minutes. Then ther ex for twenty minutes."
+        )
+        self.assertEqual(_hit(draft, "97110").minutes, 20)
 
 
 class FullDraftTests(unittest.TestCase):
@@ -440,25 +495,33 @@ class TableIntegrityTests(unittest.TestCase):
 
         outstanding = []
         self.assertTrue(coding_tables.ICD10CM_YEAR)
-        if not (coding_tables.ICD_TABLE_VERIFIED_BY and coding_tables.ICD_TABLE_VERIFIED_ON):
+        unverified = coding_tables.unverified_body_parts()
+        if unverified:
             outstanding.append(
-                "  * app/generate/coding_tables.py: ICD_TABLE_VERIFIED_BY / _ON are blank — the "
-                f"shoulder ICD-10 table needs review against ICD-10-CM {coding_tables.ICD10CM_YEAR}."
+                "  * app/generate/coding_tables.py: TABLE_PROVENANCE has no verified_by/_on for "
+                f"{unverified} — each region's ICD-10 table needs review against ICD-10-CM "
+                f"{coding_tables.ICD10CM_YEAR}. Sign off the regions the practice actually sees "
+                "first; they are independent."
             )
 
         # The hand-written control set is what every accuracy number is measured against. Its
         # billing gold was hand-READ from the transcripts (never produced by the extractor, which
-        # would be circular), but hand-read is not the same as clinician-verified.
-        corpus = Path(__file__).resolve().parent.parent / "evals" / "data" / "shoulder.jsonl"
-        if corpus.exists():
-            unverified = [
-                json.loads(line)["id"]
-                for line in corpus.read_text(encoding="utf-8").splitlines() if line.strip()
-                if not (json.loads(line).get("gold_provenance") or {}).get("verified_by")
-            ]
+        # would be circular), but hand-read is not the same as clinician-verified. Scans EVERY
+        # corpus file rather than one named one, so a control set added for a new region is
+        # covered automatically instead of quietly escaping the gate.
+        data_dir = Path(__file__).resolve().parent.parent / "evals" / "data"
+        for path in sorted(data_dir.glob("*.jsonl")):
+            unverified = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                prov = rec.get("gold_provenance")
+                if prov is not None and not prov.get("verified_by"):
+                    unverified.append(rec["id"])
             if unverified:
                 outstanding.append(
-                    f"  * evals/data/shoulder.jsonl: records {unverified} have a blank "
+                    f"  * evals/data/{path.name}: records {unverified} have a blank "
                     "gold_provenance.verified_by — the non-circular control's billing labels are "
                     "hand-read, not clinician-verified (CLAUDE.md rule 21b)."
                 )
@@ -474,6 +537,55 @@ class TableIntegrityTests(unittest.TestCase):
             with self.subTest(part=part):
                 self.assertIn(part, coding_tables.BODY_PART_CUES)
                 self.assertTrue(coding_tables.ICD_BY_BODY_PART.get(part))
+                self.assertIn(part, coding_tables.TABLE_PROVENANCE)
+
+    def test_every_body_part_is_identifiable_from_its_own_cues(self):
+        """A region whose cues don't select its own table silently disables ICD for every note in
+        it — the failure mode that hid for a whole session when "shoulder" didn't match
+        "shoulderS"."""
+        for part, cues in coding_tables.BODY_PART_CUES.items():
+            for cue in cues:
+                with self.subTest(part=part, cue=cue):
+                    self.assertEqual(coding_tables.body_part_for(f"Patient with {cue} pain."), part)
+
+    def test_body_part_cues_do_not_collide_across_regions(self):
+        """Two regions claiming the same cue makes `body_part_for` tie and return None, which
+        disables ICD for both."""
+        seen: dict[str, str] = {}
+        for part, cues in coding_tables.BODY_PART_CUES.items():
+            for cue in cues:
+                with self.subTest(cue=cue):
+                    self.assertNotIn(cue, seen,
+                                     f"{cue!r} is claimed by both {seen.get(cue)} and {part}")
+                    seen[cue] = part
+
+    def test_every_icd_rule_is_reachable_from_its_own_cues(self):
+        """A rule ordered after a more generic one that swallows its cue can never fire. Catches
+        the ordering mistake at the point it is made rather than as a silent recall loss."""
+        for part, rules in coding_tables.ICD_BY_BODY_PART.items():
+            for rule in rules:
+                for cue in rule.cues:
+                    with self.subTest(part=part, cue=cue):
+                        draft = billing.extract(
+                            f"Visit for the {part}. Referring diagnosis is {cue}.",
+                            body_part=part)
+                        self.assertTrue(
+                            set(draft.icd_candidates and
+                                {c.code for c in draft.icd_candidates}) & set(rule.code_for(None)),
+                            f"{part}/{cue!r} did not reach {rule.code_for(None)} — a more generic "
+                            "rule ordered before it is swallowing the phrase",
+                        )
+
+    def test_non_lateralized_rules_do_not_ask_for_a_side(self):
+        """Most lumbar and cervical codes are region-based. Asking the clinician to confirm a side
+        ICD-10-CM does not distinguish is noise that trains them to ignore the gap list."""
+        draft = billing.extract("Neck visit. Referring diagnosis is cervicalgia.")
+        self.assertIn("M54.2", {c.code for c in draft.icd_candidates})
+        self.assertFalse(any("Laterality not stated" in m for m in draft.missing))
+
+    def test_lateralized_rules_still_ask_for_a_side(self):
+        draft = billing.extract("Knee visit. Referring diagnosis is knee osteoarthritis.")
+        self.assertTrue(any("Laterality not stated" in m for m in draft.missing))
 
     def test_every_intervention_cue_maps_to_a_known_cpt_code(self):
         from app.generate.cpt import _CPT_RULES

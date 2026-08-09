@@ -111,13 +111,16 @@ async def options():
     JS change at all."""
     from app.generate import coding_tables
     from evals.synth import banks, generate as synth
+    parts = [b for b in coding_tables.BODY_PARTS if b in banks.TREATMENTS_BY_BODY_PART]
     return {
-        "body_parts": [b for b in coding_tables.BODY_PARTS if b in banks.TREATMENTS_BY_BODY_PART],
+        "body_parts": parts,
         "note_types": list(synth.NOTE_TYPES),
         "complexities": list(synth.COMPLEXITIES),
         "generator_version": synth.GENERATOR_VERSION,
-        "icd_table_verified": bool(coding_tables.ICD_TABLE_VERIFIED_BY
-                                   and coding_tables.ICD_TABLE_VERIFIED_ON),
+        # Per body part: the clinician signs off the regions the practice actually sees first,
+        # and an unverified region stays visibly unverified instead of riding a global tick.
+        "icd_verified_by_part": {p: coding_tables.is_verified(p) for p in parts},
+        "unverified_body_parts": [p for p in parts if not coding_tables.is_verified(p)],
         "icd10cm_year": coding_tables.ICD10CM_YEAR,
     }
 

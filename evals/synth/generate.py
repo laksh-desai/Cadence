@@ -194,13 +194,23 @@ def _diverging_split(rng: random.Random, n: int) -> list[int]:
     return [rng.randint(8, 14) for _ in range(n)]
 
 
+def _spoken_part(body_part: str) -> str:
+    return banks.SPOKEN_PART.get(body_part, body_part)
+
+
 def _draw_diagnosis(rng: random.Random, body_part: str):
     rules = tables.ICD_BY_BODY_PART[body_part]
     rule = rng.choice(rules)
     phrase = rng.choice(rule.cues)
-    # "bilateral" is drawn rarely: it is a real case (and exercises the two-codes-for-one-rule
-    # path) but an unrepresentative share of real shoulder visits.
-    side = rng.choices(("right", "left", "bilateral", None), weights=(45, 40, 5, 10))[0]
+    if body_part in banks.MIDLINE_PARTS or not rule.lateralized:
+        # A midline region, or a condition ICD-10-CM codes the same either way. Speaking a side
+        # here would be unnatural AND would train the extractor on a laterality habit real spine
+        # dictation doesn't have.
+        side = None
+    else:
+        # "bilateral" is drawn rarely: a real case (and it exercises the two-codes-for-one-rule
+        # path) but an unrepresentative share of real visits.
+        side = rng.choices(("right", "left", "bilateral", None), weights=(45, 40, 5, 10))[0]
     codes = rule.code_for(side)
     return rule, phrase, side, codes
 
@@ -309,10 +319,10 @@ def _fillers(rng: random.Random, text: str, rate: float) -> str:
 
 
 def _treatment_sentence(rng: random.Random, item: GoldIntervention, complexity: str,
-                        total_timed: int, allow_bare: bool) -> tuple[str, bool]:
+                        total_timed: int, allow_bare: bool, body_part: str) -> tuple[str, bool]:
     """One treatment as speech. Returns (sentence, used_fraction)."""
     cue = rng.choice(banks.INTERVENTION_SPOKEN[item.code])
-    detail = rng.choice(banks.TECHNIQUE_DETAIL.get(item.code, ("",)))
+    detail = rng.choice(banks.technique_detail(body_part, item.code))
 
     if item.minutes is None:
         return (f"We also did {cue}" + (f", {detail}" if detail else ""), False)
@@ -339,12 +349,13 @@ def _render(rng: random.Random, *, body_part, complexity, dx_phrase, side, inter
 
     parts = [rng.choice(banks.OPENERS).format(
         visit=visit_type, name=patient_name.split()[0],
-        side=side_word, part=body_part).replace("  ", " ")]
+        side=side_word, part=_spoken_part(body_part)).replace("  ", " ")]
 
     dx_spoken = f"{side} {dx_phrase}" if side and side != "bilateral" else (
         f"bilateral {dx_phrase}" if side == "bilateral" else dx_phrase)
     parts.append(rng.choice(banks.DIAGNOSIS_FRAMES).format(dx=dx_spoken) + ".")
-    parts.append(rng.choice(banks.SUBJECTIVE).format(**voice))
+    subjective = banks.SUBJECTIVE + banks.SUBJECTIVE_BY_PART.get(body_part, ())
+    parts.append(rng.choice(subjective).format(part=_spoken_part(body_part), **voice))
 
     # Treatments in RANDOM order — a real dictation does not follow the note's section order, and
     # an extractor that quietly relied on ordering would pass a sorted corpus and fail in the room.
@@ -355,7 +366,7 @@ def _render(rng: random.Random, *, body_part, complexity, dx_phrase, side, inter
     used_fraction = False
     for item in shuffled:
         sentence, frac = _treatment_sentence(
-            rng, item, complexity, total_timed, allow_bare=rng.random() < profile["bare"])
+            rng, item, complexity, total_timed, rng.random() < profile["bare"], body_part)
         used_fraction = used_fraction or frac
         sentences.append(sentence)
     if sentences:

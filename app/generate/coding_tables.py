@@ -191,6 +191,10 @@ INTERVENTION_CUES: tuple[CueRule, ...] = (
     CueRule("massage", "97124", "Massage Therapy", "strong"),
 
     CueRule("mechanical traction", "97012", "Mechanical Traction", "strong"),
+    # MANUAL traction is a hands-on technique billed under manual therapy, not the mechanical
+    # traction table. Listed before the bare "traction" weak cue below so the longer, earlier span
+    # wins overlap suppression — otherwise "manual traction" would bill 97012, which is wrong.
+    CueRule("manual traction", "97140", "Manual Therapy", "strong"),
     CueRule("electrical stimulation", "97014", "Electrical Stimulation", "strong"),
     CueRule("e-stim", "97014", "Electrical Stimulation", "strong"),
     CueRule("estim", "97014", "Electrical Stimulation", "strong"),
@@ -219,12 +223,33 @@ INTERVENTION_CUES: tuple[CueRule, ...] = (
     CueRule("postural training", "97112", "Neuromuscular Re-education", "weak"),
     CueRule("scapular stabilization", "97110", "Therapeutic Exercise", "weak"),
     CueRule("strengthening", "97110", "Therapeutic Exercise", "weak"),
+    # Loose phrasings a therapist genuinely uses for a service, admitted at WEAK strength after
+    # the all-body-part eval showed they were the single largest source of missed interventions
+    # (and therefore of under-counted units). Weak, not strong, is the deliberate answer to
+    # CLAUDE.md rule 21(a): "hands-on work" usually means manual therapy but can describe manual
+    # cueing during exercise, and "functional activities" straddles 97530 and 97110. Surfacing
+    # them as a candidate the clinician confirms is strictly better than silence; auto-billing
+    # them would be a coin flip on a claim.
+    CueRule("strength work", "97110", "Therapeutic Exercise", "weak"),
+    CueRule("strengthening work", "97110", "Therapeutic Exercise", "weak"),
+    CueRule("hands-on work", "97140", "Manual Therapy", "weak"),
+    CueRule("hands on work", "97140", "Manual Therapy", "weak"),
+    CueRule("manual work", "97140", "Manual Therapy", "weak"),
+    CueRule("functional activities", "97530", "Therapeutic Activities", "weak"),
+    CueRule("functional training", "97530", "Therapeutic Activities", "weak"),
+    CueRule("functional work", "97530", "Therapeutic Activities", "weak"),
     CueRule("stretching", "97110", "Therapeutic Exercise", "weak"),
     CueRule("stretches", "97110", "Therapeutic Exercise", "weak"),
     CueRule("range of motion exercises", "97110", "Therapeutic Exercise", "weak"),
     CueRule("rom exercises", "97110", "Therapeutic Exercise", "weak"),
     CueRule("pulleys", "97110", "Therapeutic Exercise", "weak"),
     CueRule("theraband", "97110", "Therapeutic Exercise", "weak"),
+    # Bare "traction" is how a spine dictation usually says it, but it is genuinely ambiguous
+    # between MECHANICAL traction (97012, a service-based modality) and MANUAL traction (97140, a
+    # timed hands-on technique) — and those two bill completely differently, so guessing would be
+    # a coin flip on the unit count as well as the code. Weak, and disambiguated by the explicit
+    # "manual traction" / "mechanical traction" rules above when the therapist says which.
+    CueRule("traction", "97012", "Mechanical Traction", "weak"),
 )
 
 
@@ -426,6 +451,305 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             right="M25.511", left="M25.512", unspecified="M25.519",
         ),
     ),
+
+    # --- knee ------------------------------------------------------------------------
+    "knee": (
+        IcdRule(
+            cues=("anterior cruciate ligament tear", "acl tear", "acl rupture", "acl sprain",
+                  "torn acl", "cruciate ligament tear"),
+            label="Sprain of anterior cruciate ligament of knee",
+            right="S83.511", left="S83.512", unspecified="S83.519",
+            caution="needs a 7th character (A initial / D subsequent / S sequela) — a PT follow-up "
+                    "is usually 'D'; confirm the encounter type",
+        ),
+        IcdRule(
+            cues=("medial collateral ligament sprain", "mcl sprain", "mcl tear", "torn mcl"),
+            label="Sprain of medial collateral ligament of knee",
+            right="S83.411", left="S83.412", unspecified="S83.419",
+            caution="needs a 7th character (A / D / S) — confirm the encounter type",
+        ),
+        IcdRule(
+            cues=("medial meniscus tear", "meniscal tear", "meniscus tear", "torn meniscus",
+                  "lateral meniscus tear"),
+            label="Derangement of meniscus due to old tear or injury",
+            right="M23.221", left="M23.222", unspecified="M23.209",
+            caution="M23.2- is for an OLD tear; a current acute injury is S83.2- with a 7th "
+                    "character, and the specific horn/meniscus changes the code — confirm",
+        ),
+        IcdRule(
+            cues=("total knee arthroplasty", "total knee replacement", "knee replacement", "tka",
+                  "knee arthroplasty"),
+            label="Aftercare following joint replacement surgery",
+            right="Z47.1", left="Z47.1", unspecified="Z47.1", bilateral="Z47.1",
+            caution="also code the joint prosthesis (Z96.651 right / Z96.652 left) — confirm both",
+        ),
+        IcdRule(
+            cues=("chondromalacia patellae", "chondromalacia"),
+            label="Chondromalacia patellae",
+            right="M22.41", left="M22.42", unspecified="M22.40",
+        ),
+        IcdRule(
+            cues=("patellofemoral pain syndrome", "patellofemoral pain", "patellofemoral syndrome",
+                  "patellofemoral disorder", "runner's knee"),
+            label="Patellofemoral disorders",
+            right="M22.2X1", left="M22.2X2", unspecified="M22.2X9",
+        ),
+        IcdRule(
+            cues=("patellar tendinitis", "patellar tendinopathy", "patellar tendonitis",
+                  "jumper's knee"),
+            label="Patellar tendinitis",
+            right="M76.51", left="M76.52", unspecified="M76.50",
+        ),
+        IcdRule(
+            cues=("primary osteoarthritis of the knee", "knee osteoarthritis", "knee oa",
+                  "osteoarthritis of the knee", "degenerative joint disease of the knee",
+                  "knee arthritis"),
+            label="Unilateral primary osteoarthritis, knee",
+            right="M17.11", left="M17.12", unspecified="M17.10", bilateral="M17.0",
+        ),
+        IcdRule(
+            cues=("knee effusion", "effusion of the knee"),
+            label="Effusion, knee",
+            right="M25.461", left="M25.462", unspecified="M25.469",
+        ),
+        IcdRule(
+            cues=("knee stiffness", "stiffness of the knee", "loss of knee motion",
+                  "arthrofibrosis of the knee"),
+            label="Stiffness of knee, not elsewhere classified",
+            right="M25.661", left="M25.662", unspecified="M25.669",
+        ),
+        IcdRule(
+            cues=("knee pain", "pain in the knee", "painful knee"),
+            label="Pain in knee",
+            right="M25.561", left="M25.562", unspecified="M25.569",
+        ),
+    ),
+
+    # --- lumbar spine ----------------------------------------------------------------
+    # Most lumbar codes are REGION-based, not side-based: `lateralized` is False for those (right
+    # == left == unspecified), so no laterality gap is raised for a distinction ICD-10-CM doesn't
+    # make. Sciatica and lumbago-with-sciatica are the exceptions and do carry a side.
+    "lumbar": (
+        IcdRule(
+            cues=("lumbar spinal stenosis with neurogenic claudication",
+                  "stenosis with neurogenic claudication"),
+            label="Spinal stenosis, lumbar region, with neurogenic claudication",
+            right="M48.062", left="M48.062", unspecified="M48.062",
+        ),
+        IcdRule(
+            cues=("lumbar spinal stenosis", "spinal stenosis", "lumbar stenosis"),
+            label="Spinal stenosis, lumbar region, without neurogenic claudication",
+            right="M48.061", left="M48.061", unspecified="M48.061",
+        ),
+        IcdRule(
+            cues=("lumbar radiculopathy", "disc disorder with radiculopathy",
+                  "herniated disc with radiculopathy", "radiculopathy"),
+            label="Intervertebral disc disorders with radiculopathy, lumbar region",
+            right="M51.16", left="M51.16", unspecified="M51.16",
+        ),
+        IcdRule(
+            cues=("lumbago with sciatica", "low back pain with sciatica",
+                  "back pain with sciatica"),
+            label="Lumbago with sciatica",
+            right="M54.41", left="M54.42", unspecified="M54.40",
+        ),
+        IcdRule(
+            cues=("sciatica",),
+            label="Sciatica",
+            right="M54.31", left="M54.32", unspecified="M54.30",
+        ),
+        IcdRule(
+            cues=("herniated disc", "disc herniation", "disc displacement",
+                  "herniated nucleus pulposus", "bulging disc"),
+            label="Other intervertebral disc displacement, lumbar region",
+            right="M51.26", left="M51.26", unspecified="M51.26",
+        ),
+        IcdRule(
+            cues=("degenerative disc disease", "disc degeneration", "ddd"),
+            label="Other intervertebral disc degeneration, lumbar region",
+            right="M51.36", left="M51.36", unspecified="M51.36",
+        ),
+        IcdRule(
+            cues=("spondylolisthesis",),
+            label="Spondylolisthesis, lumbar region",
+            right="M43.16", left="M43.16", unspecified="M43.16",
+        ),
+        IcdRule(
+            cues=("lumbar sprain", "lumbar strain", "low back strain", "lumbosacral sprain"),
+            label="Sprain of ligaments of lumbar spine",
+            right="S33.5XX", left="S33.5XX", unspecified="S33.5XX",
+            caution="needs a 7th character (A / D / S) — confirm the encounter type",
+        ),
+        IcdRule(
+            cues=("segmental dysfunction", "somatic dysfunction"),
+            label="Segmental and somatic dysfunction of lumbar region",
+            right="M99.03", left="M99.03", unspecified="M99.03",
+        ),
+        IcdRule(
+            cues=("low back pain", "lower back pain", "lumbago", "lumbar pain",
+                  "pain in the low back"),
+            label="Low back pain, unspecified",
+            right="M54.50", left="M54.50", unspecified="M54.50",
+            caution="M54.51 (vertebrogenic) and M54.59 (other) are more specific if the "
+                    "presentation supports them — confirm",
+        ),
+    ),
+
+    # --- cervical spine --------------------------------------------------------------
+    "cervical": (
+        IcdRule(
+            cues=("cervical radiculopathy", "disc disorder with radiculopathy",
+                  "radiculopathy"),
+            label="Cervical disc disorder with radiculopathy, unspecified cervical region",
+            right="M50.10", left="M50.10", unspecified="M50.10",
+            caution="the specific cervical level changes the code (M50.11-/M50.12-/M50.13-) — confirm",
+        ),
+        IcdRule(
+            cues=("cervical spinal stenosis", "cervical stenosis", "spinal stenosis"),
+            label="Spinal stenosis, cervical region",
+            right="M48.02", left="M48.02", unspecified="M48.02",
+        ),
+        IcdRule(
+            cues=("cervical disc degeneration", "degenerative disc disease", "disc degeneration"),
+            label="Other cervical disc degeneration, unspecified cervical region",
+            right="M50.30", left="M50.30", unspecified="M50.30",
+        ),
+        IcdRule(
+            cues=("cervical disc herniation", "herniated disc", "disc displacement",
+                  "disc herniation"),
+            label="Other cervical disc displacement, unspecified cervical region",
+            right="M50.20", left="M50.20", unspecified="M50.20",
+        ),
+        IcdRule(
+            cues=("whiplash", "cervical sprain", "neck sprain", "cervical strain", "neck strain"),
+            label="Sprain of ligaments of cervical spine",
+            right="S13.4XX", left="S13.4XX", unspecified="S13.4XX",
+            caution="needs a 7th character (A / D / S) — confirm the encounter type",
+        ),
+        IcdRule(
+            cues=("cervicobrachial syndrome",),
+            label="Cervicobrachial syndrome",
+            right="M53.1", left="M53.1", unspecified="M53.1",
+        ),
+        IcdRule(
+            cues=("cervicogenic headache",),
+            label="Cervicogenic headache",
+            right="G44.86", left="G44.86", unspecified="G44.86",
+        ),
+        IcdRule(
+            cues=("segmental dysfunction", "somatic dysfunction"),
+            label="Segmental and somatic dysfunction of cervical region",
+            right="M99.01", left="M99.01", unspecified="M99.01",
+        ),
+        IcdRule(
+            cues=("cervicalgia", "neck pain", "pain in the neck"),
+            label="Cervicalgia",
+            right="M54.2", left="M54.2", unspecified="M54.2",
+        ),
+    ),
+
+    # --- hip ---------------------------------------------------------------------------
+    "hip": (
+        IcdRule(
+            cues=("total hip arthroplasty", "total hip replacement", "hip replacement", "tha",
+                  "hip arthroplasty"),
+            label="Aftercare following joint replacement surgery",
+            right="Z47.1", left="Z47.1", unspecified="Z47.1", bilateral="Z47.1",
+            caution="also code the joint prosthesis (Z96.641 right / Z96.642 left) — confirm both",
+        ),
+        IcdRule(
+            cues=("trochanteric bursitis", "greater trochanteric pain syndrome", "hip bursitis"),
+            label="Trochanteric bursitis",
+            right="M70.61", left="M70.62", unspecified="M70.60",
+        ),
+        IcdRule(
+            cues=("iliotibial band syndrome", "it band syndrome", "itb syndrome"),
+            label="Iliotibial band syndrome",
+            right="M76.31", left="M76.32", unspecified="M76.30",
+        ),
+        IcdRule(
+            cues=("hip labral tear", "acetabular labral tear", "labral tear"),
+            label="Other articular cartilage disorders, hip",
+            right="M24.151", left="M24.152", unspecified="M24.159",
+        ),
+        IcdRule(
+            cues=("femoroacetabular impingement", "fai", "hip impingement"),
+            label="Other specified joint derangements, hip",
+            right="M24.851", left="M24.852", unspecified="M24.859",
+        ),
+        IcdRule(
+            cues=("primary osteoarthritis of the hip", "hip osteoarthritis", "hip oa",
+                  "osteoarthritis of the hip", "hip arthritis"),
+            label="Unilateral primary osteoarthritis, hip",
+            right="M16.11", left="M16.12", unspecified="M16.10", bilateral="M16.0",
+        ),
+        IcdRule(
+            cues=("hip stiffness", "stiffness of the hip"),
+            label="Stiffness of hip, not elsewhere classified",
+            right="M25.651", left="M25.652", unspecified="M25.659",
+        ),
+        IcdRule(
+            cues=("hip pain", "pain in the hip", "painful hip"),
+            label="Pain in hip",
+            right="M25.551", left="M25.552", unspecified="M25.559",
+        ),
+    ),
+
+    # --- ankle / foot ------------------------------------------------------------------
+    "ankle": (
+        IcdRule(
+            cues=("achilles tendinitis", "achilles tendinopathy", "achilles tendonitis"),
+            label="Achilles tendinitis",
+            right="M76.61", left="M76.62", unspecified="M76.60",
+        ),
+        IcdRule(
+            cues=("achilles rupture", "achilles tendon rupture", "ruptured achilles"),
+            label="Strain of Achilles tendon",
+            right="S86.011", left="S86.012", unspecified="S86.019",
+            caution="needs a 7th character (A / D / S) — confirm the encounter type",
+        ),
+        IcdRule(
+            # Plantar fasciitis has ONE code regardless of side — lateralized is False here.
+            cues=("plantar fasciitis", "plantar fasciopathy", "plantar fascial fibromatosis"),
+            label="Plantar fascial fibromatosis",
+            right="M72.2", left="M72.2", unspecified="M72.2",
+        ),
+        IcdRule(
+            cues=("lateral ankle sprain", "calcaneofibular ligament sprain", "atfl sprain"),
+            label="Sprain of calcaneofibular ligament of ankle",
+            right="S93.421", left="S93.422", unspecified="S93.429",
+            caution="needs a 7th character (A / D / S) — confirm the encounter type",
+        ),
+        IcdRule(
+            cues=("ankle sprain", "sprained ankle", "sprain of the ankle"),
+            label="Sprain of unspecified ligament of ankle",
+            right="S93.401", left="S93.402", unspecified="S93.409",
+            caution="needs a 7th character (A / D / S) — confirm the encounter type; a named "
+                    "ligament is more specific (S93.41-/S93.42-/S93.43-)",
+        ),
+        IcdRule(
+            cues=("posterior tibial tendon dysfunction", "tibialis posterior tendinopathy",
+                  "posterior tibialis tendinitis"),
+            label="Other synovitis and tenosynovitis, ankle and foot",
+            right="M65.871", left="M65.872", unspecified="M65.879",
+        ),
+        IcdRule(
+            cues=("osteoarthritis of the ankle", "ankle osteoarthritis", "ankle oa",
+                  "ankle arthritis"),
+            label="Primary osteoarthritis, ankle and foot",
+            right="M19.071", left="M19.072", unspecified="M19.079",
+        ),
+        IcdRule(
+            cues=("ankle stiffness", "stiffness of the ankle", "loss of ankle motion"),
+            label="Stiffness of ankle, not elsewhere classified",
+            right="M25.671", left="M25.672", unspecified="M25.679",
+        ),
+        IcdRule(
+            cues=("ankle pain", "pain in the ankle", "foot pain", "painful ankle"),
+            label="Pain in ankle and joints of foot",
+            right="M25.571", left="M25.572", unspecified="M25.579",
+        ),
+    ),
 }
 
 # An ICD candidate is only taken from a clause that FRAMES something as the diagnosis. Without
@@ -436,9 +760,13 @@ ICD_CONTEXT_CUES: tuple[str, ...] = (
     "assessment", "impression", "consistent with", "presents with", "presenting with",
     "evaluation for", "eval for", "status post", "s/p", "post-op", "post op", "postoperative",
     "working diagnosis", "known", "medical diagnosis", "pt diagnosis", "treating",
-    # "N weeks post <procedure>" is how a post-surgical visit is actually opened. Bounded to a
-    # time-unit prefix so the bare word "post" can't fire on "posterior capsule".
+    # "N weeks post <procedure>" / "N weeks out from <procedure>" is how a post-surgical visit is
+    # actually opened. Bounded to a time-unit prefix so the bare words "post" and "out" can't fire
+    # on "posterior capsule" or "walked out". The "out from" family was added after the knee
+    # control record (201) showed "she's four weeks out from a right total knee replacement"
+    # yielding no diagnosis at all.
     "weeks post", "months post", "years post", "days post", "week post", "month post",
+    "weeks out", "months out", "days out", "week out", "month out",
 )
 
 # ...and never from a clause that hedges it as a worry, a rule-out, someone else's problem, or a

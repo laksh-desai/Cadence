@@ -84,19 +84,24 @@ dictation (`app/generate/billing.py`). It never lets the model author a code, bu
 maps from are **not yet reviewed by anyone qualified**, and a wrong code rendered as a confident
 chip is worse than no chip at all.
 
-- [ ] Have the clinician or a certified coder verify the shoulder ICD-10 table in
+- [ ] Have the clinician or a certified coder verify the ICD-10 tables in
       `app/generate/coding_tables.py` against the current ICD-10-CM year, then fill in
-      `ICD_TABLE_VERIFIED_BY` / `ICD_TABLE_VERIFIED_ON`. **`tests/test_billing_extract.py` fails
-      until they do** — that failure is the gate, not a bug.
+      `verified_by` / `verified_on` in `TABLE_PROVENANCE`. **`tests/test_billing_extract.py` fails
+      until they do** — that failure is the gate, not a bug. **Sign-off is per region** (shoulder,
+      knee, lumbar, cervical, hip, ankle), so start with the regions the practice actually sees;
+      the others stay visibly unverified and banner themselves in the Evals tab.
 - [ ] Have the clinician verify the billing gold labels on the eight hand-written records in
       `evals/data/shoulder.jsonl` (each carries a `gold_provenance` block; `verified_by` is
       blank). These are the **non-circular control** for every accuracy number the eval reports —
       they were hand-read from the transcripts, not produced by the extractor, but they still
       need a clinician's eye. See CLAUDE.md rule 21.
 - [ ] Watch the **wrong-claim** counters on a sweep — billing something the therapist said wasn't
-      done, counting untimed minutes, a wrong-side diagnosis, an invented duration. These measure
-      overbilling, not incompleteness, and must stay at zero:
+      done, counting untimed minutes, a wrong-side diagnosis, an invented duration, an
+      **over-counted unit**. These measure overbilling, not incompleteness, and must stay at zero:
       `.venv/Scripts/python.exe scripts/eval_corpus.py --limit 5 --runs 1` (or the **Evals** tab).
+      Read `units_overstated` rather than `units_exact`: under-counting is a safe gap the clinician
+      fills, over-counting is a claim. Likewise `cpt_surfaced_recall` (raised for confirmation)
+      rather than only `cpt_detection_recall` (billed outright).
 - [ ] Confirm with the biller which unit rule the practice's payers use. Cadence deliberately
       reports **both** CMS substitution and the AMA rule of eights, because they genuinely
       disagree; it does not pick one.

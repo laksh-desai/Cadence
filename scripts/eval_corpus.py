@@ -111,21 +111,39 @@ def report(results: list[scoring.RecordResult]) -> None:
             if not a:
                 continue
             print(f"      {scope:<12} n={a['records']}  "
-                  f"CPT r{_pct(a['cpt_detection_recall'])}/p{_pct(a['cpt_detection_precision'])}  "
+                  f"CPT billed {_pct(a['cpt_detection_recall'])} / surfaced "
+                  f"{_pct(a['cpt_surfaced_recall'])} / prec {_pct(a['cpt_detection_precision'])}  "
                   f"ICD r{_pct(a['icd_recall'])}/p{_pct(a['icd_precision'])}  "
-                  f"min={_pct(a['minutes_exact'])} exact  units={_pct(a['units_exact'])} exact")
+                  f"min {_pct(a['minutes_exact'])}  units {_pct(a['units_exact'])}")
         a = agg["all"]
+        # Every counter here is a WRONG CLAIM, not an incomplete draft. Reported first, and apart
+        # from accuracy, because they are the only numbers that carry billing risk.
         unsafe = (a["distractor_leaks"], a["untimed_leaks"], a["laterality_errors"],
-                  a["minutes_fabricated"])
-        print(f"      UNSAFE: {a['distractor_leaks']} distractor leak(s), "
+                  a["minutes_fabricated"], a["units_overstated"])
+        print(f"      WRONG CLAIMS: {a['distractor_leaks']} distractor leak(s), "
               f"{a['untimed_leaks']} untimed leak(s), {a['laterality_errors']} laterality error(s), "
-              f"{a['minutes_fabricated']} fabricated minute value(s)"
+              f"{a['minutes_fabricated']} fabricated minute(s), "
+              f"{a['units_overstated']} OVER-counted unit(s)"
               + ("" if any(unsafe) else "  — none"))
-        print(f"      minutes not extracted (safe gap): {a['minutes_not_extracted']}"
-              f"   CMS/AMA disagreed on {a['method_disagreements']} record(s)")
+        print(f"      safe gaps: {a['units_understated']} under-counted unit(s), "
+              f"{a['minutes_not_extracted']} minute value(s) left for the clinician"
+              f"   ·   CMS/AMA disagreed on {a['method_disagreements']} record(s)")
         for r in billing_scoped:
             for code, reason in r.billing_detection.distractor_leaks:
                 print(f"      LEAK record {r.record_id} run {r.run}: billed {code} ({reason})")
+
+        # Per-body-part, so a weak region is visible instead of averaged away.
+        by_part: dict[str, list] = {}
+        for r in billing_scoped:
+            by_part.setdefault(getattr(r, "body_part", None) or "—", []).append(r)
+        if len(by_part) > 1:
+            print("      by body part:")
+            for part, rows in sorted(by_part.items()):
+                p = runner.aggregate(rows)
+                print(f"        {part:<10} n={p['records']:<3} "
+                      f"CPT {_pct(p['cpt_detection_recall'])}/{_pct(p['cpt_surfaced_recall'])}  "
+                      f"ICD {_pct(p['icd_recall'])}  units {_pct(p['units_exact'])}"
+                      f"  ({p['units_overstated']} over)")
 
     # Tier D — triage.
     nflags = sum(len(r.flags) for r in results)

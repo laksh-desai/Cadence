@@ -65,17 +65,50 @@ treatment was billed" rather than only "precision dropped", which points at the 
 .venv/Scripts/python.exe scripts/gen_synthetic.py --body-part shoulder --note-type followup \
     --count 24 --complexity high --seed 1234
 .venv/Scripts/python.exe scripts/gen_synthetic.py --preview 3      # print, write nothing
+
+# all six regions at once
+for p in shoulder knee lumbar cervical hip ankle; do
+  .venv/Scripts/python.exe scripts/gen_synthetic.py --body-part $p --count 24 --complexity high --seed 1234
+done
 ```
+
+Supported regions: **shoulder, knee, lumbar, cervical, hip, ankle**. Each writes
+`<region>_synth.jsonl` with its own id block (shoulder 1001+, knee 2001+, lumbar 3001+,
+cervical 4001+, hip 5001+, ankle 6001+) so the loader's cross-file uniqueness check can never
+collide. Adding a region needs an `ICD_BY_BODY_PART` entry in `app/generate/coding_tables.py` and
+a phrase bank in `evals/synth/banks.py` — no code changes anywhere else.
 
 Deterministic and offline — no model. The same arguments always produce the same file, and
 raising `--count` leaves earlier records byte-identical, so the committed corpus diffs readably.
 Ids are blocked per body part (shoulder synthetic = 1001+, hand-written = 101-108) so the
 loader's cross-file uniqueness check can never collide.
 
-**Keep the hand-written records.** They are the non-circular control: the generator and the
-extractor share an author, so a synthetic-only score can look good while both are wrong about
-real dictation. Their billing gold fields must be labeled **by hand by the clinician** — never by
-running the extractor and accepting its output. See CLAUDE.md rule 21.
+## The hand-written control set
+
+`shoulder.jsonl` (records 101-108) and `<region>_control.jsonl` (201/202 knee, 301/302 lumbar,
+401/402 cervical, 501/502 hip, 601/602 ankle) are **hand-written prose, hand-labeled**. They are
+the non-circular control, and they are not optional — the generator and the extractor share an
+author, so a synthetic-only score can look good while both are wrong about real dictation.
+
+The two sets stress different things, which is why neither replaces the other:
+
+| | stresses | example |
+|---|---|---|
+| `*_synth.jsonl` | **vocabulary** — unknown phrasings for a known service | "hands-on work", "functional activities" |
+| `*_control.jsonl` | **structure** — how minutes, negations and post-op framings are really spoken | "we spent about twenty-five minutes on", "held off on the e-stim", "she's four weeks out from" |
+
+**Every defect found so far came from the structural axis**, which a template generator cannot
+probe: a four-code overbill from `"Interventions planned include …"`, a false-positive diagnosis
+from an HPI clause, and two missed post-op diagnosis framings.
+
+Read the **direction** of the synthetic-vs-hand-written gap, not just its size. Synthetic scoring
+*higher* is the circularity failure. Synthetic scoring *lower* — where the corpus sits now — means
+the generator is stress-testing harder than reality, which is the intended state.
+
+Their gold labels must be verified **by the clinician**; `gold_provenance.verified_by` is blank
+until then and `tests/test_billing_extract.py` keeps saying so. Never label them by running the
+extractor and accepting its output. See CLAUDE.md rule 21.
+`scripts/_add_control_records.py` holds the labels and the rationale for each non-shoulder record.
 
 ## `visit_type` → template
 

@@ -301,6 +301,10 @@ class BillingDetectionScore:
     #: A code the transcript explicitly marked as NOT billable today, that got billed anyway,
     #: paired with the reason it should have been excluded. The headline safety metric.
     distractor_leaks: tuple[tuple[str, str], ...] = ()
+    #: Codes AUTO-BILLED or merely SURFACED as an unconfirmed candidate (a weak cue). A surfaced
+    #: code is one click for the clinician; a missed one they must notice is absent. Tracking both
+    #: keeps "we got it wrong" separate from "we asked instead of assuming".
+    surfaced: tuple[str, ...] = ()
 
     @property
     def precision(self) -> float | None:
@@ -308,11 +312,23 @@ class BillingDetectionScore:
 
     @property
     def recall(self) -> float | None:
+        """Auto-billed recall — gold codes Cadence billed without asking."""
         return len(self.hits) / len(self.gold) if self.gold else None
+
+    @property
+    def surfaced_recall(self) -> float | None:
+        """Gold codes Cadence either billed OR raised for confirmation. The gap between this and
+        `recall` is work handed to the clinician; the gap between this and 1.0 is a true miss."""
+        if not self.gold:
+            return None
+        return len([c for c in self.gold if c in self.surfaced]) / len(self.gold)
 
 
 def score_billing_detection(draft, record) -> BillingDetectionScore:
+    from app.generate.billing import PERFORMED, UNCERTAIN
     detected = tuple(dict.fromkeys(h.code for h in draft.billable))
+    surfaced = tuple(dict.fromkeys(h.code for h in draft.interventions
+                                   if h.status in (PERFORMED, UNCERTAIN)))
     gold = tuple(dict.fromkeys(i.code for i in record.interventions if i.billable))
     hits = tuple(c for c in gold if c in detected)
     leaks = tuple((d.code, d.reason) for d in record.distractors if d.code in detected)
@@ -321,6 +337,7 @@ def score_billing_detection(draft, record) -> BillingDetectionScore:
         missed=tuple(c for c in gold if c not in detected),
         false_positives=tuple(c for c in detected if c not in gold),
         distractor_leaks=leaks,
+        surfaced=surfaced,
     )
 
 
@@ -400,6 +417,21 @@ class UnitsScore:
     @property
     def exact(self) -> bool:
         return self.gold_units is not None and self.gold_units == self.computed_units
+
+    @property
+    def overstated(self) -> bool:
+        """Computed MORE units than the session earned — the only unsafe direction for this
+        metric, and the one that matters for billing risk. Under-counting is a safe failure:
+        Cadence surfaces the missing minutes as a gap and the clinician adds them back. A bare
+        "units exact 58%" reads alarming while hiding which way the errors ran, so the two are
+        reported separately."""
+        return (self.gold_units is not None and self.computed_units is not None
+                and self.computed_units > self.gold_units)
+
+    @property
+    def understated(self) -> bool:
+        return (self.gold_units is not None and self.computed_units is not None
+                and self.computed_units < self.gold_units)
 
     @property
     def minutes_exact(self) -> bool:
@@ -516,6 +548,9 @@ class RecordResult:
     units: UnitsScore | None = None
     agreement: AgreementScore | None = None
     is_synthetic: bool = False
+    #: Carried so a sweep can break results down per region — a weak body part must be visible,
+    #: not averaged away against five strong ones.
+    body_part: str | None = None
 
     @property
     def invariants_passed(self) -> int:
@@ -558,6 +593,7 @@ class RecordResult:
             },
             "flags": [{"section": f.section, "text": f.text, "context": f.context} for f in self.flags],
             "is_synthetic": self.is_synthetic,
+            "body_part": self.body_part,
             # Every key written here MUST be read back by scripts/eval_corpus.py:_load_result.
             # A --resume run rehydrates from this dict, so a key added on one side only would
             # silently zero the metric on every cached record. tests/test_eval_score.py locks
@@ -576,8 +612,10 @@ class RecordResult:
                 "missed": list(self.billing_detection.missed),
                 "false_positives": list(self.billing_detection.false_positives),
                 "distractor_leaks": [list(p) for p in self.billing_detection.distractor_leaks],
+                "surfaced": list(self.billing_detection.surfaced),
                 "precision": self.billing_detection.precision,
                 "recall": self.billing_detection.recall,
+                "surfaced_recall": self.billing_detection.surfaced_recall,
             },
             "minutes": None if self.minutes is None else {
                 "cells": [{"code": c.code, "gold": c.gold, "extracted": c.extracted,

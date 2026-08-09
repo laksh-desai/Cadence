@@ -192,11 +192,28 @@
     if(excluded.length){
       h+='<p class="bsub">Mentioned but not billed</p><ul class="bexcl">';
       excluded.forEach(c=>{
+        // Minutes are shown on an unbilled line too. An "uncertain" line is one Cadence found a
+        // duration for but wouldn't name a code for on its own authority — the clinician needs to
+        // see what confirming it would add, not just that something was skipped.
         h+='<li><span class="bcode">'+esc(c.code)+'</span> '+esc(c.label)
           +' <span class="bwarn">'+esc(STATUS_LABEL[c.status]||c.status)+'</span>'
+          +(c.minutes!=null?' <span class="bmin">· '+c.minutes+' min if confirmed</span>':'')
           +'<span class="bcue">“'+esc(c.cue)+'”</span></li>';
       });
       h+='</ul>';
+      // What the unit count would become if every unconfirmed-but-timed line were accepted.
+      // Without this the clinician sees "4 units" and no hint that confirming a line changes it.
+      const pend=excluded.filter(c=>c.status==="uncertain"&&c.timed&&c.minutes!=null)
+                         .reduce((n,c)=>n+c.minutes,0);
+      if(pend && b.units){
+        const tot=b.total_timed_minutes+pend;
+        const u=tot<8?0:Math.floor((tot+7)/15);
+        if(u!==b.units.total_units){
+          h+='<p class="bwarn" style="margin:6px 0 0;font-size:12.5px">Confirming the lines above'
+            +' would add '+pend+' timed min → <b>'+u+(u===1?' unit':' units')+'</b> instead of '
+            +b.units.total_units+'.</p>';
+        }
+      }
     }
     (b.conflicts||[]).forEach(c=>{
       h+='<p class="bconflict'+(c.severity==="high"?' bconflict-hi':'')+'">'+esc(c.detail)+'</p>';
@@ -1629,8 +1646,9 @@
       +'<div class="field"><label for="evCount">Samples</label><input id="evCount" type="number" min="1" max="200" value="10"></div>'
       +'<div class="field"><label for="evSeed">Seed</label><input id="evSeed" type="number" value="1234"></div>'
       +'</div>';
-    if(!evalOpts.icd_table_verified){
-      h+='<div class="needs"><h3>ICD table not yet verified</h3><p style="margin:0;font-size:13px">The shoulder ICD-10 table in <code>app/generate/coding_tables.py</code> has not been signed off by a clinician or certified coder (ICD-10-CM '+esc(evalOpts.icd10cm_year)+'). ICD scores below are still meaningful as a measure of <em>detection</em>, but the codes themselves must be reviewed before any of this is used on a real claim.</p></div>';
+    const unver=evalOpts.unverified_body_parts||[];
+    if(unver.length){
+      h+='<div class="needs"><h3>ICD tables not yet verified</h3><p style="margin:0;font-size:13px">The ICD-10 tables for <b>'+esc(unver.join(", "))+'</b> in <code>app/generate/coding_tables.py</code> have not been signed off by a clinician or certified coder (ICD-10-CM '+esc(evalOpts.icd10cm_year)+'). ICD scores below are still meaningful as a measure of <em>detection</em>, but the codes themselves must be reviewed before any of this is used on a real claim. Regions are independent — sign off the ones the practice actually sees first.</p></div>';
     }
     h+='<div class="savebar"><button class="btn btn-ghost" id="evGenBtn">Generate samples</button>'
       +'<button class="btn btn-primary" id="evRunBtn">Run sweep</button>'

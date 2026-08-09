@@ -21,9 +21,14 @@ import unittest
 from app.generate.billing import units_for_minutes
 from app.generate.cpt import is_timed
 from evals import dataset
-from evals.synth import generate as synth
+from evals.synth import banks, generate as synth
 
 KW = dict(body_part="shoulder", note_type="followup", complexity="medium", seed=1234)
+
+#: Every region the generator claims to support. Tests that assert a PROPERTY (rather than a
+#: specific string) run across all of them, so adding a body part is caught here the moment its
+#: phrase bank is incomplete rather than as a KeyError halfway through a corpus build.
+ALL_PARTS = tuple(banks.TREATMENTS_BY_BODY_PART)
 
 
 class DeterminismTests(unittest.TestCase):
@@ -50,6 +55,72 @@ class DeterminismTests(unittest.TestCase):
         high = synth.generate_corpus(count=6, **{**KW, "complexity": "high"})
         self.assertEqual(sum(len(s.distractors) for s in low), 0)
         self.assertGreater(sum(len(s.distractors) for s in high), 0)
+
+
+class AllBodyPartTests(unittest.TestCase):
+    """Properties that must hold for EVERY region, so a new body part with an incomplete phrase
+    bank fails here rather than as a KeyError partway through a corpus build."""
+
+    def test_every_region_generates(self):
+        for part in ALL_PARTS:
+            with self.subTest(part=part):
+                samples = synth.generate_corpus(count=4, **{**KW, "body_part": part})
+                self.assertEqual(len(samples), 4)
+                for s in samples:
+                    self.assertTrue(s.transcript.strip())
+                    self.assertEqual(s.body_part, part)
+
+    def test_every_region_has_an_icd_table_and_produces_gold_codes(self):
+        from app.generate import coding_tables
+        for part in ALL_PARTS:
+            with self.subTest(part=part):
+                self.assertIn(part, coding_tables.ICD_BY_BODY_PART)
+                samples = synth.generate_corpus(count=6, **{**KW, "body_part": part})
+                self.assertTrue(all(s.icd_codes for s in samples))
+
+    def test_every_referenced_treatment_has_a_spoken_form_and_label(self):
+        """The data gap that broke lumbar, cervical and ankle on their first run: a code listed in
+        TREATMENTS_BY_BODY_PART with no INTERVENTION_SPOKEN entry raised KeyError mid-generation.
+        A missing phrase bank entry is a data bug and should read as one."""
+        for part, groups in banks.TREATMENTS_BY_BODY_PART.items():
+            for group, codes in groups.items():
+                for code in codes:
+                    with self.subTest(part=part, group=group, code=code):
+                        self.assertIn(code, banks.INTERVENTION_SPOKEN)
+                        self.assertIn(code, banks.INTERVENTION_LABEL)
+
+    def test_timed_and_untimed_groups_agree_with_the_cpt_table(self):
+        for part, groups in banks.TREATMENTS_BY_BODY_PART.items():
+            for code in groups["timed"]:
+                with self.subTest(part=part, code=code):
+                    self.assertTrue(is_timed(code), f"{code} is in {part}'s timed group but the "
+                                                    "CPT table says it is service-based")
+            for code in groups["untimed"]:
+                with self.subTest(part=part, code=code):
+                    self.assertFalse(is_timed(code))
+
+    def test_every_region_has_a_spoken_name(self):
+        """"the lumbar is feeling looser" is not something anyone says."""
+        for part in ALL_PARTS:
+            with self.subTest(part=part):
+                self.assertIn(part, banks.SPOKEN_PART)
+
+    def test_midline_regions_never_speak_a_laterality(self):
+        """Spine dictation does not say "right low back"; teaching the extractor that habit on
+        synthetic data would not transfer to the room."""
+        for part in banks.MIDLINE_PARTS:
+            for s in synth.generate_corpus(count=6, **{**KW, "body_part": part}):
+                with self.subTest(part=part, id=s.id):
+                    self.assertNotRegex(s.diagnosis, r"(?i)\b(right|left|bilateral)\b")
+
+    def test_units_labels_are_self_consistent_in_every_region(self):
+        for part in ALL_PARTS:
+            for s in synth.generate_corpus(count=6, **{**KW, "body_part": part}):
+                with self.subTest(part=part, id=s.id):
+                    self.assertEqual(s.expected_units, units_for_minutes(s.total_timed_minutes))
+                    self.assertEqual(
+                        s.total_timed_minutes,
+                        sum(i.minutes for i in s.interventions if i.timed and i.minutes))
 
 
 class LabelConsistencyTests(unittest.TestCase):

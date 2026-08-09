@@ -110,6 +110,7 @@ def score_one(record, form, sections, missing, was_condensed, seconds, run, pars
         units=scoring.score_units(draft, record) if has_gold else None,
         agreement=scoring.score_cpt_agreement(sections, draft) if draft is not None else None,
         is_synthetic=record.is_synthetic,
+        body_part=record.body_part,
     )
 
 
@@ -144,7 +145,7 @@ def load_result(path: Path) -> scoring.RecordResult:
                for f in d.get("flags", [])],
         sections_present=cov["present"], sections_expected=cov["expected"],
         sections_missing=cov["missing"], note_chars=d.get("note_chars", 0),
-        is_synthetic=d.get("is_synthetic", False),
+        is_synthetic=d.get("is_synthetic", False), body_part=d.get("body_part"),
         icd=None if not icd else scoring.IcdScore(
             gold=tuple(icd["gold"]), suggested=tuple(icd["suggested"]), hits=tuple(icd["hits"]),
             missed=tuple(icd["missed"]), extra=tuple(icd["extra"]),
@@ -154,6 +155,7 @@ def load_result(path: Path) -> scoring.RecordResult:
             gold=tuple(det["gold"]), detected=tuple(det["detected"]), hits=tuple(det["hits"]),
             missed=tuple(det["missed"]), false_positives=tuple(det["false_positives"]),
             distractor_leaks=tuple(tuple(p) for p in det["distractor_leaks"]),
+            surfaced=tuple(det.get("surfaced", ())),
         ),
         minutes=None if not mins else scoring.MinutesScore(
             cells=tuple(scoring.MinutesCell(code=x["code"], gold=x["gold"],
@@ -202,9 +204,17 @@ def aggregate(results: list[scoring.RecordResult]) -> dict:
         "untimed_leaks": sum(len(r.units.untimed_leak) for r in with_units),
         "laterality_errors": sum(len(r.icd.laterality_errors) for r in with_icd),
         "minutes_fabricated": sum(r.minutes.fabricated for r in with_minutes),
+        # Over-counting units is the overbill; under-counting is a safe gap the clinician fills.
+        # Reported apart from `units_exact`, which hides the direction of the error.
+        "units_overstated": sum(1 for r in with_units if r.units.overstated),
+        "units_understated": sum(1 for r in with_units if r.units.understated),
         # --- accuracy ---
         "cpt_detection_recall": _ratio(cpt_hits, cpt_gold),
         "cpt_detection_precision": _ratio(cpt_hits, cpt_det),
+        # Billed outright vs at least raised for confirmation. The gap is clinician work, not error.
+        "cpt_surfaced_recall": _ratio(
+            sum(len([c for c in r.billing_detection.gold if c in r.billing_detection.surfaced])
+                for r in with_billing), cpt_gold),
         "icd_recall": _ratio(icd_hits, icd_gold),
         "icd_precision": _ratio(icd_hits, sum(len(r.icd.suggested) for r in with_icd)),
         "minutes_exact": _ratio(sum(r.minutes.exact for r in with_minutes), len(cells)),
