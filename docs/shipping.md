@@ -31,6 +31,13 @@ absolute paths and platform-specific binaries. Always rebuild it on the target.
 
 ## A. Fresh install (new device, no existing patient data)
 
+> **Shortcut:** `setup.ps1` (project root) automates steps **4–9** — venv + dependencies,
+> the Ollama model pulls, the HF token, the performance env vars, and the desktop shortcut,
+> then runs a quick verify. Do the manual prerequisites first (steps 1–3: Python, copy the
+> folder, install Ollama), then run `powershell -ExecutionPolicy Bypass -File .\setup.ps1`,
+> then do step 10 (device hardening). It's idempotent and never touches existing data. The
+> manual steps below remain the reference for what it does.
+
 ### 1. Prerequisites
 - Windows 10/11 **Pro** (Pro is needed for BitLocker later).
 - **~40 GB free disk.** Models + toolchain are large.
@@ -161,6 +168,28 @@ transfer of the database.)
 
 ---
 
+## C. Backups (do this once real notes exist)
+
+Because notes live only in the local encrypted DB and there is **no cross-device note sync**
+(see the limitation below), that one `cadence.db.enc` + `.keyfile` pair *is* the practice's
+record. A dead or lost laptop loses everything unless it's backed up.
+
+`scripts/backup.py` copies both files **together** (one is useless without the other),
+verifies the copied pair actually decrypts, and restores them:
+
+```
+python scripts/backup.py backup  --dest "E:\CadenceBackups"     # to a local encrypted USB drive
+python scripts/backup.py list     --dest "E:\CadenceBackups"
+python scripts/backup.py restore  "E:\CadenceBackups\cadence-backup-YYYYMMDD-HHMMSS"
+python scripts/backup.py verify                                  # check the live pair decrypts
+```
+
+Rules: back up to a **local encrypted external/USB drive kept on-site — never a cloud-synced
+folder** (OneDrive/Google Drive; the Google BAA covers only the roster Sheet, not a DB copy).
+Restore only while Cadence is **closed**; `restore` refuses to overwrite existing data without
+`--force`, and with `--force` it saves the current files aside to `*.pre-restore-*` first.
+Test a restore once so you know the routine works before you rely on it.
+
 ## Important limitation: Cadence is single-device by design
 
 Patient **notes** are stored only in the local encrypted database on whichever machine
@@ -181,6 +210,6 @@ will have independent, diverging note stores.
 There is currently no PyInstaller/py2exe bundle. Freezing torch + transformers into a
 single executable is fragile and huge, and it wouldn't remove the two things that
 genuinely can't be frozen anyway — the Ollama service and the model downloads. The
-supported distribution path is this source + venv procedure. If repeated installs
-become common, the right investment is a `setup.ps1` that automates section A steps
-4–8, not a frozen binary.
+supported distribution path is this source + venv procedure, sped up by **`setup.ps1`**
+(project root), which automates section A steps 4–9 — the right investment here rather
+than a frozen binary.

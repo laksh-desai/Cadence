@@ -32,9 +32,83 @@ Optional:
 |---|---|---|
 | `cpt_codes` | list | `[{"code": "97110", "description": "..."}]`, or a bare list of code strings. Missing → `[]` |
 
-`cpt_codes` is the corpus's **only ground-truth label** and is what Tier A scores. Only the
-`code` values are compared; the descriptions are not, since the corpus wording won't match
-Cadence's own labels for the same code.
+Only the `code` values are compared; the descriptions are not, since the corpus wording won't
+match Cadence's own labels for the same code.
+
+### Billing gold labels (optional)
+
+The synthetic corpus adds ground truth for ICD-10, per-intervention minutes, and units. Every
+field below defaults to empty, so the hand-written records keep loading unchanged;
+`EvalRecord.has_billing_gold` is what the scorers gate on.
+
+| Field | Type | Notes |
+|---|---|---|
+| `body_part` | str | Selects the ICD table in `app/generate/coding_tables.py` |
+| `icd_codes` | list | Same shape as `cpt_codes` |
+| `interventions` | list | `[{"code","label","minutes","timed","billable"}]`. `minutes` is `null` for untimed modalities |
+| `distractors` | list | `[{"code","reason"}]` — named in the transcript but **must not be billed**. `reason` ∈ `negated`, `prior_visit`, `planned`, `home_program`, `self_corrected` |
+| `total_timed_minutes` | int | Sum of TIMED interventions only |
+| `expected_units` | int | 8-minute rule over `total_timed_minutes` (CMS substitution) |
+| `expected_units_ama` | int | Same minutes under the AMA rule of eights — the two genuinely differ |
+| `synth` | object | Generator provenance. Its presence is what marks a record synthetic |
+
+`cpt_codes` is **derived** from `interventions where billable`, so Tier A reads exactly what it
+always did while the richer labels sit alongside it.
+
+`distractors` is what makes a precision failure attributable: a scorer can report "a prior-visit
+treatment was billed" rather than only "precision dropped", which points at the specific guard in
+`app/generate/billing.py` that let it through.
+
+## Generating a synthetic corpus
+
+```
+.venv/Scripts/python.exe scripts/gen_synthetic.py --body-part shoulder --note-type followup \
+    --count 24 --complexity high --seed 1234
+.venv/Scripts/python.exe scripts/gen_synthetic.py --preview 3      # print, write nothing
+
+# all six regions at once
+for p in shoulder knee lumbar cervical hip ankle; do
+  .venv/Scripts/python.exe scripts/gen_synthetic.py --body-part $p --count 24 --complexity high --seed 1234
+done
+```
+
+Supported regions: **shoulder, knee, lumbar, cervical, hip, ankle**. Each writes
+`<region>_synth.jsonl` with its own id block (shoulder 1001+, knee 2001+, lumbar 3001+,
+cervical 4001+, hip 5001+, ankle 6001+) so the loader's cross-file uniqueness check can never
+collide. Adding a region needs an `ICD_BY_BODY_PART` entry in `app/generate/coding_tables.py` and
+a phrase bank in `evals/synth/banks.py` — no code changes anywhere else.
+
+Deterministic and offline — no model. The same arguments always produce the same file, and
+raising `--count` leaves earlier records byte-identical, so the committed corpus diffs readably.
+Ids are blocked per body part (shoulder synthetic = 1001+, hand-written = 101-108) so the
+loader's cross-file uniqueness check can never collide.
+
+## The hand-written control set
+
+`shoulder.jsonl` (records 101-108) and `<region>_control.jsonl` (201/202 knee, 301/302 lumbar,
+401/402 cervical, 501/502 hip, 601/602 ankle) are **hand-written prose, hand-labeled**. They are
+the non-circular control, and they are not optional — the generator and the extractor share an
+author, so a synthetic-only score can look good while both are wrong about real dictation.
+
+The two sets stress different things, which is why neither replaces the other:
+
+| | stresses | example |
+|---|---|---|
+| `*_synth.jsonl` | **vocabulary** — unknown phrasings for a known service | "hands-on work", "functional activities" |
+| `*_control.jsonl` | **structure** — how minutes, negations and post-op framings are really spoken | "we spent about twenty-five minutes on", "held off on the e-stim", "she's four weeks out from" |
+
+**Every defect found so far came from the structural axis**, which a template generator cannot
+probe: a four-code overbill from `"Interventions planned include …"`, a false-positive diagnosis
+from an HPI clause, and two missed post-op diagnosis framings.
+
+Read the **direction** of the synthetic-vs-hand-written gap, not just its size. Synthetic scoring
+*higher* is the circularity failure. Synthetic scoring *lower* — where the corpus sits now — means
+the generator is stress-testing harder than reality, which is the intended state.
+
+Their gold labels must be verified **by the clinician**; `gold_provenance.verified_by` is blank
+until then and `tests/test_billing_extract.py` keeps saying so. Never label them by running the
+extractor and accepting its output. See CLAUDE.md rule 21.
+`scripts/_add_control_records.py` holds the labels and the rationale for each non-shoulder record.
 
 ## `visit_type` → template
 

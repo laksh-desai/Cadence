@@ -150,6 +150,83 @@ class GenerateEndpointTests(unittest.TestCase):
         base = {"patient_id": self.pid, "form_id": "followup", "note_text": " ", "instruction": "shorten"}
         self.assertEqual(self.client.post("/api/revise/stream", json=base).status_code, 400)
 
+    # --- billing draft (app/generate/billing.py) wiring ----------------------------------
+    # The draft is derived from the DICTATION, not the note, so these assert WHERE it comes from
+    # as much as that it exists — a billing draft built from model-written prose would be the
+    # rule-12 misfire the whole design avoids.
+
+    SHOULDER_DICTATION = (
+        "Follow-up, right shoulder. Referring diagnosis is right rotator cuff tendinopathy. "
+        "Therapeutic exercise for twenty minutes. We did not do gait training today."
+    )
+
+    def test_billing_draft_is_returned_for_a_billable_form(self):
+        with patch("app.ui.server.generate_note", _fake_generate):
+            r = self._post(summary=self.SHOULDER_DICTATION)
+        billing = r.json()["billing"]
+        self.assertIsNotNone(billing)
+        self.assertTrue(billing["confirm_required"])
+        self.assertEqual(billing["body_part"], "shoulder")
+        self.assertEqual(billing["total_timed_minutes"], 20)
+        self.assertEqual(billing["units"]["total_units"], 1)   # 20 min is band 8-22 -> 1 unit
+        self.assertEqual(billing["units"]["method"], "cms_substitution")
+        self.assertEqual(billing["units_alt"]["method"], "ama_rule_of_eights")
+        self.assertIn("M75.101", [c["code"] for c in billing["icd_candidates"]])
+
+    def test_a_negated_treatment_is_returned_but_not_billed(self):
+        with patch("app.ui.server.generate_note", _fake_generate):
+            r = self._post(summary=self.SHOULDER_DICTATION)
+        lines = {li["code"]: li["status"] for li in r.json()["billing"]["interventions"]}
+        self.assertEqual(lines["97116"], "negated")
+        self.assertEqual(lines["97110"], "performed")
+
+    def test_billing_reconciles_against_the_notes_own_cpt_chips(self):
+        """The canned note has a 97110 section but the dictation below names manual therapy, so
+        the two sources must disagree in both directions."""
+        with patch("app.ui.server.generate_note", _fake_generate):
+            r = self._post(summary="Right shoulder. Manual therapy for fifteen minutes.")
+        kinds = {c["kind"] for c in r.json()["billing"]["conflicts"]}
+        self.assertIn("dictation_only", kinds)   # 97140 dictated, no section written
+        self.assertIn("note_only", kinds)        # 97110 charted, never dictated
+
+    def test_billing_survives_a_note_that_failed_to_parse(self):
+        """The draft comes from the dictation, so a model that ignored the ## output contract
+        entirely still leaves the clinician a usable billing draft."""
+        async def _garbage(prompt, timeout_s=600.0, model=None):
+            return "I am sorry, I cannot help with that."
+
+        with patch("app.ui.server.generate_note", _garbage):
+            r = self._post(summary=self.SHOULDER_DICTATION)
+        data = r.json()
+        self.assertEqual(data["sections"], [])
+        self.assertIsNotNone(data["raw_text"])
+        self.assertEqual(data["billing"]["total_timed_minutes"], 20)
+
+    def test_revise_returns_no_billing_draft(self):
+        """/api/revise/stream's only input is the NOTE's prose. Billing from it would scan
+        model-written text for interventions — the exact rule-12 misfire. The client keeps
+        showing the draft from the original generate instead."""
+        with patch("app.generate.ollama_client.stream_note", _fake_stream):
+            r = self.client.post("/api/revise/stream", json={
+                "patient_id": self.pid, "form_id": "followup",
+                "note_text": "## Manual Therapy\nMinutes: 15\nGraded mobilizations.",
+                "instruction": "make it more concise",
+            })
+        events = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+        self.assertIsNone(events[-1]["result"]["billing"])
+
+    def test_stream_endpoint_returns_the_same_billing_draft(self):
+        with patch("app.ui.server.generate_note", _fake_generate), \
+             patch("app.generate.ollama_client.stream_note", _fake_stream):
+            r = self.client.post("/api/generate/stream", json={
+                "patient_id": self.pid, "form_id": "followup",
+                "summary": self.SHOULDER_DICTATION, "use_prior": False,
+            })
+        events = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+        billing = events[-1]["result"]["billing"]
+        self.assertEqual(billing["total_timed_minutes"], 20)
+        self.assertTrue(billing["confirm_required"])
+
     def test_huge_dictation_is_condensed_and_flagged(self):
         # A dictation far over the context budget must take the chunked path (fit_dictation calls
         # the mocked model per chunk) and surface a visible "condensed" completeness warning.

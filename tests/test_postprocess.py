@@ -70,6 +70,50 @@ class EnforceCarryTagsTests(unittest.TestCase):
         out = postprocess.enforce_carry_tags("initial", [_sec("Assessment", "x", True)])
         self.assertFalse(out[0]["carried_forward"])
 
+    def test_literal_body_tag_stripped_on_non_carry_form(self):
+        # Real-run #3: a non-carry Initial Eval had "[[CARRIED FORWARD]]" written into every body.
+        out = postprocess.enforce_carry_tags(
+            "initial", [_sec("Chief Complaint", "Status post right THA. [[CARRIED FORWARD]]", False)])
+        self.assertNotIn("CARRIED FORWARD", out[0]["body"])
+        self.assertFalse(out[0]["carried_forward"])
+
+    def test_literal_body_tag_marks_carry_on_allowed_section(self):
+        # On a real carry section, a tag in the BODY (not heading) must still mark it carried.
+        out = postprocess.enforce_carry_tags(
+            "followup", [_sec("Functional Status", "Ambulates 200 ft. [[CARRIED FORWARD]]", False)])
+        self.assertTrue(out[0]["carried_forward"])
+        self.assertNotIn("CARRIED FORWARD", out[0]["body"])
+
+
+class TemplateEchoTests(unittest.TestCase):
+    """Real-run #15: the model output the template's field INSTRUCTIONS as the values. Flag those;
+    never touch a real value that merely shares a couple of words."""
+
+    def test_echoed_functional_status_instruction_flagged(self):
+        body = "ambulation distance, assistive device, assist level, and stairs, updated to reflect today."
+        out = postprocess.flag_template_echo("followup", [_sec("Functional Status", body)])
+        self.assertIn("[[NEEDS:", out[0]["body"])
+        self.assertNotIn("assist level", out[0]["body"])
+
+    def test_echoed_goal_instruction_flagged(self):
+        out = postprocess.flag_template_echo(
+            "followup", [_sec("Short-Term Goals", "mark MET if today's data shows it achieved.")])
+        self.assertIn("[[NEEDS:", out[0]["body"])
+
+    def test_echoed_plan_instruction_flagged(self):
+        out = postprocess.flag_template_echo(
+            "followup", [_sec("Plan", "plan for the next visit: frequency, progression, and any change to the assist level.")])
+        self.assertIn("[[NEEDS:", out[0]["body"])
+
+    def test_real_functional_status_value_not_flagged(self):
+        body = "Ambulates 200 feet with a single point cane at contact guard; managed six steps with the rail."
+        out = postprocess.flag_template_echo("followup", [_sec("Functional Status", body)])
+        self.assertEqual(out[0]["body"], body)
+
+    def test_real_goal_value_not_flagged(self):
+        out = postprocess.flag_template_echo("followup", [_sec("Short-Term Goals", "MET")])
+        self.assertEqual(out[0]["body"], "MET")
+
     def test_strips_echoed_carry_forward_instruction_from_heading(self):
         # The model copies the spec's "[carry forward]" instruction into the heading; drop it.
         out = postprocess.strip_carry_instruction_headings([_sec("Precautions [carry forward]", "x", False)])

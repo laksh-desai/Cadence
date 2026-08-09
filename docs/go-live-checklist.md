@@ -21,6 +21,9 @@ need far more.
 - [ ] Confirm Python venv is set up and `requirements.txt` is installed
       (`.venv/Scripts/python.exe -c "import torch, transformers, librosa, fastapi"`).
 
+> Steps 1–2 are largely automated by **`setup.ps1`** (project root) — see
+> [`shipping.md`](shipping.md) section A. Run it after installing Python + Ollama.
+
 **Done when:** the app starts (`launcher.py`) and the **System Status** page loads.
 
 ## 2. Install and pull the local models — **[blocker]**
@@ -74,7 +77,52 @@ model still needs validation and likely fine-tuning on the practice's own notes
 **Done when:** the clinician is comfortable that drafts are consistently a good
 starting point, and correction patterns have been captured as rules.
 
-## 5. Go live on Google Sheets roster sync — **[optional]**
+## 4b. Sign off the billing code tables — **[blocker, before any code reaches a claim]**
+
+Cadence now drafts CPT codes, ICD-10 codes, treatment minutes, and billing units from the
+dictation (`app/generate/billing.py`). It never lets the model author a code, but the tables it
+maps from are **not yet reviewed by anyone qualified**, and a wrong code rendered as a confident
+chip is worse than no chip at all.
+
+- [ ] Have the clinician or a certified coder verify the ICD-10 tables in
+      `app/generate/coding_tables.py` against the current ICD-10-CM year, then fill in
+      `verified_by` / `verified_on` in `TABLE_PROVENANCE`. **`tests/test_billing_extract.py` fails
+      until they do** — that failure is the gate, not a bug. **Sign-off is per region** (shoulder,
+      knee, lumbar, cervical, hip, ankle), so start with the regions the practice actually sees;
+      the others stay visibly unverified and banner themselves in the Evals tab.
+- [ ] Have the clinician verify the billing gold labels on the eight hand-written records in
+      `evals/data/shoulder.jsonl` (each carries a `gold_provenance` block; `verified_by` is
+      blank). These are the **non-circular control** for every accuracy number the eval reports —
+      they were hand-read from the transcripts, not produced by the extractor, but they still
+      need a clinician's eye. See CLAUDE.md rule 21.
+- [ ] Watch the **wrong-claim** counters on a sweep — billing something the therapist said wasn't
+      done, counting untimed minutes, a wrong-side diagnosis, an invented duration, an
+      **over-counted unit**. These measure overbilling, not incompleteness, and must stay at zero:
+      `.venv/Scripts/python.exe scripts/eval_corpus.py --limit 5 --runs 1` (or the **Evals** tab).
+      Read `units_overstated` rather than `units_exact`: under-counting is a safe gap the clinician
+      fills, over-counting is a claim. Likewise `cpt_surfaced_recall` (raised for confirmation)
+      rather than only `cpt_detection_recall` (billed outright).
+- [ ] Confirm with the biller which unit rule the practice's payers use. Cadence deliberately
+      reports **both** CMS substitution and the AMA rule of eights, because they genuinely
+      disagree; it does not pick one.
+
+**Done when:** both `VERIFIED_` fields are filled, the eight control records are clinician-
+verified, and a sweep reports zero wrong claims.
+
+## 5. Set up a backup routine — **[blocker, once real notes exist]**
+
+Notes live only in the local encrypted DB — there is **no cross-device note sync**, so a
+lost or dead laptop loses everything unless it's backed up. `scripts/backup.py` copies the
+`.keyfile` + `cadence.db.enc` pair together, verifies the copy decrypts, and restores it.
+
+- [ ] Back up to a **local encrypted external/USB drive kept on-site** — never a cloud-synced
+      folder (`python scripts/backup.py backup --dest <drive>`; full detail in
+      [`shipping.md`](shipping.md) section C).
+- [ ] **Test a restore once** so you know the routine works before relying on it.
+
+**Done when:** a backup has been taken and a test restore succeeded.
+
+## 6. Go live on Google Sheets roster sync — **[optional]**
 
 Code-complete and unit-tested; blocked only on a Google Cloud permission, not code.
 The practice's Workspace BAA is confirmed to cover Cloud Platform.
