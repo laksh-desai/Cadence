@@ -201,18 +201,16 @@
           +'<span class="bcue">“'+esc(c.cue)+'”</span></li>';
       });
       h+='</ul>';
-      // What the unit count would become if every unconfirmed-but-timed line were accepted.
-      // Without this the clinician sees "4 units" and no hint that confirming a line changes it.
-      const pend=excluded.filter(c=>c.status==="uncertain"&&c.timed&&c.minutes!=null)
-                         .reduce((n,c)=>n+c.minutes,0);
-      if(pend && b.units){
-        const tot=b.total_timed_minutes+pend;
-        const u=tot<8?0:Math.floor((tot+7)/15);
-        if(u!==b.units.total_units){
-          h+='<p class="bwarn" style="margin:6px 0 0;font-size:12.5px">Confirming the lines above'
-            +' would add '+pend+' timed min → <b>'+u+(u===1?' unit':' units')+'</b> instead of '
-            +b.units.total_units+'.</p>';
-        }
+      // What the unit count becomes if every unconfirmed-but-timed line is accepted. The
+      // arithmetic is done SERVER-side (billing.units_if_confirmed) and only rendered here — the
+      // 8-minute rule must live in exactly one place, which is why the timed-code set was moved
+      // out of this file too.
+      const ifc=b.units_if_confirmed;
+      if(ifc && b.units && ifc.total_units!==b.units.total_units){
+        const add=ifc.total_timed_minutes-b.total_timed_minutes;
+        h+='<p class="bwarn" style="margin:6px 0 0;font-size:12.5px">Confirming the lines above'
+          +' would add '+add+' timed min → <b>'+ifc.total_units
+          +(ifc.total_units===1?' unit':' units')+'</b> instead of '+b.units.total_units+'.</p>';
       }
     }
     (b.conflicts||[]).forEach(c=>{
@@ -973,8 +971,22 @@
         } else { showError("The model didn't return a note this time."); }
         return;
       }
+      // mapSections is called TWICE on purpose so `sections` and `originalSections` are genuinely
+      // independent object graphs. If they ever aliased, the "Done editing" handler — which writes
+      // r.sections[i].body in place — would destroy the original exactly as it did before capture
+      // existed, and no test would catch it. Object.freeze is cheap insurance on top.
+      const mapSections = arr => (arr||[]).map(s=>({heading:s.heading, body:s.body, carriedForward:s.carried_forward}));
       lastResult={
-        sections: data.sections.map(s=>({heading:s.heading, body:s.body, carriedForward:s.carried_forward})),
+        sections: mapSections(data.sections),
+        // Pinned ONCE at generation and never overwritten. The question this must answer later is
+        // "how far is the signed note from what the model produced unaided?" — the revise channel
+        // is recorded separately below, so the two stay disentangleable.
+        originalSections: Object.freeze(mapSections(data.sections).map(Object.freeze)),
+        reviseInstructions: [],
+        modelId: data.model_id || null,
+        fastTier: !!data.fast,
+        templateSpecSha: data.template_spec_sha || null,
+        templateCustomized: !!data.template_customized,
         missingInfo: data.missing_info || [],
         formName: data.form_name, formId: data.form_id,
         patientId: currentPatient,
@@ -1119,7 +1131,14 @@
       "/api/revise/stream"
     );
     stopGenProgress();
-    if(finalResult && finalResult.sections && finalResult.sections.length){
+    const applied = !!(finalResult && finalResult.sections && finalResult.sections.length);
+    // The clinician describing in their own words what was wrong is the highest-signal correction
+    // data in the app, and it used to be discarded the moment the stream ended. A FAILED revision
+    // is recorded too — "the model couldn't do X" is signal, and it costs nothing.
+    (r.reviseInstructions || (r.reviseInstructions=[])).push(
+      {text: instruction, applied: applied, at: new Date().toISOString()});
+    if(applied){
+      // Only r.sections is reassigned — r.originalSections stays pinned to the first generation.
       r.sections=finalResult.sections.map(s=>({heading:s.heading, body:s.body, carriedForward:s.carried_forward}));
       r.missingInfo=finalResult.missing_info||[];
       renderResult(r);
@@ -1137,6 +1156,14 @@
       missing_info: r.missingInfo || [],
       dictation_raw: r.dictationRaw || "",
       used_prior: !!r.usedPrior,
+      // Correction capture: what the model produced, what the clinician asked for, and enough
+      // provenance to interpret both later. Stays in the encrypted local DB — see schema.sql.
+      original_sections: (r.originalSections||[]).map(s=>({heading:s.heading, body:s.body, carried_forward:s.carriedForward})),
+      revise_instructions: r.reviseInstructions || [],
+      model_id: r.modelId || null,
+      fast: !!r.fastTier,
+      template_spec_sha: r.templateSpecSha || null,
+      template_customized: !!r.templateCustomized,
     });
     if(!res.ok){ toast("Couldn't save — try again."); return; }
     await refreshCurrentPatient();

@@ -169,6 +169,22 @@ class RoundTripTests(unittest.TestCase):
         self.assertEqual(back.agreement.both, original.agreement.both)
         self.assertEqual(back.is_synthetic, original.is_synthetic)
         self.assertEqual(back.body_part, original.body_part)
+        self.assertEqual(back.folded_headings_raw, original.folded_headings_raw)
+
+    def test_folded_headings_raw_survives_the_round_trip(self):
+        """The one metric that stays sensitive to the MODEL after the deterministic fold repair
+        makes the downstream invariant permanently green. If --resume dropped it, a sweep could
+        no longer show the model regressing."""
+        from app.generate.forms import FORMS
+        rec = _record()
+        result = runner.score_one(rec, FORMS["followup"], [], [], False, 1.0, 1, True, None,
+                                  folded_raw=7)
+        self.assertEqual(result.folded_headings_raw, 7)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.json"
+            path.write_text(json.dumps(result.to_dict()), encoding="utf-8")
+            self.assertEqual(runner.load_result(path).folded_headings_raw, 7)
+        self.assertEqual(runner.aggregate([result])["folded_headings_raw"], 7)
 
     def test_to_dict_keys_are_all_read_back(self):
         """Guards the pairing directly: a block added to to_dict() without a matching branch in
@@ -216,6 +232,65 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(agg["synthetic"]["records"], 1)
         self.assertEqual(agg["handwritten"]["records"], 1)
         self.assertEqual(agg["all"]["records"], 2)
+
+
+class ResultsSharingTests(unittest.TestCase):
+    """Sweep results are COMMITTED so teammates can review them — except when the sweep touched
+    real dictation, which must never reach git.
+
+    The hazard is not obvious from the schema: `RecordResult.flags[].context` embeds a ~120-char
+    TRANSCRIPT EXCERPT so a reviewer can adjudicate a flag. Harmless for synthetic patients,
+    patient speech for a `*.local.jsonl` corpus — and git is a non-BAA third party (CLAUDE.md
+    non-negotiable #1). The split is automatic rather than a convention to remember.
+    """
+
+    def _write(self, corpus_files, out_dir):
+        from evals import results as rs
+        from evals.score import RecordResult
+        rec = [RecordResult(record_id=1, form_id="followup", run=1, seconds=1.0,
+                            was_condensed=False)]
+        return rs.write_run(rec, config={"body_part": "shoulder", "corpus_files": corpus_files},
+                            out_dir=out_dir)
+
+    def test_a_synthetic_sweep_is_named_for_sharing(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = self._write(["shoulder_synth.jsonl", "shoulder.jsonl"], Path(t))
+        self.assertFalse(path.name.endswith(".local.json"))
+
+    def test_a_sweep_over_real_dictation_is_named_local(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = self._write(["shoulder_synth.jsonl", "clinic.local.jsonl"], Path(t))
+            self.assertTrue(path.name.endswith(".local.json"))
+            self.assertTrue((Path(t) / "index.local.jsonl").exists(),
+                            "a local run must not append to the shared index")
+            self.assertTrue(json.loads(path.read_text(encoding="utf-8"))["contains_real_dictation"])
+
+    def test_one_real_file_in_a_mixed_corpus_is_enough(self):
+        from evals import results as rs
+        self.assertTrue(rs.touched_real_dictation(
+            {"corpus_files": ["a_synth.jsonl", "b.jsonl", "c.local.jsonl"]}))
+        self.assertFalse(rs.touched_real_dictation({"corpus_files": ["a_synth.jsonl", "b.jsonl"]}))
+
+    def test_local_runs_are_still_visible_to_the_person_who_ran_them(self):
+        """"Local" means "never leaves this machine", not "hidden from its owner"."""
+        from evals import results as rs
+        with tempfile.TemporaryDirectory() as t:
+            self._write(["shoulder_synth.jsonl"], Path(t))
+            self._write(["clinic.local.jsonl"], Path(t))
+            rows = rs.list_runs(Path(t))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(sum(1 for r in rows if r.get("contains_real_dictation")), 1)
+
+    def test_gitignore_shares_results_but_blocks_the_local_ones(self):
+        """The whole point of the change: a teammate must actually receive the results file."""
+        text = (Path(__file__).resolve().parent.parent / ".gitignore").read_text(encoding="utf-8")
+        self.assertNotIn("\nevals/results/\n", text,
+                         "a blanket ignore hides the file teammates are meant to review")
+        self.assertIn("evals/results/*.local.json", text)
+        self.assertIn("evals/results/index.local.jsonl", text)
+        self.assertIn("evals/data/*.local.jsonl", text, "the real-dictation corpus stays ignored")
+        self.assertIn("evals/runs*/", text,
+                      "the per-generation debug dirs, including --out variants, stay ignored")
 
 
 class CompareTests(unittest.TestCase):

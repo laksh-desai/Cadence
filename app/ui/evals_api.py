@@ -212,10 +212,10 @@ async def _run_sweep(job: EvalJob, body: RunRequest):
                     job.status = "cancelled"
                     break
                 job.current = f"record {record.id} ({record.word_count}w) run {run}"
-                sections, missing, condensed, seconds, ok, draft = await runner.generate_one(
+                sections, missing, condensed, seconds, ok, draft, folded = await runner.generate_one(
                     record, form, body.fast)
                 results.append(runner.score_one(record, form, sections, missing, condensed,
-                                                seconds, run, ok, draft))
+                                                seconds, run, ok, draft, folded))
                 job.done += 1
                 job.aggregate = runner.aggregate(results)
 

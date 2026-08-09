@@ -209,6 +209,78 @@ def technique_detail(body_part: str, code: str) -> tuple[str, ...]:
             or _GENERIC_DETAIL.get(code)
             or ("",))
 
+# --- the ICD anti-circularity bank -------------------------------------------------
+# Real ways a therapist NAMES a diagnosis that `coding_tables.ICD_BY_BODY_PART` does NOT list as
+# a cue. Keyed by (body_part, rule.cues[0]) — the first cue identifies a rule, except that
+# "segmental dysfunction" appears in both spine tables, hence the body part in the key.
+#
+# WHY THIS EXISTS. `_draw_diagnosis` used to pick the spoken phrase with
+# `rng.choice(rule.cues)` — straight out of the extractor's own cue list. ICD recall was therefore
+# 100% across 144 synthetic records by construction, measuring nothing except that the extractor
+# recognizes the strings it was told to recognize. That is exactly the circularity CLAUDE.md rule
+# 21 warns about, and it had been sitting in the eval unnoticed while the CPT side had a
+# deliberate paraphrase gap all along (INTERVENTION_SPOKEN's "hands-on work", "functional
+# activities"). These phrases restore the same honesty to the ICD half.
+#
+# A sample using one of these is still labeled with the CORRECT code, so a miss is a real miss and
+# recall genuinely drops. Per rule 21(a), do NOT bulk-copy them into the cue table to make the
+# number go up — decide phrase by phrase whether it is unambiguous enough to code on. Several
+# below are deliberately ambiguous and should stay unmatched: "stiff shoulder" could be stiffness
+# (M25.61-) or adhesive capsulitis (M75.0-), and guessing between them is a wrong claim.
+DIAGNOSIS_PARAPHRASES: dict[tuple[str, str], tuple[str, ...]] = {
+    # --- shoulder
+    ("shoulder", "rotator cuff tendinopathy"): ("torn rotator cuff", "cuff tear", "RCT"),
+    ("shoulder", "adhesive capsulitis"): ("capsulitis"),
+    ("shoulder", "impingement syndrome"): ("impingement", "subacromial pain syndrome"),
+    ("shoulder", "bicipital tendinitis"): ("long head biceps tendinopathy", "biceps tendonosis"),
+    ("shoulder", "slap tear"): ("superior labrum tear", "labral pathology"),
+    ("shoulder", "total shoulder arthroplasty"): ("shoulder replacement surgery", "new shoulder"),
+    # --- knee
+    ("knee", "anterior cruciate ligament tear"): ("blown ACL", "anterior cruciate rupture",
+                                                  "ACL deficiency"),
+    ("knee", "medial meniscus tear"): ("meniscal injury"),
+    ("knee", "patellofemoral pain syndrome"): ("PFPS"),
+    ("knee", "primary osteoarthritis of the knee"): ("degenerative knee", "wear and tear in the knee",
+                                                     "tricompartmental OA"),
+    ("knee", "total knee arthroplasty"): ("new knee", "knee replacement surgery"),
+    # NB: "quad tendon irritation" was here and was a GENERATOR BUG, not a paraphrase — the
+    # quadriceps tendon is a different structure from the patellar tendon and codes differently.
+    # A wrong gold label is worse than a missing one; it would have scored a correct extraction
+    # as a failure.
+    ("knee", "patellar tendinitis"): ("patellar tendinosis", "jumpers knee"),
+    # --- lumbar
+    ("lumbar", "low back pain"): ("LBP", "back pain", "mechanical back pain"),
+    ("lumbar", "sciatica"): ("sciatic pain", "radicular pain down the leg", "leg pain from the back"),
+    ("lumbar", "herniated disc"): ("slipped disc", "disc bulge", "HNP"),
+    ("lumbar", "lumbar spinal stenosis"): ("canal stenosis", "central stenosis", "narrowing of the canal"),
+    ("lumbar", "degenerative disc disease"): ("degenerative discs", "disc disease", "worn discs"),
+    ("lumbar", "lumbar sprain"): ("back strain", "pulled his back"),
+    # --- cervical
+    ("cervical", "cervicalgia"): ("neck ache", "sore neck"),
+    ("cervical", "whiplash"): ("WAD", "flexion extension injury"),
+    ("cervical", "cervical radiculopathy"): ("pinched nerve in the neck", "nerve root irritation"),
+    ("cervical", "cervical disc herniation"): ("slipped disc in the neck", "disc bulge in the neck"),
+    ("cervical", "cervicogenic headache"): ("headaches coming from the neck", "neck related headache"),
+    # --- hip
+    ("hip", "trochanteric bursitis"): ("GTPS"),
+    ("hip", "primary osteoarthritis of the hip"): ("degenerative hip", "arthritic hip", "worn hip"),
+    ("hip", "femoroacetabular impingement"): ("cam impingement", "pincer impingement"),
+    ("hip", "total hip arthroplasty"): ("new hip", "hip replacement surgery"),
+    ("hip", "hip labral tear"): ("torn labrum in the hip", "acetabular labrum injury"),
+    ("hip", "iliotibial band syndrome"): ("ITB friction syndrome"),
+    # --- ankle / foot
+    ("ankle", "ankle sprain"): ("rolled ankle", "inversion injury", "turned his ankle"),
+    ("ankle", "plantar fasciitis"): ("plantar heel pain"),
+    ("ankle", "achilles tendinitis"): ("achilles tendinosis", "tendinopathy of the achilles"),
+    ("ankle", "posterior tibial tendon dysfunction"): ("PTTD", "post tib dysfunction"),
+    ("ankle", "osteoarthritis of the ankle"): ("degenerative ankle", "arthritic ankle"),
+}
+
+#: Share of samples that speak a paraphrase instead of a canonical cue, where one exists. High
+#: enough that the honest recall is visible; low enough that the corpus still mostly reads like
+#: standard clinical documentation.
+DIAGNOSIS_PARAPHRASE_RATE = 0.4
+
 # How a therapist frames the diagnosis out loud. These carry the ICD context the extractor
 # requires, and are also just how people actually talk.
 DIAGNOSIS_FRAMES: tuple[str, ...] = (

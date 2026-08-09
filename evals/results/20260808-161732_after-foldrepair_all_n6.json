@@ -1,0 +1,1422 @@
+{
+  "schema_version": 1,
+  "run_id": "20260808-161732",
+  "started_at": "2026-08-08T23:07:45.869392+00:00",
+  "finished_at": "2026-08-08T23:17:32.686911+00:00",
+  "config": {
+    "body_part": "after-foldrepair",
+    "note_type": "all",
+    "form_override": null,
+    "sample_count": 6,
+    "runs_per_record": 1,
+    "model": "williamljx/medgemma-4b-it-Q4_K_M-GGUF",
+    "fast": false,
+    "corpus_files": [
+      "ankle_synth.jsonl",
+      "cervical_synth.jsonl",
+      "hip_synth.jsonl",
+      "knee_synth.jsonl",
+      "lumbar_synth.jsonl",
+      "shoulder_synth.jsonl"
+    ],
+    "record_ids": [
+      1001,
+      2001,
+      3001,
+      4001,
+      5001,
+      6001
+    ],
+    "cadence_git_sha": "e17826c",
+    "generator_version": 1
+  },
+  "aggregate": {
+    "all": {
+      "records": 6,
+      "distractor_leaks": 0,
+      "untimed_leaks": 0,
+      "laterality_errors": 0,
+      "minutes_fabricated": 0,
+      "units_overstated": 0,
+      "units_understated": 5,
+      "cpt_detection_recall": 0.8214,
+      "cpt_detection_precision": 1.0,
+      "cpt_surfaced_recall": 1.0,
+      "icd_recall": 1.0,
+      "icd_precision": 1.0,
+      "minutes_exact": 0.6429,
+      "minutes_within_2": 0.6429,
+      "minutes_not_extracted": 5,
+      "minutes_mae": 0.0,
+      "units_exact": 0.1667,
+      "units_exact_if_confirmed": 1.0,
+      "timed_minutes_exact": 0.1667,
+      "method_disagreements": 4,
+      "invariants_passed": 55,
+      "invariants_total": 60,
+      "flags_raised": 45,
+      "folded_headings_raw": 6,
+      "mean_seconds": 97.7
+    },
+    "synthetic": {
+      "records": 6,
+      "distractor_leaks": 0,
+      "untimed_leaks": 0,
+      "laterality_errors": 0,
+      "minutes_fabricated": 0,
+      "units_overstated": 0,
+      "units_understated": 5,
+      "cpt_detection_recall": 0.8214,
+      "cpt_detection_precision": 1.0,
+      "cpt_surfaced_recall": 1.0,
+      "icd_recall": 1.0,
+      "icd_precision": 1.0,
+      "minutes_exact": 0.6429,
+      "minutes_within_2": 0.6429,
+      "minutes_not_extracted": 5,
+      "minutes_mae": 0.0,
+      "units_exact": 0.1667,
+      "units_exact_if_confirmed": 1.0,
+      "timed_minutes_exact": 0.1667,
+      "method_disagreements": 4,
+      "invariants_passed": 55,
+      "invariants_total": 60,
+      "flags_raised": 45,
+      "folded_headings_raw": 6,
+      "mean_seconds": 97.7
+    },
+    "handwritten": {}
+  },
+  "records": [
+    {
+      "record_id": 1001,
+      "form_id": "followup",
+      "run": 1,
+      "seconds": 106.4,
+      "was_condensed": false,
+      "note_chars": 2490,
+      "invariants": {
+        "passed": 9,
+        "total": 10,
+        "failures": [
+          {
+            "name": "note does not end mid-sentence",
+            "detail": "ends: ...'t Level: Independent. Stairs: Not attempted today.  \\nMET\\nMET'"
+          }
+        ]
+      },
+      "section_coverage": {
+        "present": 9,
+        "expected": 11,
+        "missing": [
+          "FOLLOW-UP VISIT",
+          "Plan"
+        ]
+      },
+      "cpt": {
+        "gold": [
+          "97112",
+          "97535",
+          "97110",
+          "97530",
+          "97010"
+        ],
+        "suggested": [
+          "97110",
+          "97112",
+          "97535"
+        ],
+        "hits": [
+          "97112",
+          "97535",
+          "97110"
+        ],
+        "missed_section": [
+          "97530",
+          "97010"
+        ],
+        "table_gap": [],
+        "extra": [],
+        "precision": 1.0,
+        "recall": 0.6,
+        "attainable_recall": 0.6
+      },
+      "omissions": {
+        "stated": 3,
+        "present": 3,
+        "dropped": [],
+        "rate": 1.0
+      },
+      "flags": [
+        {
+          "section": "Functional Activities",
+          "text": "assistive device \"walker\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "blood pressure value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "heart rate value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "\"200 feet\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "assistive device \"cane\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        }
+      ],
+      "is_synthetic": true,
+      "body_part": "shoulder",
+      "folded_headings_raw": 0,
+      "icd": {
+        "gold": [
+          "M75.122"
+        ],
+        "suggested": [
+          "M75.122"
+        ],
+        "hits": [
+          "M75.122"
+        ],
+        "missed": [],
+        "extra": [],
+        "laterality_errors": [],
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "billing_detection": {
+        "gold": [
+          "97112",
+          "97535",
+          "97110",
+          "97530",
+          "97010"
+        ],
+        "detected": [
+          "97010",
+          "97535",
+          "97110",
+          "97112"
+        ],
+        "hits": [
+          "97112",
+          "97535",
+          "97110",
+          "97010"
+        ],
+        "missed": [
+          "97530"
+        ],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97530",
+          "97010",
+          "97535",
+          "97110",
+          "97112"
+        ],
+        "precision": 1.0,
+        "recall": 0.8,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97010",
+            "gold": null,
+            "extracted": null,
+            "basis": "not_stated",
+            "delta": null
+          },
+          {
+            "code": "97110",
+            "gold": 18,
+            "extracted": 18,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97112",
+            "gold": 12,
+            "extracted": 12,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97530",
+            "gold": 12,
+            "extracted": null,
+            "basis": "",
+            "delta": null
+          },
+          {
+            "code": "97535",
+            "gold": 14,
+            "extracted": 14,
+            "basis": "explicit",
+            "delta": 0
+          }
+        ],
+        "exact": 3,
+        "within_2": 3,
+        "not_extracted": 1,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 4,
+        "computed_units": 3,
+        "gold_timed_minutes": 56,
+        "computed_timed_minutes": 44,
+        "gold_units_ama": 4,
+        "computed_units_ama": 3,
+        "untimed_leak": [],
+        "method_disagreement": false,
+        "computed_units_if_confirmed": 4,
+        "exact": false,
+        "minutes_exact": false,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": {
+        "chip_only": [],
+        "dictation_only": [
+          "97010"
+        ],
+        "both": [
+          "97110",
+          "97112",
+          "97535"
+        ],
+        "agreement": 0.75
+      }
+    },
+    {
+      "record_id": 2001,
+      "form_id": "followup",
+      "run": 1,
+      "seconds": 83.7,
+      "was_condensed": false,
+      "note_chars": 1641,
+      "invariants": {
+        "passed": 9,
+        "total": 10,
+        "failures": [
+          {
+            "name": "every section has a non-empty body",
+            "detail": "6/12 empty: ['Pain - At Rest \u2014 3/10', 'Pain - With Movement \u2014 4/10', 'Vitals \u2014 BP: 120/80 mmHg, HR: 72 bpm', 'Response to Treatment \u2014 Good']"
+          }
+        ]
+      },
+      "section_coverage": {
+        "present": 9,
+        "expected": 11,
+        "missing": [
+          "FOLLOW-UP VISIT",
+          "Plan"
+        ]
+      },
+      "cpt": {
+        "gold": [
+          "97116",
+          "97530",
+          "97140",
+          "97110",
+          "97014"
+        ],
+        "suggested": [
+          "97110",
+          "97140",
+          "97116"
+        ],
+        "hits": [
+          "97116",
+          "97140",
+          "97110"
+        ],
+        "missed_section": [
+          "97530",
+          "97014"
+        ],
+        "table_gap": [],
+        "extra": [],
+        "precision": 1.0,
+        "recall": 0.6,
+        "attainable_recall": 0.6
+      },
+      "omissions": {
+        "stated": 4,
+        "present": 3,
+        "dropped": [
+          "18 minutes"
+        ],
+        "rate": 0.75
+      },
+      "flags": [
+        {
+          "section": "Precautions",
+          "text": "\"90 degrees\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Gait Training",
+          "text": "\"200 feet\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Gait Training",
+          "text": "assistive device \"cane\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "\"200 ft\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "assistive device \"cane\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        }
+      ],
+      "is_synthetic": true,
+      "body_part": "knee",
+      "folded_headings_raw": 6,
+      "icd": {
+        "gold": [
+          "M22.41"
+        ],
+        "suggested": [
+          "M22.41"
+        ],
+        "hits": [
+          "M22.41"
+        ],
+        "missed": [],
+        "extra": [],
+        "laterality_errors": [],
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "billing_detection": {
+        "gold": [
+          "97116",
+          "97530",
+          "97140",
+          "97110",
+          "97014"
+        ],
+        "detected": [
+          "97110",
+          "97014",
+          "97530",
+          "97116"
+        ],
+        "hits": [
+          "97116",
+          "97530",
+          "97110",
+          "97014"
+        ],
+        "missed": [
+          "97140"
+        ],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97110",
+          "97014",
+          "97530",
+          "97140",
+          "97116"
+        ],
+        "precision": 1.0,
+        "recall": 0.8,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97014",
+            "gold": null,
+            "extracted": null,
+            "basis": "not_stated",
+            "delta": null
+          },
+          {
+            "code": "97110",
+            "gold": 16,
+            "extracted": 16,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97116",
+            "gold": 11,
+            "extracted": 11,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97140",
+            "gold": 18,
+            "extracted": null,
+            "basis": "",
+            "delta": null
+          },
+          {
+            "code": "97530",
+            "gold": 8,
+            "extracted": 8,
+            "basis": "explicit",
+            "delta": 0
+          }
+        ],
+        "exact": 3,
+        "within_2": 3,
+        "not_extracted": 1,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 4,
+        "computed_units": 2,
+        "gold_timed_minutes": 53,
+        "computed_timed_minutes": 35,
+        "gold_units_ama": 4,
+        "computed_units_ama": 3,
+        "untimed_leak": [],
+        "method_disagreement": true,
+        "computed_units_if_confirmed": 4,
+        "exact": false,
+        "minutes_exact": false,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": {
+        "chip_only": [
+          "97140"
+        ],
+        "dictation_only": [
+          "97014",
+          "97530"
+        ],
+        "both": [
+          "97110",
+          "97116"
+        ],
+        "agreement": 0.4
+      }
+    },
+    {
+      "record_id": 3001,
+      "form_id": "followup",
+      "run": 1,
+      "seconds": 119.0,
+      "was_condensed": false,
+      "note_chars": 3997,
+      "invariants": {
+        "passed": 9,
+        "total": 10,
+        "failures": [
+          {
+            "name": "note does not end mid-sentence",
+            "detail": "ends: ...'ted stairs, but patient reported pain and stopped.  \\nMET\\nMET'"
+          }
+        ]
+      },
+      "section_coverage": {
+        "present": 9,
+        "expected": 11,
+        "missing": [
+          "FOLLOW-UP VISIT",
+          "Plan"
+        ]
+      },
+      "cpt": {
+        "gold": [
+          "97530",
+          "97140",
+          "97110",
+          "97112",
+          "97014"
+        ],
+        "suggested": [
+          "97110",
+          "97112",
+          "97140",
+          "97530"
+        ],
+        "hits": [
+          "97530",
+          "97140",
+          "97110",
+          "97112"
+        ],
+        "missed_section": [
+          "97014"
+        ],
+        "table_gap": [],
+        "extra": [],
+        "precision": 1.0,
+        "recall": 0.8,
+        "attainable_recall": 0.8
+      },
+      "omissions": {
+        "stated": 3,
+        "present": 3,
+        "dropped": [],
+        "rate": 1.0
+      },
+      "flags": [
+        {
+          "section": "Precautions",
+          "text": "\"60 degrees\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Therapeutic Exercise",
+          "text": "assistive device \"wheelchair\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Therapeutic Exercise",
+          "text": "text duplicated across sections \u2014 condense so each section is in its own words",
+          "context": ""
+        },
+        {
+          "section": "Neuromuscular Re-education",
+          "text": "assistive device \"wheelchair\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Neuromuscular Re-education",
+          "text": "text duplicated across sections \u2014 condense so each section is in its own words",
+          "context": ""
+        },
+        {
+          "section": "Manual Therapy",
+          "text": "text duplicated across sections \u2014 condense so each section is in its own words",
+          "context": ""
+        },
+        {
+          "section": "Therapeutic Activities",
+          "text": "assistive device \"wheelchair\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Therapeutic Activities",
+          "text": "text duplicated across sections \u2014 condense so each section is in its own words",
+          "context": ""
+        },
+        {
+          "section": "Therapeutic Exercises",
+          "text": "assistive device \"wheelchair\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Therapeutic Exercises",
+          "text": "text duplicated across sections \u2014 condense so each section is in its own words",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "blood pressure value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "heart rate value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "\"200 feet\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "assistive device \"cane\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        }
+      ],
+      "is_synthetic": true,
+      "body_part": "lumbar",
+      "folded_headings_raw": 0,
+      "icd": {
+        "gold": [
+          "M48.061"
+        ],
+        "suggested": [
+          "M48.061"
+        ],
+        "hits": [
+          "M48.061"
+        ],
+        "missed": [],
+        "extra": [],
+        "laterality_errors": [],
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "billing_detection": {
+        "gold": [
+          "97530",
+          "97140",
+          "97110",
+          "97112",
+          "97014"
+        ],
+        "detected": [
+          "97014",
+          "97112",
+          "97530",
+          "97110"
+        ],
+        "hits": [
+          "97530",
+          "97110",
+          "97112",
+          "97014"
+        ],
+        "missed": [
+          "97140"
+        ],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97014",
+          "97112",
+          "97140",
+          "97530",
+          "97110"
+        ],
+        "precision": 1.0,
+        "recall": 0.8,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97014",
+            "gold": null,
+            "extracted": null,
+            "basis": "not_stated",
+            "delta": null
+          },
+          {
+            "code": "97110",
+            "gold": 18,
+            "extracted": 18,
+            "basis": "bare_number_inferred",
+            "delta": 0
+          },
+          {
+            "code": "97112",
+            "gold": 17,
+            "extracted": 17,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97140",
+            "gold": 18,
+            "extracted": null,
+            "basis": "",
+            "delta": null
+          },
+          {
+            "code": "97530",
+            "gold": 14,
+            "extracted": 14,
+            "basis": "explicit",
+            "delta": 0
+          }
+        ],
+        "exact": 3,
+        "within_2": 3,
+        "not_extracted": 1,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 4,
+        "computed_units": 3,
+        "gold_timed_minutes": 67,
+        "computed_timed_minutes": 49,
+        "gold_units_ama": 4,
+        "computed_units_ama": 3,
+        "untimed_leak": [],
+        "method_disagreement": false,
+        "computed_units_if_confirmed": 4,
+        "exact": false,
+        "minutes_exact": false,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": {
+        "chip_only": [
+          "97140"
+        ],
+        "dictation_only": [
+          "97014"
+        ],
+        "both": [
+          "97110",
+          "97112",
+          "97530"
+        ],
+        "agreement": 0.6
+      }
+    },
+    {
+      "record_id": 4001,
+      "form_id": "followup",
+      "run": 1,
+      "seconds": 94.6,
+      "was_condensed": false,
+      "note_chars": 2418,
+      "invariants": {
+        "passed": 9,
+        "total": 10,
+        "failures": [
+          {
+            "name": "note does not end mid-sentence",
+            "detail": "ends: ...' Assist level: Independent. Stairs: Not attempted.  \\nMET\\nMET'"
+          }
+        ]
+      },
+      "section_coverage": {
+        "present": 9,
+        "expected": 11,
+        "missing": [
+          "FOLLOW-UP VISIT",
+          "Plan"
+        ]
+      },
+      "cpt": {
+        "gold": [
+          "97110",
+          "97530",
+          "97112",
+          "97140",
+          "97010"
+        ],
+        "suggested": [
+          "97110",
+          "97112",
+          "97530"
+        ],
+        "hits": [
+          "97110",
+          "97530",
+          "97112"
+        ],
+        "missed_section": [
+          "97140",
+          "97010"
+        ],
+        "table_gap": [],
+        "extra": [],
+        "precision": 1.0,
+        "recall": 0.6,
+        "attainable_recall": 0.6
+      },
+      "omissions": {
+        "stated": 3,
+        "present": 3,
+        "dropped": [],
+        "rate": 1.0
+      },
+      "flags": [
+        {
+          "section": "Therapeutic Exercise",
+          "text": "text duplicated across sections \u2014 condense so each section is in its own words",
+          "context": ""
+        },
+        {
+          "section": "Neuromuscular Re-education",
+          "text": "text duplicated across sections \u2014 condense so each section is in its own words",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "blood pressure value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "heart rate value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "\"200 feet\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "assistive device \"cane\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        }
+      ],
+      "is_synthetic": true,
+      "body_part": "cervical",
+      "folded_headings_raw": 0,
+      "icd": {
+        "gold": [
+          "G44.86"
+        ],
+        "suggested": [
+          "G44.86"
+        ],
+        "hits": [
+          "G44.86"
+        ],
+        "missed": [],
+        "extra": [],
+        "laterality_errors": [],
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "billing_detection": {
+        "gold": [
+          "97110",
+          "97530",
+          "97112",
+          "97140",
+          "97010"
+        ],
+        "detected": [
+          "97110",
+          "97112",
+          "97530",
+          "97010"
+        ],
+        "hits": [
+          "97110",
+          "97530",
+          "97112",
+          "97010"
+        ],
+        "missed": [
+          "97140"
+        ],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97110",
+          "97112",
+          "97530",
+          "97140",
+          "97010"
+        ],
+        "precision": 1.0,
+        "recall": 0.8,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97010",
+            "gold": null,
+            "extracted": null,
+            "basis": "not_stated",
+            "delta": null
+          },
+          {
+            "code": "97110",
+            "gold": 13,
+            "extracted": 13,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97112",
+            "gold": 13,
+            "extracted": 13,
+            "basis": "bare_number_inferred",
+            "delta": 0
+          },
+          {
+            "code": "97140",
+            "gold": 9,
+            "extracted": null,
+            "basis": "",
+            "delta": null
+          },
+          {
+            "code": "97530",
+            "gold": 10,
+            "extracted": 10,
+            "basis": "explicit",
+            "delta": 0
+          }
+        ],
+        "exact": 3,
+        "within_2": 3,
+        "not_extracted": 1,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 3,
+        "computed_units": 2,
+        "gold_timed_minutes": 45,
+        "computed_timed_minutes": 36,
+        "gold_units_ama": 4,
+        "computed_units_ama": 3,
+        "untimed_leak": [],
+        "method_disagreement": true,
+        "computed_units_if_confirmed": 3,
+        "exact": false,
+        "minutes_exact": false,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": {
+        "chip_only": [],
+        "dictation_only": [
+          "97010"
+        ],
+        "both": [
+          "97110",
+          "97112",
+          "97530"
+        ],
+        "agreement": 0.75
+      }
+    },
+    {
+      "record_id": 5001,
+      "form_id": "followup",
+      "run": 1,
+      "seconds": 105.2,
+      "was_condensed": false,
+      "note_chars": 3209,
+      "invariants": {
+        "passed": 10,
+        "total": 10,
+        "failures": []
+      },
+      "section_coverage": {
+        "present": 10,
+        "expected": 11,
+        "missing": [
+          "FOLLOW-UP VISIT"
+        ]
+      },
+      "cpt": {
+        "gold": [
+          "97112",
+          "97116",
+          "97530",
+          "97140",
+          "97010"
+        ],
+        "suggested": [
+          "97110",
+          "97530",
+          "97116"
+        ],
+        "hits": [
+          "97116",
+          "97530"
+        ],
+        "missed_section": [
+          "97112",
+          "97140",
+          "97010"
+        ],
+        "table_gap": [],
+        "extra": [
+          "97110"
+        ],
+        "precision": 0.6666666666666666,
+        "recall": 0.4,
+        "attainable_recall": 0.4
+      },
+      "omissions": {
+        "stated": 2,
+        "present": 2,
+        "dropped": [],
+        "rate": 1.0
+      },
+      "flags": [
+        {
+          "section": "Therapeutic Exercise",
+          "text": "\"90 degrees\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Therapeutic Activity",
+          "text": "\"9 minutes\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Therapeutic Activity",
+          "text": "\"90 degrees\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Gait Training",
+          "text": "assistive device \"cane\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "blood pressure value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "heart rate value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "\"200 feet\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "assistive device \"cane\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Plan",
+          "text": "\"300 feet\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Plan",
+          "text": "assistive device \"cane\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        }
+      ],
+      "is_synthetic": true,
+      "body_part": "hip",
+      "folded_headings_raw": 0,
+      "icd": {
+        "gold": [
+          "M25.551"
+        ],
+        "suggested": [
+          "M25.551"
+        ],
+        "hits": [
+          "M25.551"
+        ],
+        "missed": [],
+        "extra": [],
+        "laterality_errors": [],
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "billing_detection": {
+        "gold": [
+          "97112",
+          "97116",
+          "97530",
+          "97140",
+          "97010"
+        ],
+        "detected": [
+          "97112",
+          "97530",
+          "97116",
+          "97010"
+        ],
+        "hits": [
+          "97112",
+          "97116",
+          "97530",
+          "97010"
+        ],
+        "missed": [
+          "97140"
+        ],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97112",
+          "97530",
+          "97116",
+          "97010",
+          "97140"
+        ],
+        "precision": 1.0,
+        "recall": 0.8,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97010",
+            "gold": null,
+            "extracted": null,
+            "basis": "not_stated",
+            "delta": null
+          },
+          {
+            "code": "97112",
+            "gold": 10,
+            "extracted": 10,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97116",
+            "gold": 11,
+            "extracted": 11,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97140",
+            "gold": 11,
+            "extracted": null,
+            "basis": "",
+            "delta": null
+          },
+          {
+            "code": "97530",
+            "gold": 9,
+            "extracted": 9,
+            "basis": "bare_number_inferred",
+            "delta": 0
+          }
+        ],
+        "exact": 3,
+        "within_2": 3,
+        "not_extracted": 1,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 3,
+        "computed_units": 2,
+        "gold_timed_minutes": 41,
+        "computed_timed_minutes": 30,
+        "gold_units_ama": 4,
+        "computed_units_ama": 3,
+        "untimed_leak": [],
+        "method_disagreement": true,
+        "computed_units_if_confirmed": 3,
+        "exact": false,
+        "minutes_exact": false,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": {
+        "chip_only": [
+          "97110"
+        ],
+        "dictation_only": [
+          "97010",
+          "97112"
+        ],
+        "both": [
+          "97116",
+          "97530"
+        ],
+        "agreement": 0.4
+      }
+    },
+    {
+      "record_id": 6001,
+      "form_id": "followup",
+      "run": 1,
+      "seconds": 77.3,
+      "was_condensed": false,
+      "note_chars": 2121,
+      "invariants": {
+        "passed": 9,
+        "total": 10,
+        "failures": [
+          {
+            "name": "note does not end mid-sentence",
+            "detail": "ends: ...'t level: Independent. Stairs: Not attempted today.  \\nMET\\nMET'"
+          }
+        ]
+      },
+      "section_coverage": {
+        "present": 9,
+        "expected": 11,
+        "missing": [
+          "FOLLOW-UP VISIT",
+          "Plan"
+        ]
+      },
+      "cpt": {
+        "gold": [
+          "97530",
+          "97110",
+          "97112"
+        ],
+        "suggested": [
+          "97110",
+          "97112",
+          "97530"
+        ],
+        "hits": [
+          "97530",
+          "97110",
+          "97112"
+        ],
+        "missed_section": [],
+        "table_gap": [],
+        "extra": [],
+        "precision": 1.0,
+        "recall": 1.0,
+        "attainable_recall": 1.0
+      },
+      "omissions": {
+        "stated": 2,
+        "present": 2,
+        "dropped": [],
+        "rate": 1.0
+      },
+      "flags": [
+        {
+          "section": "Therapeutic Activities",
+          "text": "\"10 minutes\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "blood pressure value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Vitals",
+          "text": "heart rate value stated but not mentioned in dictation \u2014 verify",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "\"200 feet\" not found in dictation \u2014 verify or remove",
+          "context": ""
+        },
+        {
+          "section": "Functional Status",
+          "text": "assistive device \"cane\" not mentioned in dictation \u2014 verify",
+          "context": ""
+        }
+      ],
+      "is_synthetic": true,
+      "body_part": "ankle",
+      "folded_headings_raw": 0,
+      "icd": {
+        "gold": [
+          "M25.672"
+        ],
+        "suggested": [
+          "M25.672"
+        ],
+        "hits": [
+          "M25.672"
+        ],
+        "missed": [],
+        "extra": [],
+        "laterality_errors": [],
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "billing_detection": {
+        "gold": [
+          "97530",
+          "97110",
+          "97112"
+        ],
+        "detected": [
+          "97110",
+          "97112",
+          "97530"
+        ],
+        "hits": [
+          "97530",
+          "97110",
+          "97112"
+        ],
+        "missed": [],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97110",
+          "97112",
+          "97530",
+          "97010"
+        ],
+        "precision": 1.0,
+        "recall": 1.0,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97110",
+            "gold": 21,
+            "extracted": 21,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97112",
+            "gold": 22,
+            "extracted": 22,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97530",
+            "gold": 10,
+            "extracted": 10,
+            "basis": "bare_number_inferred",
+            "delta": 0
+          }
+        ],
+        "exact": 3,
+        "within_2": 3,
+        "not_extracted": 0,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 4,
+        "computed_units": 4,
+        "gold_timed_minutes": 53,
+        "computed_timed_minutes": 53,
+        "gold_units_ama": 3,
+        "computed_units_ama": 3,
+        "untimed_leak": [],
+        "method_disagreement": true,
+        "computed_units_if_confirmed": null,
+        "exact": true,
+        "minutes_exact": true,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": {
+        "chip_only": [],
+        "dictation_only": [],
+        "both": [
+          "97110",
+          "97112",
+          "97530"
+        ],
+        "agreement": 1.0
+      }
+    }
+  ]
+}

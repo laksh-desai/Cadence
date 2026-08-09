@@ -390,6 +390,11 @@ class BillingDraft:
     untimed_codes: tuple[str, ...] = ()
     units: UnitAllocation | None = None
     units_alt: UnitAllocation | None = None
+    #: Units if the clinician confirmed every `uncertain` timed line as well. Computed HERE rather
+    #: than in the browser so the 8-minute rule lives in exactly one place — the same reason the
+    #: timed-code set was moved out of app.js. It answers the question the clinician actually has
+    #: ("what do I get if I accept these?") without either side reimplementing the arithmetic.
+    units_if_confirmed: UnitAllocation | None = None
     missing: tuple[str, ...] = ()
     conflicts: tuple[Conflict, ...] = ()
     #: Hard-coded, never a constructor argument any caller varies, and asserted by the test suite.
@@ -621,6 +626,16 @@ def extract(transcript: str, *, body_part: str | None = None) -> BillingDraft:
     total = sum(per_code.values())
     untimed = tuple(sorted({h.code for h in billable if not h.timed}))
 
+    # What the total becomes if the clinician also accepts the `uncertain` lines — the ones where
+    # a duration WAS found but the phrase wasn't definite enough to bill a code on its own
+    # authority. Measured separately by `evals/score.py:exact_if_confirmed`, because judging the
+    # unit math against gold that assumes every intervention bills would otherwise penalize the
+    # weak-cue policy rather than the arithmetic.
+    pending = dict(per_code)
+    for h in hits:
+        if h.status == UNCERTAIN and h.timed and h.minutes:
+            pending[h.code] = pending.get(h.code, 0) + h.minutes
+
     return BillingDraft(
         body_part=part,
         interventions=tuple(hits),
@@ -629,6 +644,8 @@ def extract(transcript: str, *, body_part: str | None = None) -> BillingDraft:
         untimed_codes=untimed,
         units=allocate_units(per_code, method=CMS_SUBSTITUTION),
         units_alt=allocate_units(per_code, method=AMA_RULE_OF_EIGHTS),
+        units_if_confirmed=(allocate_units(pending, method=CMS_SUBSTITUTION)
+                            if pending != per_code else None),
         missing=_missing_for(part, hits, icd, session_total),
     )
 

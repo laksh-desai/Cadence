@@ -226,9 +226,191 @@ def flag_template_echo(form_id: str, sections: list[dict]) -> list[dict]:
     return out
 
 
+# --- folded-heading repair (CLAUDE.md rules 10 + 19) --------------------------------
+# A section heading is a LABEL ("Functional Mobility / Gait" is 26 chars; the longest in any
+# built-in template is well under this). Anything longer means the model wrote the section's
+# CONTENT on the "## " line instead of in the body below it.
+#
+# This is a PRODUCTION contract, not an eval-only ruler — evals/score.py imports it from here.
+# Measured on a real MedGemma 4B sweep (2026-08): on 2 of 3 notes the model folded the content into
+# the heading and left EVERY body empty (8/14 headings over 80 chars, longest 339). Two things make
+# that worse than it sounds:
+#   * traceability.add_verification_flags inspects `body` ONLY, so the entire rule-20 verification
+#     layer silently no-ops — an invented device and invented vitals passed through unflagged while
+#     the note scored clean on every other invariant; and
+#   * app.js:renderEditView renders the heading as a <span> and gives a textarea only for the body,
+#     so the folded content is not even CORRECTABLE by the clinician without regenerating.
+# Per rule 19 ("when a failure class is a detectable, meaning-safe pattern, move it into
+# postprocess.py"), this is repaired deterministically rather than prompted or fine-tuned for.
+MAX_HEADING_CHARS = 80
+
+MAX_LABEL_CHARS = 60   # the longest label the repair is willing to MANUFACTURE
+MAX_LABEL_WORDS = 8    # "Social History / Living Environment" is 5 words / 34 chars
+
+_SEPARATORS = (" — ", " – ", " -- ", ": ", " - ")
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+# A "label" carrying a measured value is CONTENT, not a label ("Pain 8/10 at rest").
+_VALUE_IN_LABEL_RE = re.compile(
+    r"\b\d+\s*(?:/\s*\d+|minutes?\b|mins?\b|degrees?\b|°|feet\b|ft\b|lbs?\b|%)", re.IGNORECASE)
+_TRAILING_MINUTES_RE = re.compile(r"\s*\bminutes?\s*:?\s*$", re.IGNORECASE)
+
+_FOLD_MARKER = (" [[NEEDS: the model wrote this section's content on the heading line — Cadence "
+                "moved it into the body; check it is complete and belongs in this section]]")
+
+
+#: The em/en dash specifically — the template specs' own "Label — description" format, which the
+#: model echoes with the VALUE inline where the description should be. Distinguished from " - "
+#: and ": ", which appear INSIDE legitimate labels ("Pain - At Rest", "Coordination / Sensation").
+_STRONG_SEPARATORS = (" — ", " – ")
+
+
+def is_folded_heading(section: dict) -> bool:
+    """True if the model wrote this section's CONTENT or VALUE on the heading line.
+
+    An empty body is required either way — that is what distinguishes a folded heading from a
+    long-but-real one, and "empty" means empty AFTER stripping `[[...]]` markers so it matches how
+    evals/score.py computes `empty_bodies` (that invariant is this repair's tripwire).
+
+    Two shapes qualify:
+      * an over-long heading, where the model wrote whole paragraphs on the `## ` line; and
+      * a SHORT heading carrying a value after an em/en dash — `## Vitals — BP: 120/80 mmHg,
+        HR: 72 bpm`, `## Pain - At Rest — 3/10`, `## Short-Term Goals — MET`. Observed six times
+        in one real generation. These are the same failure under the length threshold, and they
+        matter for the same reason: with an empty body, `flag_unsupported_vitals` and
+        `flag_unanchored_in_sections` cannot see the value, so an INVENTED blood pressure passes
+        unflagged. Restricted to the em/en dash because " - " and ": " occur inside legitimate
+        labels — splitting `## Pain - At Rest` on its hyphen would mangle a real template heading.
+
+    A CPT/ICD-headed section is excluded on purpose: `flag_code_sections` REPLACES the whole body
+    of one, so splitting first would hand it content that then gets wiped. Rule 12 wins there.
+    """
+    heading = section.get("heading", "") or ""
+    if _ECHO_MARKER_RE.sub("", section.get("body", "") or "").strip():
+        return False
+    if _CODE_HEADING_RE.search(heading):
+        return False
+    return (len(heading) > MAX_HEADING_CHARS
+            or any(sep in heading for sep in _STRONG_SEPARATORS))
+
+
+def _valid_label(raw: str) -> str | None:
+    """A candidate left-hand side, or None if it reads as content rather than a section label."""
+    label = raw.strip().strip(" .,;:—–-")
+    if not label or len(label) > MAX_LABEL_CHARS:
+        return None
+    if len(label.split()) > MAX_LABEL_WORDS:
+        return None
+    if not re.search(r"[A-Za-z]", label):
+        return None
+    if _VALUE_IN_LABEL_RE.search(label):
+        return None
+    if label.count("[[") != label.count("]]"):   # never bisect a marker
+        return None
+    return label
+
+
+def _split_points(heading: str) -> list[tuple[int, int]]:
+    """Candidate (split_at, resume_at) pairs, excluding any that fall inside a `[[...]]` marker.
+
+    For a SHORT heading only the em/en dash counts. `## Pain - At Rest — 3/10` must split at the
+    em dash, not at the hyphen inside its own label; and a sentence boundary in a short heading is
+    almost certainly punctuation in the label rather than a fold.
+    """
+    spans = [m.span() for m in _ECHO_MARKER_RE.finditer(heading)]
+    inside = lambda i: any(s < i < e for s, e in spans)  # noqa: E731
+    long_heading = len(heading) > MAX_HEADING_CHARS
+    out: list[tuple[int, int]] = []
+    for sep in (_SEPARATORS if long_heading else _STRONG_SEPARATORS):
+        start = 0
+        while (i := heading.find(sep, start)) != -1:
+            if not (inside(i) or inside(i + len(sep))):
+                out.append((i, i + len(sep)))
+            start = i + 1
+    if long_heading:
+        for m in _SENTENCE_END_RE.finditer(heading):
+            if not (inside(m.start()) or inside(m.end())):
+                out.append((m.start(), m.end()))
+    return sorted(set(out))
+
+
+def _truncate_at_word(text: str, limit: int) -> str:
+    """Cut at the last space at or before `limit`, backing off if that would bisect a marker."""
+    if len(text) <= limit:
+        return text.strip()
+    cut = text.rfind(" ", 0, limit + 1)
+    cut = cut if cut > 0 else limit
+    for s, e in (m.span() for m in _ECHO_MARKER_RE.finditer(text)):
+        if s < cut < e:
+            cut = s
+    return text[:cut].strip().strip(" .,;:—–-") or text[:limit].strip()
+
+
+def split_folded_headings(sections: list[dict]) -> list[dict]:
+    """Move content the model wrote on the `## ` line down into the body (rules 10 + 19).
+
+    Text is MOVED, never rewritten — only the separator and boundary whitespace are dropped, and
+    any existing body is appended below rather than replaced (so a model-authored
+    `[[CARRIED FORWARD]]` body tag survives for `enforce_carry_tags` two steps later).
+
+    When no clean split point exists the whole heading still moves, under a word-boundary
+    truncation, and earns a `[[NEEDS: ...]]` marker. Leaving it alone is not the safer option: the
+    eval invariant that would catch it never runs in the clinic, and the content would stay both
+    unverifiable and uneditable. A clean split is a confident, meaning-safe move and gets no marker
+    (same posture as `normalize_strength_grades`); the fallback is a GUESS about where the label
+    ends, and that is what earns the flag.
+    """
+    out = []
+    for s in sections:
+        if not is_folded_heading(s):
+            out.append(s)
+            continue
+        heading = s["heading"]
+        label = moved = None
+        for split_at, resume_at in _split_points(heading):
+            candidate = _valid_label(heading[:split_at])
+            if not candidate:
+                continue
+            # Rule 10: "Minutes: 25" belongs in the body, whole. If the label ends on a dangling
+            # "Minutes", shift the cut left so the number travels with its word.
+            if (m := _TRAILING_MINUTES_RE.search(candidate)):
+                shifted = _valid_label(candidate[:m.start()])
+                if shifted:
+                    split_at = heading.find(candidate) + m.start()
+                    resume_at = split_at
+                    candidate = shifted
+            label, moved = candidate, heading[resume_at:].strip()
+            break
+
+        if label is None:
+            if len(heading) <= MAX_HEADING_CHARS:
+                # A SHORT heading we couldn't parse is left exactly as it was. The truncation
+                # fallback exists for long folded prose; applying it to a short label would
+                # mangle a legitimate heading to no benefit.
+                out.append(s)
+                continue
+            # No clean split in a long heading — move everything, truncate the label, and flag.
+            label = _truncate_at_word(heading, MAX_LABEL_CHARS)
+            moved = heading.strip() + _FOLD_MARKER
+
+        body = s.get("body", "") or ""
+        out.append({**s, "heading": label,
+                    "body": moved + ("\n" + body if body.strip() else "")})
+    return out
+
+
 def apply(form_id: str, sections: list[dict]) -> list[dict]:
-    sections = drop_unperformed_treatment_sections(sections)
+    # strip_carry_instruction_headings runs FIRST: it is heading-only, so it must clear an echoed
+    # "[carry forward]" spec instruction before the split could strand it in the body where
+    # nothing strips it.
     sections = strip_carry_instruction_headings(sections)
+    # The split must precede the zero-minutes drop. That drop matches "Minutes: 0" at the START OF
+    # THE BODY, so a folded "Minutes: 0 — ultrasound not performed today" leaves an empty body, the
+    # drop never fires, and the invented placeholder section survives into the note. Splitting
+    # first restores the marker to the body's first line. Everything downstream gains for the same
+    # reason: enforce_carry_tags stops matching a carry label inside a 339-char haystack, and
+    # normalize_strength_grades / strip_checklist_affirmations / traceability finally see content.
+    sections = split_folded_headings(sections)
+    sections = drop_unperformed_treatment_sections(sections)
     sections = enforce_carry_tags(form_id, sections)
     sections = flag_template_echo(form_id, sections)
     sections = flag_code_sections(sections)

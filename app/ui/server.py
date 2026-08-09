@@ -410,6 +410,8 @@ def _billing_draft(form, bill_from: str | None, sections: list[dict] | None):
         untimed_codes=list(draft.untimed_codes),
         units=UnitAllocationModel(**vars(draft.units)) if draft.units else None,
         units_alt=UnitAllocationModel(**vars(draft.units_alt)) if draft.units_alt else None,
+        units_if_confirmed=(UnitAllocationModel(**vars(draft.units_if_confirmed))
+                            if draft.units_if_confirmed else None),
         missing=list(draft.missing),
         conflicts=[ConflictModel(kind=c.kind, severity=c.severity, code=c.code, detail=c.detail)
                    for c in draft.conflicts],
@@ -417,11 +419,17 @@ def _billing_draft(form, bill_from: str | None, sections: list[dict] | None):
 
 
 def _finalize_note(form, text, was_condensed, still_over, transcript, used_prior, *,
-                   bill_from: str | None = None) -> GenerateResponse:
+                   bill_from: str | None = None, model_id: str | None = None) -> GenerateResponse:
     """Shared back of the generate path: parse the raw note, then the deterministic post-generation
     pipeline — postprocess safeguards, the verification/anti-hallucination flags (anchored against the
     RAW dictation), CPT suggestion, and the billing draft. Identical whether the note was streamed
     or not."""
+    # Provenance stamped server-side: the client must not be the authority on which model ran,
+    # and the spec hash has to be the outline as of GENERATION time (templates are editable, so
+    # it can change between generating and saving).
+    prov = dict(model_id=model_id, template_spec_sha=forms_store.spec_sha(form.id),
+                template_customized=forms_store.is_customized(form.id),
+                fast=bool(model_id and model_id == ollama_client.FAST_MODEL))
     parsed = parse_plain(text)
     if parsed is None:
         # The billing draft comes from the DICTATION, so it survives a model that ignored the
@@ -429,7 +437,7 @@ def _finalize_note(form, text, was_condensed, still_over, transcript, used_prior
         return GenerateResponse(
             sections=[], missing_info=[], form_id=form.id, form_name=form.name,
             used_prior=used_prior, raw_text=text,
-            billing=_billing_draft(form, bill_from, None),
+            billing=_billing_draft(form, bill_from, None), **prov,
         )
     sections = postprocess.apply(form.id, parsed["sections"])
     sections = traceability.add_verification_flags(sections, transcript)
@@ -447,7 +455,7 @@ def _finalize_note(form, text, was_condensed, still_over, transcript, used_prior
         sections=[SectionModel(**s) for s in sections],
         missing_info=missing,
         form_id=form.id, form_name=form.name, used_prior=used_prior, raw_text=None,
-        billing=_billing_draft(form, bill_from, sections),
+        billing=_billing_draft(form, bill_from, sections), **prov,
     )
 
 
@@ -466,7 +474,7 @@ async def generate(body: GenerateRequest):
         raise HTTPException(502, str(e)) from e
     transcript = " ".join(filter(None, [body.summary, body.extra_info]))
     return _finalize_note(form, text, was_condensed, still_over, transcript, used_prior,
-                          bill_from=transcript)
+                          bill_from=transcript, model_id=ollama_client.model_for(body.fast))
 
 
 @app.post("/api/generate/stream")
@@ -495,7 +503,7 @@ async def generate_stream(body: GenerateRequest):
                 parts.append(chunk)
                 yield _event({"type": "token", "text": chunk})
             result = _finalize_note(form, "".join(parts), was_condensed, still_over, transcript,
-                                    used_prior, bill_from=transcript)
+                                    used_prior, bill_from=transcript, model_id=model)
             yield _event({"type": "done", "result": result.model_dump()})
         except OllamaUnavailableError as e:
             yield _event({"type": "error", "detail": str(e)})
@@ -544,7 +552,7 @@ async def revise_stream(body: ReviseRequest):
             # showing the billing card from the original generate, which was derived from the
             # real dictation and is still the correct draft for this visit.
             result = _finalize_note(form, "".join(parts), False, False, transcript, False,
-                                    bill_from=None)
+                                    bill_from=None, model_id=model)
             yield _event({"type": "done", "result": result.model_dump()})
         except OllamaUnavailableError as e:
             yield _event({"type": "error", "detail": str(e)})
@@ -569,6 +577,13 @@ async def save_note(patient_id: str, body: SaveNoteRequest):
         patient_id=patient_id, form_id=body.form_id, form_name=body.form_name,
         sections=sections, missing_info=body.missing_info,
         dictation_raw=body.dictation_raw, used_prior=body.used_prior,
+        # Correction capture. NOTE: carry_forward below must keep receiving the FINAL sections,
+        # never the originals, or a follow-up would carry the model's uncorrected values forward.
+        original_sections=[s.model_dump() for s in body.original_sections] or None,
+        revise_instructions=[r.model_dump() for r in body.revise_instructions] or None,
+        model_id=body.model_id, fast=body.fast,
+        template_spec_sha=body.template_spec_sha,
+        template_customized=body.template_customized, synthetic=body.synthetic,
     )
     carry_forward.update_snapshot_after_save(
         patient_id=patient_id, note_id=created["id"], form_id=body.form_id, sections=sections

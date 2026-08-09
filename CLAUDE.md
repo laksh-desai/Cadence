@@ -173,7 +173,9 @@ every note-generation prompt:
     stay clean section/CPT names (e.g. "## Therapeutic Exercise"); a heading like
     "## Minutes: 20 Therapeutic Exercise" is wrong. State this explicitly in the
     output-format instructions — local models default to folding it into the heading
-    if not told otherwise.
+    if not told otherwise. **Now also enforced deterministically** by
+    `postprocess.split_folded_headings`, which moves a folded heading's content down into the body
+    and keeps "Minutes: N" together with its number — see rule 19's backstop list.
 11. **MedGemma 4B reliably over-tags `[[CARRIED FORWARD]]` and invents empty
     "not performed" treatment sections, regardless of how explicitly the prompt
     forbids it** (confirmed across repeated runs with progressively more directive
@@ -416,6 +418,16 @@ every note-generation prompt:
     pattern, move it into `postprocess.py`; reserve prompting for the classes that have no
     safe mechanical rewrite (arbitrary invented prose, cross-section paraphrase, meaning
     inversion), and lean on clinician review there.
+    **The 2026-08 addition to that backstop list is `postprocess.split_folded_headings`** — the
+    model writing a section's CONTENT on the `## ` line and leaving the body empty, measured on
+    2 of 3 notes in a real sweep (8/14 headings over 80 chars, longest 339). It was the worst
+    failure of this class precisely because it was INVISIBLE: `traceability.add_verification_flags`
+    inspects `body` only, so the entire rule-20 layer silently no-opped while the note scored clean
+    on every other invariant — and `app.js:renderEditView` gives a textarea only for the body, so
+    the content was not even correctable by the clinician. Text is MOVED, never rewritten. Since
+    the repair now runs at the same threshold `evals/score.py` checks, that invariant went
+    permanently green, so `folded_headings_raw` counts the fold on the RAW parse BEFORE the repair
+    — otherwise a worsening model would be silently absorbed.
 20. **Local verification layer — deterministic hallucination flags in the note**
     (`app/generate/traceability.py`, run in `/api/generate` after postprocess via
     `add_verification_flags`). Appends amber `[[NEEDS: ...]]` markers for two model-independent
@@ -509,6 +521,25 @@ every note-generation prompt:
     a template generator cannot probe.
     Same spirit as rule 19's "re-verify with a REAL generation, never unit tests alone": a green
     eval is evidence, not proof.
+    **The ICD half of this was CIRCULAR for a while and nobody noticed** — worth knowing because it
+    is the easiest mistake to repeat. `_draw_diagnosis` picked the spoken diagnosis with
+    `rng.choice(rule.cues)`, straight out of the extractor's OWN cue list, so ICD recall read 100%
+    across 144 records while measuring nothing but that the extractor recognizes the strings it was
+    told to recognize. The CPT side had had a deliberate paraphrase gap all along; the ICD side had
+    no equivalent. Adding `banks.DIAGNOSIS_PARAPHRASES` (real wordings the table does NOT know)
+    dropped honest recall to **79% — and to 9% on paraphrased samples**. After admitting the
+    unambiguous ones it is **92% with 0 false positives and 0 laterality errors**.
+    **The rejections are the interesting half.** A paraphrase is only admitted if it NAMES the
+    diagnosis; a SYMPTOM with several causes is left unmatched on purpose — "heel pain" (fat pad,
+    calcaneal stress fracture, Sever's), "anterior knee pain", "lateral hip pain" (bursitis vs
+    gluteal tendinopathy), "stiff shoulder" (M25.61 stiffness vs M75.0 capsulitis). The sharpest is
+    **"PF", which means plantar fascia to a foot therapist and patellofemoral to a knee therapist**
+    and can never be safely expanded. Two of these had been written into the generator as gold
+    LABELS, which is worse than a missing cue: labelling a symptom with one specific diagnosis
+    scores a correct extraction as a failure and creates pressure to admit an unsafe cue. Same
+    class as the "quad tendon irritation" bug (the quadriceps and patellar tendons are different
+    structures). **When honest recall looks low, check the gold labels before touching the cue
+    table.**
     (d) **Read the ERROR DIRECTION, not just the accuracy percentage.** "units exact 57%" reads
     alarming and is nearly meaningless on its own; the number that carries billing risk is
     `units_overstated` (0 across 162 records), because over-counting is an overbill while
@@ -518,6 +549,38 @@ every note-generation prompt:
     between them is clinician work rather than error. A metric that hides direction invites the
     wrong fix — chasing "units exact" upward would mean auto-billing ambiguous phrases, which is
     exactly the trade rule 12 forbids.
+    **The sharpest instance of this, worth internalising:** `units_exact` sat at 56% on the
+    synthetic corpus, which reads like broken arithmetic. It was not. In every failing record the
+    code WAS detected, the minutes WERE extracted exactly, and the only thing standing between the
+    draft and the gold answer was a confirmation click on a weak-cue line. `units_exact_if_confirmed`
+    is **100% across all 162 records** — the unit math has never once been wrong. The 56% was
+    measuring the weak-cue policy wearing an arithmetic label. Hence `BillingDraft.units_if_confirmed`,
+    computed server-side (never in JavaScript — the 8-minute rule lives in ONE place, the same
+    reason `TIMED_CPT` was deleted from `app.js`) and surfaced in the review card as "confirming
+    the lines above would add N timed min → X units instead of Y", so the clinician sees the
+    consequence of the click rather than a number that silently under-reports.
+
+22. **Clinician corrections are captured, and the only trainable corpus is the synthetic one.**
+    Two halves, and the second is a hard constraint rather than a preference.
+    (a) **Capture.** Every clinician correction used to be destroyed: `app.js` wrote edits into the
+    section body in place, and the "Ask for changes" instruction — the clinician saying in their own
+    words what was wrong, the highest-signal correction data the app sees — was never persisted at
+    all. The `notes` table now stores `original_sections_json`, `revise_instructions_json`,
+    `edited_section_count`, and generation provenance (`model_id`, `template_spec_sha`, …). **NULL
+    means "not captured" and 0 means "accepted as generated"** — a `NOT NULL DEFAULT 0` on the edit
+    count would make every pre-capture note look blindly-accepted and destroy the exact signal being
+    built. This is real patient content: it stays in the encrypted row, is deliberately NOT on the
+    HTTP read surface, and `tests/test_correction_capture.py` enforces that no export path exists.
+    (b) **Training.** There is no GPU on either machine (dev box `torch+cpu`; target ThinkPad has
+    Intel UHD 620), a 4B QLoRA needs 10-16 GB VRAM, so training is NECESSARILY off-device — and
+    off-device is a third party that is not Google Workspace. **Therefore the only trainable corpus
+    Cadence can ever have is `(synthetic dictation → clinician-corrected note)`. Real corrected
+    notes can inform prompt rules, backstops, and measurement; they can never be training data.**
+    That does not change if the corpus grows or a deadline tightens — it follows from where the
+    compute lives. The `synthetic` column exists so a future export must filter `WHERE synthetic=1`
+    at the SQL level rather than trusting someone to remember which patient was fake. Full recipe,
+    including why deterministically-rendered targets are the wrong shortcut (they teach templated
+    prose, violating rule 9, and are circular per rule 21): `docs/finetune-when-viable.md`.
 
 ## Standing workflow instruction
 

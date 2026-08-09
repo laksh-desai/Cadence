@@ -240,14 +240,14 @@ def main() -> int:
             print(f"[{done}/{total}] record {record.id} ({record.word_count}w) "
                   f"-> {form.name}, run {run}… ", end="", flush=True)
             try:
-                sections, missing, was_condensed, seconds, parsed_ok, draft = asyncio.run(
+                sections, missing, was_condensed, seconds, parsed_ok, draft, folded_raw = asyncio.run(
                     generate_one(record, form, args.fast)
                 )
             except OllamaUnavailableError as e:
                 print(f"\n  ABORT — {e}")
                 break
             result = score_one(record, form, sections, missing, was_condensed, seconds, run,
-                               parsed_ok, draft)
+                               parsed_ok, draft, folded_raw)
             results.append(result)
             out_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
             # The note itself, for clinician review / SFT bootstrapping later.

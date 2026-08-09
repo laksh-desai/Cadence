@@ -23,6 +23,11 @@ from dataclasses import dataclass, field
 from app.generate import cpt as cpt_module
 from app.generate import traceability
 from app.generate.forms import CARRY_SECTION_LABELS
+# MAX_HEADING_CHARS comes from the PRODUCTION module, not redefined here:
+# `postprocess.split_folded_headings` repairs a folded heading at this same threshold, so the
+# eval and the repair must agree by construction. Two copies of the number would let the eval
+# quietly stop measuring what the pipeline actually does.
+from app.generate.postprocess import MAX_HEADING_CHARS
 from evals.soap import SOAP_ORDER, coverage as soap_coverage
 
 # Every CPT code Cadence's deterministic table is capable of producing. A gold code absent from
@@ -40,18 +45,6 @@ _BARE_CODE_RE = re.compile(r"\b(?:97\d{3}|G0283)\b")
 # markers are stripped, since the pipeline replaces code sections with a NEEDS marker.
 _ICD10_RE = re.compile(r"\b[A-TV-Z]\d{2}(?:\.\d{1,4})?\b")
 _ZERO_MINUTES_RE = re.compile(r"^\s*Minutes:\s*0\b", re.IGNORECASE)
-
-# A section heading is a LABEL ("Functional Mobility / Gait" is 26 chars; the longest in any
-# built-in template is well under this). Anything longer means the model wrote the section's
-# CONTENT on the "## " line instead of in the body below it.
-#
-# This is not cosmetic. Observed on a real Follow-Up generation: 6 of 13 headings ran past 80
-# chars (longest 434), leaving every body empty — and because traceability.add_verification_flags
-# inspects `body` only, the ENTIRE verification layer silently no-opped. An invented assistive
-# device and invented vitals passed through completely unflagged, while the note still scored
-# clean on every other invariant. Catching this is the difference between "no fabrications found"
-# and "the fabrication detector never ran."
-MAX_HEADING_CHARS = 80
 
 
 def note_text(sections: list[dict]) -> str:
@@ -147,11 +140,16 @@ def score_invariants(
     checks.append(Check("not collapsed (>=4 sections)", len(sections) >= 4, f"{len(sections)} sections"))
 
     # Content must live in the BODY, or the whole verification layer no-ops (see MAX_HEADING_CHARS).
+    # NOTE: `postprocess.split_folded_headings` now repairs this at the same threshold, so a
+    # failure here no longer means "the model folded the heading" — it means THE REPAIR DECLINED TO
+    # SPLIT, which is a much narrower and more interesting event. To see how often the model folds
+    # in the first place (i.e. whether it is getting worse), read `folded_headings_raw`, which is
+    # counted on the RAW parse before postprocess runs.
     prose_headings = [s.get("heading", "") for s in sections if len(s.get("heading", "")) > MAX_HEADING_CHARS]
     checks.append(Check(
         "content in bodies, not headings", not prose_headings,
-        f"{len(prose_headings)}/{len(sections)} headings over {MAX_HEADING_CHARS} chars "
-        f"(longest {max((len(h) for h in prose_headings), default=0)}) — "
+        f"{len(prose_headings)}/{len(sections)} headings still over {MAX_HEADING_CHARS} chars "
+        f"(longest {max((len(h) for h in prose_headings), default=0)}) after the fold repair — "
         f"verification flags cannot fire on an empty body",
     ))
     empty_bodies = [
@@ -413,6 +411,11 @@ class UnitsScore:
     #: CMS substitution and the AMA rule of eights disagree on this record. Not an error: it means
     #: the record exercises the case where Cadence must show both numbers.
     method_disagreement: bool = False
+    #: Units if the clinician accepts the `uncertain` timed lines too. Gold assumes every stated
+    #: intervention bills, so plain `exact` scores the WEAK-CUE POLICY rather than the arithmetic:
+    #: a record where the code was found, the minutes were right, and the only thing missing was a
+    #: confirmation click still counts as wrong. This is the units analogue of `surfaced_recall`.
+    computed_units_if_confirmed: int | None = None
 
     @property
     def exact(self) -> bool:
@@ -432,6 +435,14 @@ class UnitsScore:
     def understated(self) -> bool:
         return (self.gold_units is not None and self.computed_units is not None
                 and self.computed_units < self.gold_units)
+
+    @property
+    def exact_if_confirmed(self) -> bool:
+        """Would the units be right after the clinician accepts the surfaced lines? That is the
+        question that matters in the room; `exact` answers the narrower "right with no input"."""
+        if self.gold_units is None:
+            return False
+        return self.gold_units in (self.computed_units, self.computed_units_if_confirmed)
 
     @property
     def minutes_exact(self) -> bool:
@@ -459,6 +470,8 @@ def score_units(draft, record) -> UnitsScore:
         computed_units_ama=draft.units_alt.total_units if draft.units_alt else None,
         untimed_leak=leaks,
         method_disagreement=draft.method_disagreement,
+        computed_units_if_confirmed=(draft.units_if_confirmed.total_units
+                                     if draft.units_if_confirmed else None),
     )
 
 
@@ -551,6 +564,10 @@ class RecordResult:
     #: Carried so a sweep can break results down per region — a weak body part must be visible,
     #: not averaged away against five strong ones.
     body_part: str | None = None
+    #: Headings the MODEL folded, counted on the raw parse BEFORE
+    #: postprocess.split_folded_headings repaired them. Preserves visibility of model
+    #: behaviour once the repair makes the downstream invariant permanently green.
+    folded_headings_raw: int = 0
 
     @property
     def invariants_passed(self) -> int:
@@ -594,6 +611,7 @@ class RecordResult:
             "flags": [{"section": f.section, "text": f.text, "context": f.context} for f in self.flags],
             "is_synthetic": self.is_synthetic,
             "body_part": self.body_part,
+            "folded_headings_raw": self.folded_headings_raw,
             # Every key written here MUST be read back by scripts/eval_corpus.py:_load_result.
             # A --resume run rehydrates from this dict, so a key added on one side only would
             # silently zero the metric on every cached record. tests/test_eval_score.py locks
@@ -633,7 +651,10 @@ class RecordResult:
                 "computed_units_ama": self.units.computed_units_ama,
                 "untimed_leak": list(self.units.untimed_leak),
                 "method_disagreement": self.units.method_disagreement,
+                "computed_units_if_confirmed": self.units.computed_units_if_confirmed,
                 "exact": self.units.exact, "minutes_exact": self.units.minutes_exact,
+                "exact_if_confirmed": self.units.exact_if_confirmed,
+                "overstated": self.units.overstated,
             },
             "agreement": None if self.agreement is None else {
                 "chip_only": list(self.agreement.chip_only),

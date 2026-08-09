@@ -120,10 +120,10 @@ class BehaviouralIsolationTests(unittest.TestCase):
         with patch("app.generate.ollama_client.generate_note", _fake_generate), \
              patch("evals.runner.generate_note", _fake_generate):
             for record in records:
-                sections, missing, cond, secs, ok, draft = asyncio.run(
+                sections, missing, cond, secs, ok, draft, folded = asyncio.run(
                     runner.generate_one(record, FORMS["followup"], False))
                 runner.score_one(record, FORMS["followup"], sections, missing, cond, secs, 1, ok,
-                                 draft)
+                                 draft, folded)
 
         after = [p["name"] for p in repository.list_patients()]
         self.assertEqual(before, after,
@@ -142,7 +142,7 @@ class BehaviouralIsolationTests(unittest.TestCase):
             synth.generate_sample(1, body_part="shoulder", note_type="followup",
                                   complexity="medium", seed=99).to_record(), "test")
         with patch("evals.runner.generate_note", _fake_generate):
-            sections, _, _, _, ok, draft = asyncio.run(
+            sections, _, _, _, ok, draft, _ = asyncio.run(
                 runner.generate_one(record, FORMS["followup"], False))
         self.assertTrue(ok)
         self.assertTrue(sections)

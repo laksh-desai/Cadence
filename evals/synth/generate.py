@@ -199,9 +199,18 @@ def _spoken_part(body_part: str) -> str:
 
 
 def _draw_diagnosis(rng: random.Random, body_part: str):
+    """Draw a diagnosis and the phrase the therapist will SAY for it.
+
+    The phrase is drawn from `banks.DIAGNOSIS_PARAPHRASES` a fraction of the time — real wordings
+    the cue table does NOT know. Before that, this did `rng.choice(rule.cues)`, straight out of the
+    extractor's own cue list, which made ICD recall 100% by construction and measured nothing.
+    The gold code is unchanged either way, so a paraphrase the extractor misses is a REAL miss.
+    """
     rules = tables.ICD_BY_BODY_PART[body_part]
     rule = rng.choice(rules)
-    phrase = rng.choice(rule.cues)
+    paraphrases = banks.DIAGNOSIS_PARAPHRASES.get((body_part, rule.cues[0]), ())
+    used_paraphrase = bool(paraphrases) and rng.random() < banks.DIAGNOSIS_PARAPHRASE_RATE
+    phrase = rng.choice(paraphrases) if used_paraphrase else rng.choice(rule.cues)
     if body_part in banks.MIDLINE_PARTS or not rule.lateralized:
         # A midline region, or a condition ICD-10-CM codes the same either way. Speaking a side
         # here would be unnatural AND would train the extractor on a laterality habit real spine
@@ -212,7 +221,7 @@ def _draw_diagnosis(rng: random.Random, body_part: str):
         # path) but an unrepresentative share of real visits.
         side = rng.choices(("right", "left", "bilateral", None), weights=(45, 40, 5, 10))[0]
     codes = rule.code_for(side)
-    return rule, phrase, side, codes
+    return rule, phrase, side, codes, used_paraphrase
 
 
 def generate_sample(index: int, *, body_part: str, note_type: str, complexity: str,
@@ -224,7 +233,7 @@ def generate_sample(index: int, *, body_part: str, note_type: str, complexity: s
     profile = _PROFILE[complexity]
     pool = banks.TREATMENTS_BY_BODY_PART[body_part]
 
-    rule, dx_phrase, side, icd_codes = _draw_diagnosis(rng, body_part)
+    rule, dx_phrase, side, icd_codes, dx_paraphrase = _draw_diagnosis(rng, body_part)
 
     n_timed = rng.randint(*profile["timed"])
     timed_codes = rng.sample(pool["timed"], min(n_timed, len(pool["timed"])))
@@ -297,6 +306,10 @@ def generate_sample(index: int, *, body_part: str, note_type: str, complexity: s
             "complexity": complexity,
             "note_type": note_type,
             "target_units": target_units,
+            # True when the dictation speaks a wording the cue table does not know.
+            # Lets a scorer separate "the extractor cannot read this phrasing" from
+            # "the extractor is broken".
+            "diagnosis_paraphrased": dx_paraphrase,
             "cms_units": allocate_units(per_code, method=CMS_SUBSTITUTION).total_units,
         },
     )
