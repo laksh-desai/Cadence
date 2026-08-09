@@ -379,18 +379,21 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         IcdRule(
             cues=("rotator cuff tendinopathy", "rotator cuff tendinitis", "rotator cuff tendonitis",
                   "rotator cuff syndrome", "rotator cuff tear", "rotator cuff strain",
-                  "supraspinatus tendinopathy", "supraspinatus tendinitis"),
+                  "supraspinatus tendinopathy", "supraspinatus tendinitis",
+                  "torn rotator cuff", "cuff tear", "rct"),
             label="Rotator cuff tear or rupture, unspecified, not traumatic",
             right="M75.101", left="M75.102", unspecified="M75.100",
         ),
         IcdRule(
-            cues=("adhesive capsulitis", "frozen shoulder"),
+            cues=("adhesive capsulitis", "frozen shoulder",
+                  "capsulitis"),
             label="Adhesive capsulitis of shoulder",
             right="M75.01", left="M75.02", unspecified="M75.00",
         ),
         IcdRule(
             cues=("impingement syndrome", "shoulder impingement", "subacromial impingement",
-                  "impingement of the shoulder"),
+                  "impingement of the shoulder",
+                  "impingement", "subacromial pain syndrome"),
             label="Impingement syndrome of shoulder",
             right="M75.41", left="M75.42", unspecified="M75.40",
         ),
@@ -401,7 +404,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         ),
         IcdRule(
             cues=("bicipital tendinitis", "biceps tendinitis", "bicipital tendinopathy",
-                  "biceps tendinopathy", "long head of biceps tendinitis"),
+                  "biceps tendinopathy", "long head of biceps tendinitis",
+                  "long head biceps tendinopathy", "biceps tendonosis"),
             label="Bicipital tendinitis",
             right="M75.21", left="M75.22", unspecified="M75.20",
         ),
@@ -412,7 +416,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         ),
         IcdRule(
             cues=("slap tear", "slap lesion", "labral tear", "superior labral tear",
-                  "glenoid labrum tear"),
+                  "glenoid labrum tear",
+                  "superior labrum tear", "labral pathology"),
             label="Superior glenoid labrum lesion",
             right="S43.431", left="S43.432", unspecified="S43.439",
             caution="needs a 7th character (A initial / D subsequent / S sequela) — confirm the "
@@ -456,7 +461,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
     "knee": (
         IcdRule(
             cues=("anterior cruciate ligament tear", "acl tear", "acl rupture", "acl sprain",
-                  "torn acl", "cruciate ligament tear"),
+                  "torn acl", "cruciate ligament tear",
+                  "blown acl", "anterior cruciate rupture", "acl deficiency"),
             label="Sprain of anterior cruciate ligament of knee",
             right="S83.511", left="S83.512", unspecified="S83.519",
             caution="needs a 7th character (A initial / D subsequent / S sequela) — a PT follow-up "
@@ -470,7 +476,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         ),
         IcdRule(
             cues=("medial meniscus tear", "meniscal tear", "meniscus tear", "torn meniscus",
-                  "lateral meniscus tear"),
+                  "lateral meniscus tear",
+                  "meniscal injury"),
             label="Derangement of meniscus due to old tear or injury",
             right="M23.221", left="M23.222", unspecified="M23.209",
             caution="M23.2- is for an OLD tear; a current acute injury is S83.2- with a 7th "
@@ -490,20 +497,24 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         ),
         IcdRule(
             cues=("patellofemoral pain syndrome", "patellofemoral pain", "patellofemoral syndrome",
-                  "patellofemoral disorder", "runner's knee"),
+                  "patellofemoral disorder", "runner's knee",
+                  "pfps"),
             label="Patellofemoral disorders",
             right="M22.2X1", left="M22.2X2", unspecified="M22.2X9",
         ),
         IcdRule(
             cues=("patellar tendinitis", "patellar tendinopathy", "patellar tendonitis",
-                  "jumper's knee"),
+                  "jumper's knee",
+                  "patellar tendinosis"),
             label="Patellar tendinitis",
             right="M76.51", left="M76.52", unspecified="M76.50",
         ),
         IcdRule(
             cues=("primary osteoarthritis of the knee", "knee osteoarthritis", "knee oa",
                   "osteoarthritis of the knee", "degenerative joint disease of the knee",
-                  "knee arthritis"),
+                  "knee arthritis",
+                  "degenerative knee", "wear and tear in the knee",
+                  "tricompartmental oa"),
             label="Unilateral primary osteoarthritis, knee",
             right="M17.11", left="M17.12", unspecified="M17.10", bilateral="M17.0",
         ),
@@ -537,7 +548,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             right="M48.062", left="M48.062", unspecified="M48.062",
         ),
         IcdRule(
-            cues=("lumbar spinal stenosis", "spinal stenosis", "lumbar stenosis"),
+            cues=("lumbar spinal stenosis", "spinal stenosis", "lumbar stenosis",
+                  "canal stenosis", "central stenosis", "narrowing of the canal"),
             label="Spinal stenosis, lumbar region, without neurogenic claudication",
             right="M48.061", left="M48.061", unspecified="M48.061",
         ),
@@ -554,18 +566,21 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             right="M54.41", left="M54.42", unspecified="M54.40",
         ),
         IcdRule(
-            cues=("sciatica",),
+            cues=("sciatica",
+                  "sciatic pain"),
             label="Sciatica",
             right="M54.31", left="M54.32", unspecified="M54.30",
         ),
         IcdRule(
             cues=("herniated disc", "disc herniation", "disc displacement",
-                  "herniated nucleus pulposus", "bulging disc"),
+                  "herniated nucleus pulposus", "bulging disc",
+                  "slipped disc", "disc bulge", "hnp"),
             label="Other intervertebral disc displacement, lumbar region",
             right="M51.26", left="M51.26", unspecified="M51.26",
         ),
         IcdRule(
-            cues=("degenerative disc disease", "disc degeneration", "ddd"),
+            cues=("degenerative disc disease", "disc degeneration", "ddd",
+                  "degenerative discs", "disc disease", "worn discs"),
             label="Other intervertebral disc degeneration, lumbar region",
             right="M51.36", left="M51.36", unspecified="M51.36",
         ),
@@ -575,7 +590,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             right="M43.16", left="M43.16", unspecified="M43.16",
         ),
         IcdRule(
-            cues=("lumbar sprain", "lumbar strain", "low back strain", "lumbosacral sprain"),
+            cues=("lumbar sprain", "lumbar strain", "low back strain", "lumbosacral sprain",
+                  "back strain"),
             label="Sprain of ligaments of lumbar spine",
             right="S33.5XX", left="S33.5XX", unspecified="S33.5XX",
             caution="needs a 7th character (A / D / S) — confirm the encounter type",
@@ -587,7 +603,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         ),
         IcdRule(
             cues=("low back pain", "lower back pain", "lumbago", "lumbar pain",
-                  "pain in the low back"),
+                  "pain in the low back",
+                  "lbp", "back pain", "mechanical back pain"),
             label="Low back pain, unspecified",
             right="M54.50", left="M54.50", unspecified="M54.50",
             caution="M54.51 (vertebrogenic) and M54.59 (other) are more specific if the "
@@ -599,7 +616,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
     "cervical": (
         IcdRule(
             cues=("cervical radiculopathy", "disc disorder with radiculopathy",
-                  "radiculopathy"),
+                  "radiculopathy",
+                  "pinched nerve in the neck", "nerve root irritation"),
             label="Cervical disc disorder with radiculopathy, unspecified cervical region",
             right="M50.10", left="M50.10", unspecified="M50.10",
             caution="the specific cervical level changes the code (M50.11-/M50.12-/M50.13-) — confirm",
@@ -616,12 +634,14 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         ),
         IcdRule(
             cues=("cervical disc herniation", "herniated disc", "disc displacement",
-                  "disc herniation"),
+                  "disc herniation",
+                  "slipped disc in the neck", "disc bulge in the neck"),
             label="Other cervical disc displacement, unspecified cervical region",
             right="M50.20", left="M50.20", unspecified="M50.20",
         ),
         IcdRule(
-            cues=("whiplash", "cervical sprain", "neck sprain", "cervical strain", "neck strain"),
+            cues=("whiplash", "cervical sprain", "neck sprain", "cervical strain", "neck strain",
+                  "wad", "flexion extension injury"),
             label="Sprain of ligaments of cervical spine",
             right="S13.4XX", left="S13.4XX", unspecified="S13.4XX",
             caution="needs a 7th character (A / D / S) — confirm the encounter type",
@@ -632,7 +652,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             right="M53.1", left="M53.1", unspecified="M53.1",
         ),
         IcdRule(
-            cues=("cervicogenic headache",),
+            cues=("cervicogenic headache",
+                  "headaches coming from the neck", "neck related headache"),
             label="Cervicogenic headache",
             right="G44.86", left="G44.86", unspecified="G44.86",
         ),
@@ -642,7 +663,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             right="M99.01", left="M99.01", unspecified="M99.01",
         ),
         IcdRule(
-            cues=("cervicalgia", "neck pain", "pain in the neck"),
+            cues=("cervicalgia", "neck pain", "pain in the neck",
+                  "neck ache"),
             label="Cervicalgia",
             right="M54.2", left="M54.2", unspecified="M54.2",
         ),
@@ -658,28 +680,33 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             caution="also code the joint prosthesis (Z96.641 right / Z96.642 left) — confirm both",
         ),
         IcdRule(
-            cues=("trochanteric bursitis", "greater trochanteric pain syndrome", "hip bursitis"),
+            cues=("trochanteric bursitis", "greater trochanteric pain syndrome", "hip bursitis",
+                  "gtps"),
             label="Trochanteric bursitis",
             right="M70.61", left="M70.62", unspecified="M70.60",
         ),
         IcdRule(
-            cues=("iliotibial band syndrome", "it band syndrome", "itb syndrome"),
+            cues=("iliotibial band syndrome", "it band syndrome", "itb syndrome",
+                  "itb friction syndrome"),
             label="Iliotibial band syndrome",
             right="M76.31", left="M76.32", unspecified="M76.30",
         ),
         IcdRule(
-            cues=("hip labral tear", "acetabular labral tear", "labral tear"),
+            cues=("hip labral tear", "acetabular labral tear", "labral tear",
+                  "torn labrum in the hip", "acetabular labrum injury"),
             label="Other articular cartilage disorders, hip",
             right="M24.151", left="M24.152", unspecified="M24.159",
         ),
         IcdRule(
-            cues=("femoroacetabular impingement", "fai", "hip impingement"),
+            cues=("femoroacetabular impingement", "fai", "hip impingement",
+                  "cam impingement", "pincer impingement"),
             label="Other specified joint derangements, hip",
             right="M24.851", left="M24.852", unspecified="M24.859",
         ),
         IcdRule(
             cues=("primary osteoarthritis of the hip", "hip osteoarthritis", "hip oa",
-                  "osteoarthritis of the hip", "hip arthritis"),
+                  "osteoarthritis of the hip", "hip arthritis",
+                  "degenerative hip", "arthritic hip", "worn hip"),
             label="Unilateral primary osteoarthritis, hip",
             right="M16.11", left="M16.12", unspecified="M16.10", bilateral="M16.0",
         ),
@@ -698,7 +725,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
     # --- ankle / foot ------------------------------------------------------------------
     "ankle": (
         IcdRule(
-            cues=("achilles tendinitis", "achilles tendinopathy", "achilles tendonitis"),
+            cues=("achilles tendinitis", "achilles tendinopathy", "achilles tendonitis",
+                  "achilles tendinosis", "tendinopathy of the achilles"),
             label="Achilles tendinitis",
             right="M76.61", left="M76.62", unspecified="M76.60",
         ),
@@ -721,7 +749,8 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             caution="needs a 7th character (A / D / S) — confirm the encounter type",
         ),
         IcdRule(
-            cues=("ankle sprain", "sprained ankle", "sprain of the ankle"),
+            cues=("ankle sprain", "sprained ankle", "sprain of the ankle",
+                  "rolled ankle", "inversion injury"),
             label="Sprain of unspecified ligament of ankle",
             right="S93.401", left="S93.402", unspecified="S93.409",
             caution="needs a 7th character (A / D / S) — confirm the encounter type; a named "
@@ -729,13 +758,15 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         ),
         IcdRule(
             cues=("posterior tibial tendon dysfunction", "tibialis posterior tendinopathy",
-                  "posterior tibialis tendinitis"),
+                  "posterior tibialis tendinitis",
+                  "pttd", "post tib dysfunction"),
             label="Other synovitis and tenosynovitis, ankle and foot",
             right="M65.871", left="M65.872", unspecified="M65.879",
         ),
         IcdRule(
             cues=("osteoarthritis of the ankle", "ankle osteoarthritis", "ankle oa",
-                  "ankle arthritis"),
+                  "ankle arthritis",
+                  "degenerative ankle", "arthritic ankle"),
             label="Primary osteoarthritis, ankle and foot",
             right="M19.071", left="M19.072", unspecified="M19.079",
         ),

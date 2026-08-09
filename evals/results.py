@@ -59,12 +59,30 @@ def split_aggregate(results) -> dict:
     }
 
 
+def touched_real_dictation(config: dict) -> bool:
+    """True if this sweep's corpus included a `*.local.jsonl` file — the documented escape hatch
+    for REAL patient dictation (evals/data/README.md).
+
+    This matters because `RecordResult.flags[].context` embeds a ~120-char TRANSCRIPT EXCERPT so a
+    reviewer can adjudicate a flag. For synthetic patients that is harmless and useful. For real
+    dictation it is PHI, and results files are committed to git — which is a non-BAA third party
+    and therefore somewhere PHI may never go (CLAUDE.md non-negotiable #1).
+    """
+    return any(str(f).endswith(".local.jsonl") for f in config.get("corpus_files", ()))
+
+
 def write_run(results, *, config: dict, run_id: str | None = None,
               started_at: str | None = None, out_dir: Path | None = None) -> Path:
-    """Write one sweep's full results and append a one-line summary to the index."""
+    """Write one sweep's full results and append a one-line summary to the index.
+
+    A sweep that touched real dictation is written as `*.local.json` and indexed separately, both
+    of which `.gitignore` keeps out of the repo. Automatic rather than a convention someone has to
+    remember, because the failure mode is silently publishing patient speech.
+    """
     directory = out_dir or RESULTS_DIR
     directory.mkdir(parents=True, exist_ok=True)
     rid = run_id or new_run_id()
+    is_local = touched_real_dictation(config)
 
     cfg = dict(config)
     cfg.setdefault("cadence_git_sha", git_sha())
@@ -86,10 +104,12 @@ def write_run(results, *, config: dict, run_id: str | None = None,
         rid, cfg.get("body_part", "corpus"), cfg.get("note_type", "all"),
         f"n{len(results)}",
     ])
-    path = directory / f"{name}.json"
+    # `.local.json` is gitignored; the plain name is committed for teammates to review.
+    path = directory / (f"{name}.local.json" if is_local else f"{name}.json")
+    payload["contains_real_dictation"] = is_local
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    index = directory / INDEX_PATH.name
+    index = directory / ("index.local.jsonl" if is_local else INDEX_PATH.name)
     with index.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({
             "run_id": rid, "file": path.name, "finished_at": payload["finished_at"],
@@ -103,18 +123,29 @@ def load_run(path: Path) -> dict:
 
 
 def list_runs(out_dir: Path | None = None, limit: int = 50) -> list[dict]:
-    """Past sweeps, newest first, read from the index."""
-    index = (out_dir or RESULTS_DIR) / INDEX_PATH.name
-    if not index.exists():
-        return []
+    """Past sweeps, newest first.
+
+    Reads BOTH indexes. "Local" means "never leaves this machine", not "hidden from the person who
+    ran it" — a sweep over real dictation must still show up in the clinician's own run history,
+    it just never reaches git.
+    """
+    directory = out_dir or RESULTS_DIR
     rows = []
-    for line in index.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
+    for name in (INDEX_PATH.name, "index.local.jsonl"):
+        index = directory / name
+        if not index.exists():
+            continue
+        for line in index.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
             try:
-                rows.append(json.loads(line))
+                row = json.loads(line)
             except json.JSONDecodeError:
                 continue  # a truncated line from an interrupted write must not break the list
+            row.setdefault("contains_real_dictation", name != INDEX_PATH.name)
+            rows.append(row)
+    rows.sort(key=lambda r: r.get("finished_at", ""))
     return list(reversed(rows))[:limit]
 
 

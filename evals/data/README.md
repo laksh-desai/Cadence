@@ -13,6 +13,28 @@ dictation, name the file `*.local.jsonl`, which `.gitignore` excludes; it still 
 Nothing in the eval path writes to `app/storage/`, so a sweep can never mix corpus records
 into the clinician's encrypted patient database.
 
+## What gets shared on GitHub
+
+| path | shared? | why |
+|---|---|---|
+| `evals/data/*.jsonl` | **yes** | the synthetic corpus, so eval results are reproducible |
+| `evals/data/*.local.jsonl` | no | holds REAL dictation; still loads locally |
+| `evals/results/*.json` | **yes** | per-sweep scores — this is what a teammate reviews |
+| `evals/results/*.local.json` | no | a sweep whose corpus included real dictation |
+| `evals/runs*/` | no | one JSON + one note per generation; regenerable and churns every run |
+
+**One rule: `.local` means "never leaves this machine".** It applies to corpus files and results
+files alike.
+
+The results split is **automatic**, not a convention to remember, because the failure mode is
+silently publishing patient speech: `RecordResult.flags[].context` embeds a ~120-character
+transcript excerpt so a reviewer can adjudicate a flag. That is harmless for a fictional patient
+and is PHI for a real one — and GitHub is a non-BAA third party, so PHI may never go there
+(CLAUDE.md non-negotiable #1). `evals/results.py:write_run` detects any `*.local.jsonl` in the
+sweep's corpus and writes `*.local.json` plus a separate `index.local.jsonl`, both gitignored.
+Local runs still appear in your own run history and in the Evals tab — "local" hides them from
+git, not from you.
+
 ## Schema
 
 One JSON object per line. Required on every record:

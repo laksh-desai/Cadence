@@ -54,6 +54,11 @@ transcripts           pipeline on the target       quality.py style) +       det
   is a detectable, meaning-safe pattern, move it into `postprocess.py`/`traceability.py` as a
   backstop. Re-run the set to confirm the fix held and nothing regressed.
 
+> **See [`finetune-when-viable.md`](finetune-when-viable.md) for the full recipe and the hard
+> constraint that shapes it:** there is no GPU on either machine, so training is necessarily
+> off-device, so **real clinician-corrected notes can never be training data** — only
+> `(synthetic dictation → clinician-corrected note)` pairs can. That is CLAUDE.md rule 22.
+
 **Fine-tuning comes last.** Only after (a) prompt/spec refinement + backstops are exhausted, and
 (b) you have a stack of clinician-corrected notes, build a QLoRA set of
 `(synthetic dictation → clinician-corrected note)` pairs. Don't fine-tune on Claude's or MedGemma's

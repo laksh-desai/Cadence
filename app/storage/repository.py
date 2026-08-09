@@ -261,9 +261,50 @@ def mark_synced(patient_id: str, synced_at: str) -> None:
         conn.close()
 
 
+def _norm_text(text: str | None) -> str:
+    """Whitespace-normalized, so a stray trailing newline from a <textarea> isn't a "correction"."""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def count_edited_sections(original: list[dict], final: list[dict]) -> int | None:
+    """How many sections the clinician changed. None — NOT 0 — when nothing was captured.
+
+    That distinction is the entire point: 0 must mean "accepted as generated" and NULL must mean
+    "we weren't recording yet", or a pre-capture note is indistinguishable from a perfect one.
+
+    Per-section rather than a bare bool or a whole-note edit distance. The failure class this
+    exists to measure (format/structure compliance) is inherently per-section — "the Assessment
+    always gets rewritten, Precautions never does" is the actionable signal, and a bool erases it;
+    an edit distance conflates a typo with a rewrite and is dominated by note length. This is only
+    a cheap denormalized index in any case: `original_sections_json` is stored alongside, so any
+    other metric (difflib ratios, per-heading breakdowns) is derivable later with no schema change.
+
+    Headings are compared as well as bodies, so it stays correct if heading editing is added.
+    """
+    if not original:
+        return None
+    shared = min(len(original), len(final))
+    changed = sum(
+        1 for i in range(shared)
+        if _norm_text(original[i].get("body")) != _norm_text(final[i].get("body"))
+        or _norm_text(original[i].get("heading")) != _norm_text(final[i].get("heading"))
+    )
+    return changed + abs(len(original) - len(final))   # a section added or removed is an edit
+
+
 def create_note(
     patient_id: str, form_id: str, form_name: str, sections: list[dict],
     missing_info: list[str], dictation_raw: str, used_prior: bool,
+    *,
+    # Keyword-only with defaults so every existing call site — several of which pass the first
+    # seven positionally — keeps working untouched.
+    original_sections: list[dict] | None = None,
+    revise_instructions: list[dict] | None = None,
+    model_id: str | None = None,
+    fast: bool = False,
+    template_spec_sha: str | None = None,
+    template_customized: bool = False,
+    synthetic: bool = False,
 ) -> dict:
     note_id = _new_id("n")
     created_at = _now_iso()
@@ -271,12 +312,22 @@ def create_note(
     try:
         conn.execute(
             "INSERT INTO notes (id, patient_id, form_id, form_name, created_at, "
-            "sections_json, missing_json, dictation_raw, used_prior) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "sections_json, missing_json, dictation_raw, used_prior, "
+            "original_sections_json, revise_instructions_json, edited_section_count, "
+            "model_id, fast_tier, template_spec_sha, template_customized, synthetic) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 note_id, patient_id, form_id, form_name, created_at,
                 json.dumps(sections), json.dumps(missing_info), dictation_raw,
                 1 if used_prior else 0,
+                json.dumps(original_sections) if original_sections is not None else None,
+                json.dumps(revise_instructions) if revise_instructions is not None else None,
+                count_edited_sections(original_sections or [], sections),
+                model_id,
+                1 if fast else 0,
+                template_spec_sha,
+                1 if template_customized else 0,
+                1 if synthetic else 0,
             ),
         )
         conn.commit()

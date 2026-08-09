@@ -157,6 +157,37 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(alloc.total_units, 0)
         self.assertEqual(alloc.per_code, ())
 
+    def test_units_if_confirmed_accounts_for_unconfirmed_timed_lines(self):
+        """A weak cue ("hands-on work") surfaces a code with its minutes but does not bill it. The
+        clinician's question is "what do I get if I accept that?", so the answer is computed
+        SERVER-side — the 8-minute rule must live in one place, which is why the timed-code set
+        was moved out of app.js in the first place."""
+        draft = billing.extract(
+            "Left knee. Ther ex for twenty-five minutes. Then gait training fifteen minutes. "
+            "Then hands-on work for fifteen minutes."
+        )
+        self.assertEqual(draft.total_timed_minutes, 40)
+        self.assertEqual(draft.units.total_units, 3)
+        self.assertEqual(draft.units_if_confirmed.total_timed_minutes, 55)
+        self.assertEqual(draft.units_if_confirmed.total_units, 4)
+
+    def test_units_if_confirmed_is_none_when_there_is_nothing_to_confirm(self):
+        """No unconfirmed line means no second number — the card must not imply a choice that
+        doesn't exist."""
+        draft = billing.extract("Left knee. Ther ex for twenty-five minutes.")
+        self.assertIsNone(draft.units_if_confirmed)
+
+    def test_a_not_today_line_never_reaches_the_if_confirmed_total(self):
+        """`units_if_confirmed` accepts UNCERTAIN lines only. A negated or planned treatment is not
+        pending confirmation — it is excluded on the therapist's own say-so, and rolling it in
+        would turn a safety hint into an overbill suggestion."""
+        draft = billing.extract(
+            "Left knee. Ther ex for twenty-five minutes. "
+            "Next visit we will add gait training for thirty minutes."
+        )
+        self.assertEqual(draft.total_timed_minutes, 25)
+        self.assertIsNone(draft.units_if_confirmed)
+
     def test_method_is_reported_on_every_allocation(self):
         self.assertEqual(allocate_units({"97110": 20}, method=CMS_SUBSTITUTION).method,
                          CMS_SUBSTITUTION)

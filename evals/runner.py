@@ -47,7 +47,12 @@ def build_missing(parsed_missing: list[str], code_flags: list[str],
 async def generate_one(record: dataset.EvalRecord, form, fast: bool):
     """One full pipeline pass, mirroring app/ui/server.py line for line.
 
-    Returns (sections, missing, was_condensed, seconds, parsed_ok, draft).
+    Returns (sections, missing, was_condensed, seconds, parsed_ok, draft, folded_raw).
+
+    `folded_raw` counts headings the MODEL folded, measured on the raw parse BEFORE
+    `postprocess.split_folded_headings` repairs them. Without it the "content in bodies, not
+    headings" invariant goes permanently green once the repair lands, and a model regression
+    becomes invisible — the repair would silently absorb a worsening model.
     """
     sub = " · ".join(filter(None, [record.diagnosis, record.visit_type])) or "—"
     ctx = PatientContext(name=record.patient_name, sub=sub)
@@ -70,7 +75,9 @@ async def generate_one(record: dataset.EvalRecord, form, fast: bool):
 
     parsed = parse_plain(text)
     if parsed is None:
-        return [], [], was_condensed, seconds, False, draft
+        return [], [], was_condensed, seconds, False, draft, 0
+
+    folded_raw = sum(1 for s in parsed["sections"] if postprocess.is_folded_heading(s))
 
     sections = postprocess.apply(form.id, parsed["sections"])
     # Verification anchors against the RAW transcript, not the condensed one, so a value the
@@ -79,11 +86,11 @@ async def generate_one(record: dataset.EvalRecord, form, fast: bool):
     sections, code_flags = cpt.suggest_codes(sections, form.id)
     draft = billing.reconcile(draft, sections)
     missing = build_missing(parsed["missing_info"], code_flags, was_condensed, still_over)
-    return sections, missing, was_condensed, seconds, True, draft
+    return sections, missing, was_condensed, seconds, True, draft, folded_raw
 
 
 def score_one(record, form, sections, missing, was_condensed, seconds, run, parsed_ok,
-              draft=None) -> scoring.RecordResult:
+              draft=None, folded_raw=0) -> scoring.RecordResult:
     condense_flag = any(CONDENSE_WARNING in m or CONDENSE_WARNING_HARD in m for m in missing)
     present, expected, missing_labels = scoring.section_coverage(sections, form)
     has_gold = record.has_billing_gold and draft is not None
@@ -111,6 +118,7 @@ def score_one(record, form, sections, missing, was_condensed, seconds, run, pars
         agreement=scoring.score_cpt_agreement(sections, draft) if draft is not None else None,
         is_synthetic=record.is_synthetic,
         body_part=record.body_part,
+        folded_headings_raw=folded_raw,
     )
 
 
@@ -146,6 +154,7 @@ def load_result(path: Path) -> scoring.RecordResult:
         sections_present=cov["present"], sections_expected=cov["expected"],
         sections_missing=cov["missing"], note_chars=d.get("note_chars", 0),
         is_synthetic=d.get("is_synthetic", False), body_part=d.get("body_part"),
+        folded_headings_raw=d.get("folded_headings_raw", 0),
         icd=None if not icd else scoring.IcdScore(
             gold=tuple(icd["gold"]), suggested=tuple(icd["suggested"]), hits=tuple(icd["hits"]),
             missed=tuple(icd["missed"]), extra=tuple(icd["extra"]),
@@ -170,6 +179,7 @@ def load_result(path: Path) -> scoring.RecordResult:
             computed_units_ama=un.get("computed_units_ama"),
             untimed_leak=tuple(un.get("untimed_leak", ())),
             method_disagreement=un.get("method_disagreement", False),
+            computed_units_if_confirmed=un.get("computed_units_if_confirmed"),
         ),
         agreement=None if not agr else scoring.AgreementScore(
             chip_only=tuple(agr["chip_only"]), dictation_only=tuple(agr["dictation_only"]),
@@ -224,6 +234,9 @@ def aggregate(results: list[scoring.RecordResult]) -> dict:
                               / max(1, sum(1 for c in cells if c.delta is not None)), 2)
                         if cells else None),
         "units_exact": _ratio(sum(1 for r in with_units if r.units.exact), len(with_units)),
+        # Right after ONE confirmation click — the question the clinician actually has.
+        "units_exact_if_confirmed": _ratio(
+            sum(1 for r in with_units if r.units.exact_if_confirmed), len(with_units)),
         "timed_minutes_exact": _ratio(sum(1 for r in with_units if r.units.minutes_exact),
                                       len(with_units)),
         "method_disagreements": sum(1 for r in with_units if r.units.method_disagreement),
@@ -231,5 +244,8 @@ def aggregate(results: list[scoring.RecordResult]) -> dict:
         "invariants_passed": sum(r.invariants_passed for r in results),
         "invariants_total": sum(len(r.checks) for r in results),
         "flags_raised": sum(len(r.flags) for r in results),
+        # How often the MODEL folded content into a heading, counted before the
+        # deterministic repair. This is the number that shows the model regressing.
+        "folded_headings_raw": sum(r.folded_headings_raw for r in results),
         "mean_seconds": round(sum(r.seconds for r in results) / len(results), 1),
     }

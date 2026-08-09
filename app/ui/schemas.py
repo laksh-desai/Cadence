@@ -174,6 +174,9 @@ class BillingModel(BaseModel):
     untimed_codes: list[str] = []
     units: UnitAllocationModel | None = None       # CMS substitution
     units_alt: UnitAllocationModel | None = None   # AMA rule of eights
+    #: Units if the clinician also accepts every `uncertain` timed line. None when there are none
+    #: to accept. Computed server-side so the 8-minute rule is never reimplemented in JavaScript.
+    units_if_confirmed: UnitAllocationModel | None = None
     missing: list[str] = []
     conflicts: list[ConflictModel] = []
     #: Always True. Cadence drafts billing; the clinician bills.
@@ -190,6 +193,24 @@ class GenerateResponse(BaseModel):
     #: None when billing doesn't apply: a patient-facing/auxiliary form, or the revise path, which
     #: has only the NOTE's prose to work from and must never bill off model-written text (rule 12).
     billing: BillingModel | None = None
+    # Provenance, produced by the SERVER and echoed back by the client on save. The client must
+    # not be the authority on which model ran, and `template_spec_sha` has to be the spec as of
+    # GENERATION time — the clinician can edit a template between generating and saving.
+    model_id: str | None = None
+    fast: bool = False
+    template_spec_sha: str | None = None
+    template_customized: bool = False
+
+
+class ReviseInstruction(BaseModel):
+    """One plain-language change request the clinician typed into "Ask for changes".
+
+    Captured because it is the highest-signal correction data the app sees — the clinician saying
+    in their own words what was wrong — and it used to be discarded the moment the stream ended.
+    """
+    text: str
+    applied: bool = True     # False = the model failed to produce a revision; still signal
+    at: str | None = None
 
 
 class SaveNoteRequest(BaseModel):
@@ -199,6 +220,15 @@ class SaveNoteRequest(BaseModel):
     missing_info: list[str]
     dictation_raw: str
     used_prior: bool
+    # Correction capture. All defaulted, so an older client (or a test that omits them) saves
+    # exactly as before.
+    original_sections: list[SectionModel] = []
+    revise_instructions: list[ReviseInstruction] = []
+    model_id: str | None = None
+    fast: bool = False
+    template_spec_sha: str | None = None
+    template_customized: bool = False
+    synthetic: bool = False
 
 
 class SaveNoteResponse(BaseModel):

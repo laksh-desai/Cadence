@@ -358,6 +358,47 @@ class IcdTests(unittest.TestCase):
         )
         self.assertIn("Z47.1", {c.code for c in draft.icd_candidates})
 
+    def test_admitted_paraphrases_reach_their_diagnosis(self):
+        """The ICD eval used to be perfectly circular: the generator picked the spoken diagnosis
+        with `rng.choice(rule.cues)` — the extractor's OWN cue list — so recall read 100% while
+        measuring nothing. Adding real paraphrases dropped it to 79% (9% on paraphrased samples).
+        These are the ones judged unambiguous enough to code on and admitted (rule 21a)."""
+        for text, want in [
+            ("Right shoulder. Diagnosis is a torn rotator cuff on the right.", "M75.101"),
+            ("Left shoulder. Referring diagnosis is left subacromial pain syndrome.", "M75.42"),
+            ("Right knee. Assessment is a blown ACL on the right.", "S83.511"),
+            ("Left knee. Diagnosis is degenerative knee.", "M17.12"),
+            ("Low back. Working diagnosis is a slipped disc.", "M51.26"),
+            ("Low back. Diagnosis is canal stenosis.", "M48.061"),
+            ("Neck. Diagnosis is a pinched nerve in the neck.", "M50.10"),
+            ("Right hip. Referring diagnosis is right cam impingement.", "M24.851"),
+            ("Left ankle. Diagnosis is a rolled ankle on the left.", "S93.402"),
+        ]:
+            with self.subTest(text=text[:46]):
+                draft = billing.extract(text)
+                self.assertIn(want, {c.code for c in draft.icd_candidates})
+
+    def test_ambiguous_phrasings_are_deliberately_not_coded(self):
+        """The other half of rule 21(a): a low recall number must NOT be "fixed" by admitting a
+        phrase that doesn't specifically name one diagnosis. Each of these is a SYMPTOM with
+        several causes, and guessing a code for it would be a wrong claim.
+
+        "PF" is the sharpest case — it means plantar fascia to a foot therapist and patellofemoral
+        to a knee therapist, so it can never be safely expanded.
+        """
+        for text, why in [
+            ("Left foot. Diagnosis is heel pain.", "fat pad, calcaneal stress fracture, Sever's"),
+            ("Right knee. Diagnosis is anterior knee pain.", "PFPS, fat pad, patellar tendinopathy"),
+            ("Right hip. Diagnosis is lateral hip pain.", "bursitis vs gluteal tendinopathy"),
+            ("Left shoulder. Diagnosis is a stiff shoulder.", "stiffness M25.61 vs capsulitis M75.0"),
+        ]:
+            with self.subTest(why=why):
+                codes = {c.code for c in billing.extract(text).icd_candidates}
+                # A generic pain/stiffness code is fine; the SPECIFIC pathology must not be guessed.
+                for specific in ("M72.2", "M22.2X1", "M22.2X2", "M70.61", "M70.62",
+                                 "M75.01", "M75.02"):
+                    self.assertNotIn(specific, codes, f"guessed {specific} from a symptom ({why})")
+
     def test_no_body_part_means_no_icd_at_all(self):
         draft = billing.extract("Patient did therapeutic exercise for twenty minutes.")
         self.assertIsNone(draft.body_part)

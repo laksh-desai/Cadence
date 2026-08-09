@@ -67,8 +67,9 @@ device, with one narrow sanctioned exception (Google Workspace, under a signed B
   first and separately from accuracy — they measure wrong claims, not incomplete drafts.
   Current standing on 162 labeled records across all six regions: **0 wrong claims**, ICD 99%
   recall / 100% precision, CPT 100% precision, **no gold code missed entirely** (87% auto-billed,
-  the rest surfaced for one-click confirmation), and every unit error in the safe under-counting
-  direction.
+  the rest surfaced for one-click confirmation), and **units correct on 100% of records once the
+  surfaced lines are confirmed** — every unit error is an under-count caused by declining to
+  auto-bill an ambiguous phrase, never by the arithmetic.
 - **Editable review before finalize** — after generation the clinician reviews the note, clicks
   **Edit** to change any section (including confirming or changing a suggested code), then **Save** —
   nothing is persisted until they do. Reinforces "the clinician reviews and signs every note."
