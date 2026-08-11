@@ -370,6 +370,9 @@ class IcdCandidate:
     #: cervical codes, plantar fasciitis, …). Asking the clinician to confirm a side the code set
     #: doesn't distinguish is noise, so the laterality gap is suppressed for these.
     lateralized: bool = True
+    #: True for a SYMPTOM code (pain, stiffness) rather than a definitive diagnosis. Suppressed by
+    #: detect_icd when a specific diagnosis was also found for the region.
+    symptom_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -573,8 +576,16 @@ def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = "
 
     # A side stated once anywhere in the transcript, used only when the diagnosis clause itself
     # doesn't state one AND the transcript is unambiguous about which side it is.
+    #
+    # "bilateral" is deliberately EXCLUDED from this fallback. `_phrase_re` matches "bilaterally",
+    # which is ubiquitous as a FINDINGS qualifier ("grip five out of five bilaterally", "Spurling
+    # negative bilaterally") and almost never describes the diagnosis. Reading it as the
+    # diagnosis's side was doubly wrong: most families have no bilateral code, so `code_for`
+    # returned BOTH sides and emitted two false codes for a condition the therapist never
+    # lateralised. A genuinely bilateral diagnosis is stated in the diagnosis clause itself
+    # ("bilateral adhesive capsulitis"), which `_laterality_in` still picks up.
     sides = {side for phrase, side in tables.LATERALITY_CUES
-             if tables._phrase_re(phrase).search(transcript or "")}
+             if side != "bilateral" and tables._phrase_re(phrase).search(transcript or "")}
     fallback_side = next(iter(sides)) if len(sides) == 1 else None
 
     out: list[IcdCandidate] = []
@@ -598,9 +609,18 @@ def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = "
                 out.append(IcdCandidate(
                     code=code, label=rule.label, cue=hit.group(0), clause=clause,
                     laterality=side, laterality_stated=stated, caution=rule.caution,
-                    lateralized=rule.lateralized,
+                    lateralized=rule.lateralized, symptom_only=rule.symptom_only,
                 ))
             break  # one diagnosis per clause; specific rules are ordered before generic ones
+
+    # ICD-10-CM: code the established diagnosis, not its symptoms. A long-form dictation names the
+    # symptom repeatedly ("Chief complaint, ... knee pain", "Assessment summary, patient presents
+    # with knee pain and decreased range of motion") while the DIAGNOSIS is stated once, so without
+    # this a generic pain code rode along on nearly every eval — 152 false positives across a
+    # 288-case sweep, ICD precision 64%. The symptom code is kept only when it is all the therapist
+    # gave, because then it is the one honest code available.
+    if any(not c.symptom_only for c in out):
+        out = [c for c in out if not c.symptom_only]
     return out
 
 

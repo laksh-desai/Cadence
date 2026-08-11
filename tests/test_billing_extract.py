@@ -639,3 +639,73 @@ class TableIntegrityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LongFormSweepRegressionTests(unittest.TestCase):
+    """Four defects found by a 288-case sweep (6 regions x 2 note types x 3 complexities x 8),
+    once the synthetic dictations became realistic long-form evaluations. None was reachable with
+    the short dictations the corpus used before — they only appear in prose a real PT would speak.
+    """
+
+    def test_plan_of_treatment_does_not_bill_its_listed_approaches(self):
+        """A FOUR-CODE overbill on an evaluation. Same class as record 108's "Interventions
+        planned include", different wording, and it fired on every long-form eval."""
+        draft = billing.extract(
+            "Right shoulder initial evaluation. Referring diagnosis right impingement syndrome. "
+            "Plan of treatment, treatment approaches include therapeutic exercise, neuromuscular "
+            "re-education, manual therapy for range of motion, and therapeutic activities."
+        )
+        self.assertEqual(draft.billable, ())
+        for code in ("97110", "97112", "97140", "97530"):
+            with self.subTest(code=code):
+                self.assertEqual(_status(draft, code), PLANNED)
+
+    def test_a_symptom_code_is_suppressed_when_a_real_diagnosis_is_present(self):
+        """ICD-10-CM: code the established diagnosis, not its symptoms. A long-form dictation
+        names the symptom repeatedly ("Chief complaint, ... shoulder pain", "Assessment summary,
+        patient presents with shoulder pain") while the diagnosis is stated once — 152 false
+        positives across the sweep, ICD precision 64%."""
+        draft = billing.extract(
+            "Left shoulder. Referring diagnosis is left adhesive capsulitis. Assessment summary, "
+            "patient presents with left shoulder pain and decreased range of motion."
+        )
+        codes = {c.code for c in draft.icd_candidates}
+        self.assertIn("M75.02", codes)
+        self.assertNotIn("M25.512", codes, "a duplicate claim line for the symptom")
+
+    def test_a_symptom_code_survives_when_it_is_all_that_was_said(self):
+        """The other direction: suppressing it unconditionally would throw away the only honest
+        code available when the therapist named no definitive diagnosis."""
+        draft = billing.extract("Left shoulder. Referring diagnosis is left shoulder pain.")
+        self.assertIn("M25.512", {c.code for c in draft.icd_candidates})
+
+    def test_bilaterally_as_a_findings_qualifier_is_not_the_diagnosis_laterality(self):
+        """"grip five out of five bilaterally" was read as the DIAGNOSIS's side. Doubly wrong:
+        most families have no bilateral code, so `code_for` returned BOTH sides and emitted two
+        false codes for a condition the therapist never lateralised."""
+        draft = billing.extract(
+            "Low back. Referring diagnosis is sciatic pain. Strength, hip abduction four out of "
+            "five bilaterally, Spurling test negative bilaterally."
+        )
+        codes = {c.code for c in draft.icd_candidates}
+        self.assertEqual(codes, {"M54.30"}, "one unspecified-side code, not right AND left")
+
+    def test_a_genuinely_bilateral_diagnosis_still_yields_both_sides(self):
+        draft = billing.extract("Shoulder. Referring diagnosis is bilateral adhesive capsulitis.")
+        self.assertEqual({c.code for c in draft.icd_candidates}, {"M75.01", "M75.02"})
+
+
+class GeneratorIntegrityTests(unittest.TestCase):
+    def test_every_paraphrase_bank_entry_is_a_tuple_not_a_string(self):
+        """A single-element entry written `("capsulitis")` is a STRING, and `rng.choice` on a
+        string picks one CHARACTER — the spoken diagnosis became "s" and the gold label became
+        "Bilateral s". Six entries were corrupted this way when paraphrases were purged."""
+        from evals.synth import banks
+        for key, value in banks.DIAGNOSIS_PARAPHRASES.items():
+            with self.subTest(key=key):
+                self.assertIsInstance(value, tuple, f"{key} lost its trailing comma")
+                for phrase in value:
+                    self.assertGreater(len(phrase), 2, f"{key} contains a single character")
+        for code, value in banks.INTERVENTION_SPOKEN.items():
+            with self.subTest(code=code):
+                self.assertIsInstance(value, tuple)

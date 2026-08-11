@@ -289,6 +289,17 @@ TEMPORAL_FUTURE_CUES: tuple[str, ...] = (
     "future sessions", "moving forward we", "eventually", "would like to add",
     "planned", "interventions planned", "plan includes", "plan of care includes",
     "will include", "anticipated", "we recommend", "recommend starting",
+    # The PLAN-OF-TREATMENT family, found by the long-form initial-eval corpus: "Plan of treatment,
+    # treatment approaches include therapeutic exercise, neuromuscular re-education, manual
+    # therapy..." billed FOUR codes on an evaluation where nothing was performed. Same class as
+    # record 108's "Interventions planned include", different wording.
+    #
+    # Expanding THIS list is the safe direction. A future cue can only move a treatment OUT of the
+    # billable set, so a false positive here under-bills (the clinician adds it back from a visible
+    # flag) while a false negative over-bills. Precision on the billable set is what matters.
+    "plan of treatment", "treatment approaches", "approaches include", "treatment will include",
+    "interventions include", "plan of care", "treatment plan includes", "proposed treatment",
+    "anticipate", "goals include",
 )
 
 # The patient does it at home — unsupervised, so not a billable treatment minute.
@@ -334,6 +345,13 @@ class IcdRule:
     unspecified: str
     bilateral: str | None = None
     caution: str = ""
+    #: True for a rule that codes a SYMPTOM (pain, stiffness) rather than a definitive diagnosis.
+    #: ICD-10-CM guidance is to code the established diagnosis and NOT its symptoms; billing
+    #: "M25.511 pain in right shoulder" alongside "M75.41 impingement" is a duplicate claim line.
+    #: `billing.detect_icd` therefore suppresses these whenever a specific diagnosis was also
+    #: found for the same region — but keeps them when the symptom is all the therapist said,
+    #: because then it is the only honest code available.
+    symptom_only: bool = False
 
     @property
     def lateralized(self) -> bool:
@@ -448,12 +466,12 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         IcdRule(
             cues=("shoulder stiffness", "stiffness of the shoulder", "loss of shoulder motion"),
             label="Stiffness of shoulder, not elsewhere classified",
-            right="M25.611", left="M25.612", unspecified="M25.619",
+            right="M25.611", left="M25.612", unspecified="M25.619", symptom_only=True,
         ),
         IcdRule(
             cues=("shoulder pain", "pain in the shoulder", "painful shoulder", "shoulder pain syndrome"),
             label="Pain in shoulder",
-            right="M25.511", left="M25.512", unspecified="M25.519",
+            right="M25.511", left="M25.512", unspecified="M25.519", symptom_only=True,
         ),
     ),
 
@@ -527,12 +545,12 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             cues=("knee stiffness", "stiffness of the knee", "loss of knee motion",
                   "arthrofibrosis of the knee"),
             label="Stiffness of knee, not elsewhere classified",
-            right="M25.661", left="M25.662", unspecified="M25.669",
+            right="M25.661", left="M25.662", unspecified="M25.669", symptom_only=True,
         ),
         IcdRule(
             cues=("knee pain", "pain in the knee", "painful knee"),
             label="Pain in knee",
-            right="M25.561", left="M25.562", unspecified="M25.569",
+            right="M25.561", left="M25.562", unspecified="M25.569", symptom_only=True,
         ),
     ),
 
@@ -606,7 +624,7 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
                   "pain in the low back",
                   "lbp", "back pain", "mechanical back pain"),
             label="Low back pain, unspecified",
-            right="M54.50", left="M54.50", unspecified="M54.50",
+            right="M54.50", left="M54.50", unspecified="M54.50", symptom_only=True,
             caution="M54.51 (vertebrogenic) and M54.59 (other) are more specific if the "
                     "presentation supports them — confirm",
         ),
@@ -666,7 +684,7 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             cues=("cervicalgia", "neck pain", "pain in the neck",
                   "neck ache"),
             label="Cervicalgia",
-            right="M54.2", left="M54.2", unspecified="M54.2",
+            right="M54.2", left="M54.2", unspecified="M54.2", symptom_only=True,
         ),
     ),
 
@@ -713,12 +731,12 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         IcdRule(
             cues=("hip stiffness", "stiffness of the hip"),
             label="Stiffness of hip, not elsewhere classified",
-            right="M25.651", left="M25.652", unspecified="M25.659",
+            right="M25.651", left="M25.652", unspecified="M25.659", symptom_only=True,
         ),
         IcdRule(
             cues=("hip pain", "pain in the hip", "painful hip"),
             label="Pain in hip",
-            right="M25.551", left="M25.552", unspecified="M25.559",
+            right="M25.551", left="M25.552", unspecified="M25.559", symptom_only=True,
         ),
     ),
 
@@ -773,12 +791,12 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         IcdRule(
             cues=("ankle stiffness", "stiffness of the ankle", "loss of ankle motion"),
             label="Stiffness of ankle, not elsewhere classified",
-            right="M25.671", left="M25.672", unspecified="M25.679",
+            right="M25.671", left="M25.672", unspecified="M25.679", symptom_only=True,
         ),
         IcdRule(
             cues=("ankle pain", "pain in the ankle", "foot pain", "painful ankle"),
             label="Pain in ankle and joints of foot",
-            right="M25.571", left="M25.572", unspecified="M25.579",
+            right="M25.571", left="M25.572", unspecified="M25.579", symptom_only=True,
         ),
     ),
 }
