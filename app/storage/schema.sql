@@ -7,7 +7,12 @@ CREATE TABLE IF NOT EXISTS patients (
   created_at        TEXT NOT NULL,
   scheduling_notes  TEXT,
   updated_at        TEXT NOT NULL DEFAULT '1970-01-01T00:00:00+00:00',
-  sheet_synced_at   TEXT
+  sheet_synced_at   TEXT,
+  -- Demo/seed patients created by scripts/seed_demo_data.py. NOT NULL DEFAULT 0 for the same
+  -- reason as notes.synthetic: "unknown" must never read as "safe to delete in bulk", and a
+  -- pre-existing patient is definitionally real. Lets the seed script clean up exactly what it
+  -- created without ever touching a row a human entered.
+  synthetic         INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS notes (
