@@ -70,6 +70,13 @@ device, with one narrow sanctioned exception (Google Workspace, under a signed B
   the rest surfaced for one-click confirmation), and **units correct on 100% of records once the
   surfaced lines are confirmed** — every unit error is an under-count caused by declining to
   auto-bill an ambiguous phrase, never by the arithmetic.
+- **Demo/seed data** — `scripts/seed_demo_data.py` fills the app's own database with synthetic
+  patients and their generated notes, so the UI can be looked at with realistic content across
+  every body region. Every row it writes is marked `synthetic = 1` (patients *and* notes), so
+  `--clear` removes exactly what it created and can never touch a patient a human entered. It
+  lives outside `evals/` deliberately: the eval harness must never write to the record store
+  (`tests/test_eval_isolation.py`), whereas seeding is an explicitly-invoked action whose whole
+  purpose is to write rows. `--list` shows the real/demo split.
 - **Editable review before finalize** — after generation the clinician reviews the note, clicks
   **Edit** to change any section (including confirming or changing a suggested code), then **Save** —
   nothing is persisted until they do. Reinforces "the clinician reviews and signs every note."

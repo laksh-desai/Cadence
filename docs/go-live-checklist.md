@@ -109,6 +109,17 @@ chip is worse than no chip at all.
 **Done when:** both `VERIFIED_` fields are filled, the eight control records are clinician-
 verified, and a sweep reports zero wrong claims.
 
+## 4c. Clear the demo data before real use — **[blocker if the seed was ever run]**
+
+`scripts/seed_demo_data.py` can populate the app with synthetic patients for UX review. They are
+fictional, but a roster mixing demo and real patients is a clinical-safety hazard in its own right.
+
+- [ ] `.venv/Scripts/python.exe scripts/seed_demo_data.py --list` — confirm what is demo vs real.
+- [ ] `.venv/Scripts/python.exe scripts/seed_demo_data.py --clear` on the clinician's machine
+      before the first real visit. It deletes only `synthetic = 1` rows.
+
+**Done when:** `--list` shows zero demo patients on the production machine.
+
 ## 5. Set up a backup routine — **[blocker, once real notes exist]**
 
 Notes live only in the local encrypted DB — there is **no cross-device note sync**, so a
