@@ -32,12 +32,16 @@ from app.generate.billing import (
     units_for_minutes,
 )
 from app.generate.cpt import is_timed
-from evals.synth import banks
+from evals.synth import banks, intake
 
 #: Bump when a change alters the TEXT a given seed produces. `evals/results.py` refuses to compare
 #: runs across versions without --force, because a corpus change and a code change would otherwise
 #: be indistinguishable in a score diff.
-GENERATOR_VERSION = 1
+# v2 (2026-08): initial evals became long-form intake dictations (`intake.py`, ~1,000-1,300
+# words) instead of short follow-up-shaped text, several unsafe diagnosis paraphrases were
+# removed, and the assessment line now names the formal diagnosis. Scores from v1 runs are
+# not comparable to v2 runs.
+GENERATOR_VERSION = 2
 
 COMPLEXITIES: tuple[str, ...] = ("low", "medium", "high")
 NOTE_TYPES: tuple[str, ...] = ("initial", "followup")
@@ -113,6 +117,11 @@ class SyntheticSample:
     expected_units: int
     expected_units_ama: int
     synth: dict = field(default_factory=dict)
+    #: The ICD rule's formal clinical label. `diagnosis` holds what the therapist
+    #: SAID (often a loose paraphrase, deliberately — see DIAGNOSIS_PARAPHRASES);
+    #: this is what a roster or chart header should display. A roster reading
+    #: "Worn discs" looks like a data-entry error, not like demo data.
+    diagnosis_formal: str = ""
 
     @property
     def cpt_codes(self) -> tuple[str, ...]:
@@ -268,6 +277,11 @@ def generate_sample(index: int, *, body_part: str, note_type: str, complexity: s
         corrected_from = candidates[len(distractors)]
         distractors.append(GoldDistractor(code=corrected_from, reason="self_corrected"))
 
+    if note_type == "initial":
+        # An eval bills 97161/2/3 (a clinician JUDGEMENT call, surfaced not auto-assigned), never
+        # treatment minutes — and the rendered dictation states no treatments at all.
+        interventions, distractors, corrected_from = [], [], None
+
     total_timed = sum(i.minutes for i in interventions if i.timed and i.minutes)
     per_code = {i.code: i.minutes for i in interventions if i.timed and i.minutes}
 
@@ -279,16 +293,20 @@ def generate_sample(index: int, *, body_part: str, note_type: str, complexity: s
     visit_type = rng.choice(banks.VISIT_TYPES[note_type])
     voice = rng.choice(banks.VOICES)
 
+    dx_formal = (f"{side.capitalize()} {rule.label}" if side and rule.lateralized else rule.label)
     transcript = _render(
         rng, body_part=body_part, complexity=complexity, dx_phrase=dx_phrase, side=side,
         interventions=interventions, distractors=distractors, corrected_from=corrected_from,
         total_timed=total_timed, patient_name=patient_name, visit_type=visit_type, voice=voice,
+        note_type=note_type, dx_formal=dx_formal,
     )
 
     return SyntheticSample(
         id=ID_BLOCKS[body_part] + index,
         patient_name=patient_name,
         diagnosis=(f"{side.capitalize()} {dx_phrase}" if side else dx_phrase.capitalize()),
+        diagnosis_formal=(f"{side.capitalize()} {rule.label}" if side and rule.lateralized
+                          else rule.label),
         visit_type=visit_type,
         date=(_BASE_DATE + timedelta(days=index * 3)).isoformat(),
         transcript=transcript,
@@ -356,7 +374,8 @@ def _treatment_sentence(rng: random.Random, item: GoldIntervention, complexity: 
 
 
 def _render(rng: random.Random, *, body_part, complexity, dx_phrase, side, interventions,
-            distractors, corrected_from, total_timed, patient_name, visit_type, voice) -> str:
+            distractors, corrected_from, total_timed, patient_name, visit_type, voice,
+            note_type="followup", dx_formal="") -> str:
     profile = _PROFILE[complexity]
     side_word = {"bilateral": "bilateral", None: ""}.get(side, side or "")
 
@@ -367,6 +386,17 @@ def _render(rng: random.Random, *, body_part, complexity, dx_phrase, side, inter
     dx_spoken = f"{side} {dx_phrase}" if side and side != "bilateral" else (
         f"bilateral {dx_phrase}" if side == "bilateral" else dx_phrase)
     parts.append(rng.choice(banks.DIAGNOSIS_FRAMES).format(dx=dx_spoken) + ".")
+
+    if note_type == "initial":
+        # An evaluation is intake, not a treatment log — no "last visit", no per-treatment
+        # minutes. `evals/synth/intake.py` renders it field by spoken field, matching the
+        # ~1,000-1,300 word ScopeHealth-style dictations in docs/synthetic-longform-inputs.md.
+        # It replaces the opener too, because a real eval opens with the patient's age and the
+        # referring diagnosis rather than a follow-up greeting.
+        return _fillers(rng, intake.render(rng, body_part=body_part, voice=voice, side=side,
+                                           dx_phrase=dx_spoken, dx_formal=dx_formal),
+                        _PROFILE[complexity]["filler"])
+
     subjective = banks.SUBJECTIVE + banks.SUBJECTIVE_BY_PART.get(body_part, ())
     parts.append(rng.choice(subjective).format(part=_spoken_part(body_part), **voice))
 
