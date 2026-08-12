@@ -378,3 +378,69 @@ class HeadingFoldRepairTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpecInstructionHeadingTests(unittest.TestCase):
+    """The model copying the template's field INSTRUCTION onto the heading line.
+
+    Every heading below is verbatim from a real MedGemma Follow-Up generation in a seeded batch
+    (2 of 6 notes), each with correct clinical content in the body underneath.
+
+    `split_folded_headings` cannot cover this: it requires an EMPTY body, and it MOVES text rather
+    than deleting it, which is right for content and wrong for boilerplate that belongs in neither
+    the heading nor the body.
+    """
+
+    def test_strips_the_instruction_and_keeps_the_body(self):
+        sections = [{
+            "heading": "Precautions — weight-bearing status, range-of-motion limits, and any "
+                       "other precautions still in effect.",
+            "body": "Weight-bearing as tolerated. Left hip ROM limited to 90 degrees of flexion.",
+        }]
+        out = postprocess.strip_spec_instruction_headings("followup", sections)
+        self.assertEqual(out[0]["heading"], "Precautions")
+        self.assertEqual(out[0]["body"], sections[0]["body"], "body must be untouched")
+
+    def test_strips_a_heading_that_is_under_the_fold_threshold(self):
+        """The repair is about instruction text, not length. "Vitals — Blood pressure and heart
+        rate." is only 39 chars, so no length-based check would ever reach it."""
+        sections = [{"heading": "Vitals — Blood pressure and heart rate.",
+                     "body": "BP 128/76, HR 72."}]
+        out = postprocess.strip_spec_instruction_headings("followup", sections)
+        self.assertEqual(out[0]["heading"], "Vitals")
+
+    def test_leaves_a_heading_whose_tail_is_not_in_the_spec(self):
+        """The safety property. Deletion is only defensible because the removed text is matched
+        against the form's OWN spec; a tail the template never wrote is real content and stays."""
+        sections = [{"heading": "Gait Training — 300 feet with no device today",
+                     "body": "Patient ambulated 300 feet."}]
+        out = postprocess.strip_spec_instruction_headings("followup", sections)
+        self.assertEqual(out[0]["heading"], sections[0]["heading"])
+
+    def test_leaves_an_ordinary_heading_alone(self):
+        sections = [{"heading": "Therapeutic Exercise", "body": "Minutes: 20. Four-way hip."}]
+        out = postprocess.strip_spec_instruction_headings("followup", sections)
+        self.assertEqual(out[0]["heading"], "Therapeutic Exercise")
+
+    def test_unknown_form_is_a_no_op(self):
+        sections = [{"heading": "Anything — with a tail", "body": "x"}]
+        self.assertEqual(
+            postprocess.strip_spec_instruction_headings("no_such_form", sections), sections)
+
+    def test_apply_strips_before_the_fold_repair(self):
+        """Order guard. With an EMPTY body, split_folded_headings would move the instruction text
+        down into the body, where it would masquerade as clinical content and nothing removes it.
+        Stripping first means the fold repair only ever sees real content."""
+        sections = [_sec("Precautions — weight-bearing status, range-of-motion limits, and any "
+                         "other precautions still in effect.", "")]
+        out = postprocess.apply("followup", sections)
+        self.assertTrue(out, "the section should survive")
+        self.assertEqual(out[0]["heading"], "Precautions")
+        self.assertNotIn("weight-bearing status, range-of-motion limits", out[0]["body"],
+                         "template boilerplate must not be relocated into the body")
+
+    def test_is_idempotent(self):
+        sections = [{"heading": "Vitals — Blood pressure and heart rate.", "body": "BP 128/76."}]
+        once = postprocess.strip_spec_instruction_headings("followup", sections)
+        twice = postprocess.strip_spec_instruction_headings("followup", once)
+        self.assertEqual(once, twice)
