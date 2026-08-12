@@ -561,6 +561,12 @@ def _laterality_in(text: str) -> tuple[str | None, bool]:
     return (best[1], True) if best else (None, False)
 
 
+#: A neighbouring clause may only donate a laterality if it is this short — long enough for
+#: "Left knee" or "Right shoulder, follow up", short enough to exclude a real sentence with its
+#: own subject.
+_LATERALITY_FRAGMENT_WORDS = 5
+
+
 def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = ""
                ) -> list[IcdCandidate]:
     """Diagnosis candidates from clauses that FRAME something as the diagnosis.
@@ -584,21 +590,53 @@ def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = "
     # returned BOTH sides and emitted two false codes for a condition the therapist never
     # lateralised. A genuinely bilateral diagnosis is stated in the diagnosis clause itself
     # ("bilateral adhesive capsulitis"), which `_laterality_in` still picks up.
+    dx_idx = [i for i, c in enumerate(clauses)
+              if _find_any(c, tables.ICD_CONTEXT_CUES) and not _find_any(c, tables.ICD_HEDGE_CUES)]
+    dx_clauses = [clauses[i] for i in dx_idx]
+
+    # The fallback scans ONLY the diagnosis-framing clauses, never the whole transcript. Scanning
+    # everything was defensible when a dictation was 35-120 words, where a single side mention
+    # almost certainly was the diagnosis. A ~1,000-word intake states a side constantly in places
+    # that say nothing about which side the DIAGNOSIS is ("right straight leg raise negative",
+    # "left hip replacement in 2019"), and the fallback promoted the first of them — turning an
+    # unspecified sciatica (M54.30) into a confident right-sided claim (M54.31).
+    #
+    # This is the same failure as the "bilaterally" one below, one level up: a side that appears
+    # in the transcript is not thereby the diagnosis's side. Rule 12 is explicit that laterality
+    # comes only from what was said and an unstated side yields the unspecified code plus a gap
+    # flag, never a guess — so when the diagnosis clauses are silent, staying silent IS the rule.
+    # ...plus the clause on either side of each. A side is very often stated in a bare fragment
+    # next to the diagnosis rather than inside it ("Left knee. Diagnosis is degenerative knee."),
+    # and that fragment carries no diagnosis context of its own, so diagnosis clauses alone lose
+    # it. Adjacency keeps that while still excluding an exam finding four hundred words away.
+    # A neighbour contributes a side only if it is a BARE FRAGMENT — a short label like "Left
+    # knee." that exists to name the side and nothing else. A full adjacent sentence is about its
+    # own subject, and borrowing from it re-creates the bug one clause over: "Referring diagnosis
+    # sciatica. Past medical history includes a right total hip replacement in 2019." must not
+    # yield right-sided sciatica.
+    def _bare(text: str) -> bool:
+        return len(text.split()) <= _LATERALITY_FRAGMENT_WORDS
+
+    scope_idx = set(dx_idx)
+    for i in dx_idx:
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(clauses) and _bare(clauses[j]):
+                scope_idx.add(j)
+    scope = " ".join(clauses[j] for j in sorted(scope_idx))
     sides = {side for phrase, side in tables.LATERALITY_CUES
-             if side != "bilateral" and tables._phrase_re(phrase).search(transcript or "")}
+             if side != "bilateral" and tables._phrase_re(phrase).search(scope)}
     fallback_side = next(iter(sides)) if len(sides) == 1 else None
 
     out: list[IcdCandidate] = []
     seen: set[str] = set()
-    for clause in clauses:
-        if not _find_any(clause, tables.ICD_CONTEXT_CUES):
-            continue
-        if _find_any(clause, tables.ICD_HEDGE_CUES):
-            continue
+    seen_families: set[str] = set()
+    for clause in dx_clauses:
         for rule in rules:
             hit = _find_any(clause, rule.cues)
             if not hit:
                 continue
+            if rule.family and rule.family in seen_families:
+                break   # a more specific variant of this condition already matched
             side, stated = _laterality_in(clause)
             if not stated and fallback_side:
                 side, stated = fallback_side, True
@@ -611,6 +649,8 @@ def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = "
                     laterality=side, laterality_stated=stated, caution=rule.caution,
                     lateralized=rule.lateralized, symptom_only=rule.symptom_only,
                 ))
+            if rule.family:
+                seen_families.add(rule.family)
             break  # one diagnosis per clause; specific rules are ordered before generic ones
 
     # ICD-10-CM: code the established diagnosis, not its symptoms. A long-form dictation names the

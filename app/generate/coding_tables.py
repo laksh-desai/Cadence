@@ -345,6 +345,17 @@ class IcdRule:
     unspecified: str
     bilateral: str | None = None
     caution: str = ""
+    #: Rules sharing a non-empty family are MUTUALLY EXCLUSIVE variants of one condition — they
+    #: describe the same thing at different specificity, so at most one can be true and billing
+    #: two is a duplicate claim line. `billing.detect_icd` keeps only the first match within a
+    #: family, and rules are ordered specific-before-generic, so the more specific one wins.
+    #:
+    #: The per-clause `break` alone does not cover this: a long dictation states the diagnosis
+    #: more than once at different precision ("lumbar spinal stenosis with neurogenic
+    #: claudication" in the referral, plain "spinal stenosis" in the assessment), which is two
+    #: clauses and so two codes — here M48.062 AND M48.061, "with" and "without" claudication
+    #: simultaneously.
+    family: str = ""
     #: True for a rule that codes a SYMPTOM (pain, stiffness) rather than a definitive diagnosis.
     #: ICD-10-CM guidance is to code the established diagnosis and NOT its symptoms; billing
     #: "M25.511 pain in right shoulder" alongside "M75.41 impingement" is a duplicate claim line.
@@ -563,13 +574,13 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             cues=("lumbar spinal stenosis with neurogenic claudication",
                   "stenosis with neurogenic claudication"),
             label="Spinal stenosis, lumbar region, with neurogenic claudication",
-            right="M48.062", left="M48.062", unspecified="M48.062",
+            right="M48.062", left="M48.062", unspecified="M48.062", family="lumbar_stenosis",
         ),
         IcdRule(
             cues=("lumbar spinal stenosis", "spinal stenosis", "lumbar stenosis",
                   "canal stenosis", "central stenosis", "narrowing of the canal"),
             label="Spinal stenosis, lumbar region, without neurogenic claudication",
-            right="M48.061", left="M48.061", unspecified="M48.061",
+            right="M48.061", left="M48.061", unspecified="M48.061", family="lumbar_stenosis",
         ),
         IcdRule(
             cues=("lumbar radiculopathy", "disc disorder with radiculopathy",
@@ -581,13 +592,13 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             cues=("lumbago with sciatica", "low back pain with sciatica",
                   "back pain with sciatica"),
             label="Lumbago with sciatica",
-            right="M54.41", left="M54.42", unspecified="M54.40",
+            right="M54.41", left="M54.42", unspecified="M54.40", family="sciatica",
         ),
         IcdRule(
             cues=("sciatica",
                   "sciatic pain"),
             label="Sciatica",
-            right="M54.31", left="M54.32", unspecified="M54.30",
+            right="M54.31", left="M54.32", unspecified="M54.30", family="sciatica",
         ),
         IcdRule(
             cues=("herniated disc", "disc herniation", "disc displacement",

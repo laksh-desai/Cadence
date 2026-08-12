@@ -381,6 +381,17 @@ def render(rng: random.Random, *, body_part: str, voice: dict, side: str | None,
     """
     part = banks.SPOKEN_PART.get(body_part, body_part)
     sided = f"{side} " if side and side != "bilateral" else ("bilateral " if side else "")
+
+    # The presenting complaint must follow the DIAGNOSIS. Hardcoding "pain" here put the phrase
+    # "patient presents with knee pain" — a diagnosis-framing clause — into the transcript of a
+    # patient whose diagnosis was stiffness, so the extractor correctly read a pain diagnosis that
+    # the gold label (stiffness) did not contain, and scored a false positive for doing exactly the
+    # right thing. Ten of the corpus's remaining ICD false positives were this one generator bug
+    # across three regions. Rule 21: when the score looks wrong, check the labels before the table.
+    _stiff = any(w in dx_phrase.lower()
+                 for w in ("stiff", "motion", "frozen", "capsulitis", "arthrofibrosis"))
+    presenting = ("stiffness and decreased range of motion" if _stiff
+                  else f"{sided}{part} pain")
     v = dict(voice)
     sex = "female" if v["subj"] == "she" else "male"
     meds = rng.sample(banks.MEDICATIONS, rng.randint(5, 7))
@@ -396,7 +407,7 @@ def render(rng: random.Random, *, body_part: str, voice: dict, side: str | None,
         f"Okay, physical therapy initial evaluation. Patient is a {_spoken_age(rng)} {sex} "
         f"referred to outpatient physical therapy, referring diagnosis {dx_phrase}.",
 
-        f"Chief complaint, patient is complaining of {sided}{part} pain, stiffness, and difficulty "
+        f"Chief complaint, patient is complaining of {presenting}, and difficulty "
         f"with functional mobility and activities of daily living, requiring skilled physical "
         f"therapy to improve strength and range of motion, reduce risk of falls, and return to "
         f"prior level of function.",
@@ -456,7 +467,7 @@ def render(rng: random.Random, *, body_part: str, voice: dict, side: str | None,
 
         f"Patient goals, {v['subj']} would like to {' and to '.join(goals)}.",
 
-        f"Assessment summary, patient presents with {sided}{part} pain, decreased range of motion, "
+        f"Assessment summary, patient presents with {presenting}, decreased range of motion, "
         f"and strength deficits consistent with {dx_formal.lower()}, superimposed on multiple "
         f"comorbidities, limiting functional mobility and safe community ambulation and requiring "
         f"skilled physical therapy to restore strength and mobility, reduce fall risk, and return "

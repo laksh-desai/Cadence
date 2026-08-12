@@ -709,3 +709,95 @@ class GeneratorIntegrityTests(unittest.TestCase):
         for code, value in banks.INTERVENTION_SPOKEN.items():
             with self.subTest(code=code):
                 self.assertIsInstance(value, tuple)
+
+
+class MutualExclusivityAndLateralityScopeTests(unittest.TestCase):
+    """Three defects found by re-running the sweep on a freshly re-seeded corpus (a
+    GENERATOR_VERSION bump redraws every sample), so they were not artifacts of the seeds the
+    earlier fixes had been tuned against.
+
+    All three are WRONG-CLAIM defects — a code on the draft that a coder would have to remove —
+    which is the class rule 12 exists to prevent.
+    """
+
+    def test_one_condition_stated_twice_at_two_precisions_yields_one_code(self):
+        """M48.062 ("with neurogenic claudication") and M48.061 ("without") are mutually
+        exclusive: a patient cannot have both, so billing both is a duplicate claim line.
+
+        The per-clause `break` does not cover this. A long dictation states the diagnosis more
+        than once at different precision — the full phrase in the referral, the bare phrase in
+        the assessment — which is two clauses and so two codes.
+        """
+        draft = billing.extract(
+            "Referring diagnosis lumbar spinal stenosis with neurogenic claudication. "
+            "Assessment summary, findings are consistent with spinal stenosis."
+        )
+        codes = [c.code for c in draft.icd_candidates]
+        self.assertEqual(codes, ["M48.062"], "the more specific variant must win, alone")
+
+    def test_lumbago_with_sciatica_supersedes_bare_sciatica(self):
+        """Same family mechanism on the other lumbar pair, where the generic cue ("sciatica") is
+        a literal substring of the specific one ("lumbago with sciatica")."""
+        draft = billing.extract(
+            "Referring diagnosis lumbago with sciatica. Assessment, sciatica is the primary driver."
+        )
+        codes = [c.code for c in draft.icd_candidates]
+        self.assertEqual(len(codes), 1, f"expected one sciatica-family code, got {codes}")
+        self.assertTrue(codes[0].startswith("M54.4"),
+                        f"the specific 'lumbago with sciatica' code must win, got {codes[0]}")
+
+    def test_a_side_far_from_the_diagnosis_does_not_lateralise_it(self):
+        """The laterality fallback used to scan the WHOLE transcript. That was defensible at
+        35-120 words, where a lone side mention almost certainly was the diagnosis. In a
+        ~1,000-word intake a side is stated constantly in places that say nothing about which
+        side the DIAGNOSIS is, and the fallback promoted the first one — turning an unspecified
+        sciatica (M54.30) into a confident right-sided claim (M54.31).
+
+        Rule 12: an unstated side yields the unspecified code plus a gap flag, never a guess.
+        """
+        draft = billing.extract(
+            "Referring diagnosis sciatica with lumbar involvement. "
+            "On examination the right straight leg raise was negative, right grip was intact, "
+            "and right ankle dorsiflexion strength was five out of five."
+        )
+        codes = [c.code for c in draft.icd_candidates if c.code.startswith("M54.3")]
+        self.assertEqual(codes, ["M54.30"], "unspecified, not the side mentioned in the exam")
+
+    def test_a_side_stated_beside_the_diagnosis_still_lateralises_it(self):
+        """The other half, and the reason the fix is a WINDOW rather than diagnosis-clauses-only.
+        A side is very often a bare fragment next to the diagnosis, carrying no diagnosis context
+        of its own; scoping to diagnosis clauses alone silently dropped it."""
+        draft = billing.extract("Left knee. Diagnosis is degenerative knee.")
+        self.assertTrue(draft.icd_candidates, "a diagnosis should still be found")
+        self.assertEqual(draft.icd_candidates[0].laterality, "left")
+
+
+class IntakeGeneratorFidelityTests(unittest.TestCase):
+    """The generator must not assert a diagnosis the gold label does not carry.
+
+    `intake.py` hardcoded "patient presents with {part} pain" in the assessment summary — a
+    diagnosis-FRAMING clause. For a patient whose diagnosis was stiffness, that put a pain
+    diagnosis in the transcript, so the extractor read it correctly and was scored as a false
+    positive for doing the right thing. Ten of the corpus's remaining ICD false positives were
+    this one generator bug across three regions.
+
+    Rule 21: when the score looks wrong, check the labels before the cue table.
+    """
+
+    def test_a_stiffness_diagnosis_never_speaks_a_pain_diagnosis(self):
+        from evals.synth import generate as synth
+
+        checked = 0
+        for part in ("knee", "hip", "ankle", "shoulder"):
+            for cx in ("low", "medium", "high"):
+                for s in synth.generate_corpus(body_part=part, note_type="initial",
+                                               count=8, complexity=cx, seed=7777):
+                    if "stiff" not in s.diagnosis.lower() and "motion" not in s.diagnosis.lower():
+                        continue
+                    checked += 1
+                    got = {c.code for c in billing.extract(s.transcript).icd_candidates}
+                    with self.subTest(part=part, said=s.diagnosis):
+                        self.assertFalse(got - set(s.icd_codes),
+                                         f"extra code(s) {sorted(got - set(s.icd_codes))} "
+                                         f"for a stiffness diagnosis")
+        self.assertGreater(checked, 0, "no stiffness samples drawn — the guard is not exercising")

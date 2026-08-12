@@ -41,7 +41,10 @@ from evals.synth import banks, intake
 # words) instead of short follow-up-shaped text, several unsafe diagnosis paraphrases were
 # removed, and the assessment line now names the formal diagnosis. Scores from v1 runs are
 # not comparable to v2 runs.
-GENERATOR_VERSION = 2
+# v3: the intake's chief-complaint and assessment lines now state the complaint the
+# DIAGNOSIS implies rather than always "pain", which was asserting a pain diagnosis in a
+# diagnosis-framing clause for stiffness patients.
+GENERATOR_VERSION = 3
 
 COMPLEXITIES: tuple[str, ...] = ("low", "medium", "high")
 NOTE_TYPES: tuple[str, ...] = ("initial", "followup")
