@@ -586,19 +586,45 @@ class TableIntegrityTests(unittest.TestCase):
         "shoulderS"."""
         for part, cues in coding_tables.BODY_PART_CUES.items():
             for cue in cues:
+                if cue in coding_tables.SHARED_BODY_PART_CUES:
+                    # A shared cue MUST NOT identify a region on its own - that is the whole point
+                    # of sharing it. Assert the safe outcome instead: ambiguous, so no table.
+                    with self.subTest(part=part, cue=cue, shared=True):
+                        self.assertIsNone(
+                            coding_tables.body_part_for(f"Patient with {cue} pain."),
+                            f"{cue!r} is shared, so alone it must resolve to no region, not one")
+                    continue
                 with self.subTest(part=part, cue=cue):
                     self.assertEqual(coding_tables.body_part_for(f"Patient with {cue} pain."), part)
 
     def test_body_part_cues_do_not_collide_across_regions(self):
         """Two regions claiming the same cue makes `body_part_for` tie and return None, which
-        disables ICD for both."""
+        disables ICD for both.
+
+        `SHARED_BODY_PART_CUES` is the deliberate exception: a handful of words name a structure
+        that more than one joint HAS, so the word genuinely cannot name a joint and must not be
+        allowed to decide one. Everything else must stay unique, which is what catches the
+        accidental collision - a typo, or a cue copy-pasted between regions.
+        """
         seen: dict[str, str] = {}
         for part, cues in coding_tables.BODY_PART_CUES.items():
             for cue in cues:
+                if cue in coding_tables.SHARED_BODY_PART_CUES:
+                    continue
                 with self.subTest(cue=cue):
                     self.assertNotIn(cue, seen,
                                      f"{cue!r} is claimed by both {seen.get(cue)} and {part}")
                     seen[cue] = part
+
+    def test_every_shared_cue_is_actually_claimed_by_more_than_one_region(self):
+        """Keeps the exception list honest. A cue listed as shared but present in only one region
+        is a stale entry that silently disables the collision check for a word that no longer
+        needs it."""
+        for cue in coding_tables.SHARED_BODY_PART_CUES:
+            owners = [p for p, cues in coding_tables.BODY_PART_CUES.items() if cue in cues]
+            with self.subTest(cue=cue):
+                self.assertGreater(len(owners), 1,
+                                   f"{cue!r} is marked shared but only {owners} claims it")
 
     def test_every_icd_rule_is_reachable_from_its_own_cues(self):
         """A rule ordered after a more generic one that swallows its cue can never fire. Catches

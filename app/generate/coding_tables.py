@@ -72,7 +72,14 @@ BODY_PART_CUES: dict[str, tuple[str, ...]] = {
     "shoulder": (
         "shoulder", "rotator cuff", "glenohumeral", "gleno-humeral", "scapula", "scapular",
         "supraspinatus", "infraspinatus", "subscapularis", "teres minor", "acromio",
-        "subacromial", "labrum", "labral", "deltoid",
+        "subacromial", "deltoid",
+        # SLAP = Superior Labrum Anterior-to-Posterior. Unambiguously shoulder, and it carries the
+        # region on its own - which is what lets "labral"/"labrum" be shared with hip below.
+        "slap repair", "slap lesion", "slap tear",
+        # SHARED with hip (see SHARED_BODY_PART_CUES): a labral tear happens at both joints, so the
+        # word alone does not name one. Listed under shoulder ONLY, it made every hip labral tear
+        # vote shoulder, which routed real hip records to the shoulder table.
+        "labrum", "labral",
     ),
     "knee": (
         "knee", "patella", "patellar", "patellofemoral", "meniscus", "meniscal", "acl", "mcl",
@@ -90,6 +97,7 @@ BODY_PART_CUES: dict[str, tuple[str, ...]] = {
     ),
     "hip": (
         "hip", "acetabul", "femoroacetabular", "fai", "trochanter", "trochanteric",
+        "labrum", "labral",   # shared with shoulder - see SHARED_BODY_PART_CUES
         "gluteus medius", "gluteal", "iliopsoas", "hip flexor", "tha", "greater trochanter",
         "iliotibial", "it band",
     ),
@@ -99,6 +107,17 @@ BODY_PART_CUES: dict[str, tuple[str, ...]] = {
         "atfl", "gastroc",
     ),
 }
+
+
+#: Cues that legitimately belong to more than one region, so the uniqueness invariant in
+#: `tests/test_billing_extract.py` must not fail them. Keep this set TINY and justified: every
+#: entry is a cue that stops discriminating, and the value of the invariant is that an ACCIDENTAL
+#: collision (a typo, a copy-paste between regions) still fails loudly.
+#:
+#: "labral"/"labrum" — a labral tear occurs at the shoulder (SLAP, M75.x/S43.43x) and at the hip
+#: (M24.15x). The word names a structure both joints have, so on its own it cannot name a joint.
+#: The disambiguating cues are the surrounding anatomy, plus "SLAP" for shoulder specifically.
+SHARED_BODY_PART_CUES: frozenset[str] = frozenset({"labrum", "labral"})
 
 
 def _phrase_re(phrase: str) -> re.Pattern:
@@ -857,21 +876,49 @@ LATERALITY_CUES: tuple[tuple[str, str], ...] = (
 )
 
 
-def body_part_for(text: str) -> str | None:
-    """Best-effort body region for a transcript, or None if it is absent or ambiguous.
-
-    Returns None on a tie rather than picking the higher-scoring region: a wrong table yields a
-    confidently-wrong ICD chip, which is worse than no chip at all.
-    """
+def _score_parts(text: str) -> dict[str, int]:
     scores: dict[str, int] = {}
     lowered = (text or "").lower()
     for part, cues in BODY_PART_CUES.items():
         n = sum(len(_phrase_re(c).findall(lowered)) for c in cues)
         if n:
             scores[part] = n
+    return scores
+
+
+def _winner(scores: dict[str, int]) -> str | None:
     if not scores:
         return None
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
     if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
         return None
     return ranked[0][0]
+
+
+def body_part_for(text: str, diagnosis_text: str = "") -> str | None:
+    """Best-effort body region for a transcript, or None if it is absent or ambiguous.
+
+    Returns None on a tie rather than picking the higher-scoring region: a wrong table yields a
+    confidently-wrong ICD chip, which is worse than no chip at all. That safety rule is unchanged;
+    what changed is WHERE the vote is counted.
+
+    Counting every mention in the whole transcript lets incidental anatomy outvote the diagnosis.
+    A lumbar patient's note names "hip flexor stretch" and "hamstring" in the exercise list and
+    "knee" in an exam finding, none of which say anything about which region is being DIAGNOSED —
+    and those mentions tied the real region often enough to return None and suppress the ICD table
+    entirely. Measured on the corpus: three lumbar records with a perfectly good cue in a
+    diagnosis-framing clause ("Assessment is mechanical back pain", "Treating diagnosis is
+    sciatica", "referred with a diagnosis of lumbar stenosis") extracted NOTHING, because
+    hip 2 / lumbar 2 is a tie.
+
+    So the diagnosis clauses break the TIE, and never overrule a clear transcript-wide result.
+    That ordering is load-bearing, and the first version had it backwards. Letting the diagnosis
+    clause decide outright routed three hip records to the SHOULDER table: "labral tear" is a cue
+    for both regions, and read alone it is genuinely ambiguous, where the full transcript said hip
+    unmistakably. It traded 3 confidently-wrong ICD claims for the recall — the exact trade this
+    function's None-on-tie rule exists to refuse.
+
+    As a tiebreaker it is strictly additive: every case that already resolved still resolves the
+    same way, and the only behaviour that changes is a tie, which previously yielded nothing at all.
+    """
+    return _winner(_score_parts(text)) or _winner(_score_parts(diagnosis_text))

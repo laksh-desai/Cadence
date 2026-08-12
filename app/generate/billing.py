@@ -671,8 +671,13 @@ def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = "
 def extract(transcript: str, *, body_part: str | None = None) -> BillingDraft:
     """Build the full billing draft from a raw dictation. Never fabricates a value."""
     text = transcript or ""
-    part = body_part or tables.body_part_for(text)
     clauses = split_clauses(text)
+    # The diagnosis-framing clauses vote on the body part first (see body_part_for): incidental
+    # anatomy in the exercise list must not outvote the region actually being diagnosed.
+    dx_text = " ".join(c for c in clauses
+                       if _find_any(c, tables.ICD_CONTEXT_CUES)
+                       and not _find_any(c, tables.ICD_HEDGE_CUES))
+    part = body_part or tables.body_part_for(text, dx_text)
     session_total = session_total_minutes(text)
 
     hits = _dedupe(detect_interventions(clauses, session_total=session_total))
