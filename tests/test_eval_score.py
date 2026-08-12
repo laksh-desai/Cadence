@@ -208,3 +208,66 @@ class SectionCoverageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BillingOnlySweepTests(unittest.TestCase):
+    """The recorded no-model billing sweep (`eval_corpus.py --no-generate`).
+
+    The extractor is deterministic and reads the DICTATION, never the note, so its accuracy needs
+    no generation. That was always true but had no recorded path: eval_corpus always generated, so
+    a 162-record billing sweep cost ~4 hours of CPU to measure a component that answers in
+    milliseconds - and billing sweeps ended up as throwaway scripts whose numbers never reached
+    evals/results/, which is what the Evals tab reads.
+    """
+
+    def _record(self):
+        from evals import dataset
+        corpus = dataset.load_corpus(None)
+        for r in corpus:
+            if r.has_billing_gold and r.cpt_codes:
+                return r
+        self.skipTest("no billing-gold record in the corpus")
+
+    def test_scores_billing_without_any_note(self):
+        from app.generate import billing
+        from evals import runner
+
+        record = self._record()
+        result = runner.score_billing_only(record, billing.extract(record.transcript))
+        self.assertEqual(result.record_id, record.id)
+        self.assertIsNotNone(result.billing_detection, "billing must be scored")
+        self.assertIsNotNone(result.units)
+
+    def test_note_side_blocks_stay_unmeasured_rather_than_faked(self):
+        """An empty `checks` list is honestly "not measured"; a synthetic pass would be a lie that
+        inflates invariants_passed in any aggregate that mixes sweep kinds."""
+        from app.generate import billing
+        from evals import runner
+
+        record = self._record()
+        result = runner.score_billing_only(record, billing.extract(record.transcript))
+        self.assertEqual(result.checks, [])
+        self.assertEqual(result.invariants_passed, 0)
+        self.assertIsNone(result.cpt, "note-side CPT scoring needs a note")
+        self.assertIsNone(result.agreement, "agreement compares note to dictation")
+        self.assertEqual(result.form_id, runner.BILLING_ONLY_FORM,
+                         "the result must be identifiable as billing-only")
+
+    def test_round_trips_through_the_results_store(self):
+        """It has to survive write_run/load or it never reaches the Evals tab."""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from app.generate import billing
+        from evals import results as results_store, runner
+
+        record = self._record()
+        results = [runner.score_billing_only(record, billing.extract(record.transcript))]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = results_store.write_run(
+                results, config={"mode": "billing-only"}, out_dir=Path(tmp))
+            self.assertTrue(path.exists())
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["config"]["mode"], "billing-only")
+            self.assertEqual(payload["aggregate"]["all"]["records"], 1)

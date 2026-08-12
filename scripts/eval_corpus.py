@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -187,6 +188,11 @@ def main() -> int:
     ap.add_argument("--only", default=None, help="filter to records whose derived form is this")
     ap.add_argument("--form", default=None, help="OVERRIDE: generate every record against this form")
     ap.add_argument("--fast", action="store_true", help="use the fast-draft model instead of MedGemma")
+    ap.add_argument("--no-generate", action="store_true",
+                    help="score ONLY the billing extraction (no model call, seconds not minutes). "
+                         "The extractor reads the dictation, never the note, so its accuracy needs "
+                         "no generation - and the result still lands in evals/results/ and the "
+                         "Evals tab like any other sweep.")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="directory for per-run JSON")
     ap.add_argument("--resume", action="store_true", help="skip runs whose JSON already exists")
     ap.add_argument("--data", type=Path, default=None, help="corpus directory (default evals/data)")
@@ -216,7 +222,7 @@ def main() -> int:
         print(f"ERROR: unknown form {args.form!r}. Known: {forms_store.ordered_form_ids()}")
         return 2
 
-    if not asyncio.run(ollama_client.is_reachable()):
+    if not args.no_generate and not asyncio.run(ollama_client.is_reachable()):
         print("ERROR: Ollama isn't reachable on localhost:11434. Start it and pull MedGemma 4B.")
         return 2
 
@@ -225,6 +231,24 @@ def main() -> int:
     total = len(records) * args.runs
     print(f"Running {len(records)} records x {args.runs} run(s) = {total} generations "
           f"(~{total * 1.5:.0f} min at 1.5 min each)\n")
+
+    if args.no_generate:
+        from app.generate import billing as billing_mod
+
+        t0 = time.perf_counter()
+        billing_results = [
+            runner.score_billing_only(r, billing_mod.extract(r.transcript))
+            for r in records
+        ]
+        print(f"Scored {len(billing_results)} records' billing extraction in "
+              f"{time.perf_counter() - t0:.1f}s (no model calls).\n")
+        report(billing_results)
+        cfg = {"mode": "billing-only", "records": len(records), "runs": 1,
+               "corpus_dir": str(args.data or "evals/data"),
+               "body_part": args.body_part or "corpus", "note_type": "all"}
+        path = results_store.write_run(billing_results, config=cfg, started_at=started_at)
+        print(f"\nSaved -> {path}")
+        return 0
 
     results: list[scoring.RecordResult] = []
     done = 0
