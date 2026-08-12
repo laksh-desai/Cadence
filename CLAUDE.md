@@ -418,6 +418,20 @@ every note-generation prompt:
     pattern, move it into `postprocess.py`; reserve prompting for the classes that have no
     safe mechanical rewrite (arbitrary invented prose, cross-section paraphrase, meaning
     inversion), and lean on clinician review there.
+    **A second 2026-08 addition is `postprocess.strip_spec_instruction_headings`** — the model
+    copying the template's field INSTRUCTION onto the heading line (`## Precautions — weight-bearing
+    status, range-of-motion limits, and any other precautions still in effect.`) with correct
+    clinical content in the body underneath, on 2 of 6 real Follow-Up generations. It is the HEADING
+    twin of `flag_template_echo`, which only ever inspected bodies, and `split_folded_headings`
+    cannot cover it: that repair requires an EMPTY body and MOVES text, which is right for content
+    and wrong for boilerplate that belongs in neither the heading nor the body. It matters past
+    looking machine-made on a note a payer reads, because `cpt.code_for_heading` matches the
+    HEADING, so instruction text naming an intervention could earn a chip for a treatment nobody
+    performed. This is the ONE place in `postprocess.py` that DELETES rather than flags or moves,
+    and only because the removed text is matched against the form's own `spec` — verbatim template
+    boilerplate, never anything the clinician said. An unmatched tail is left alone. It runs before
+    the fold repair, or an instruction on an empty-bodied heading gets relocated into the body where
+    nothing removes it.
     **The 2026-08 addition to that backstop list is `postprocess.split_folded_headings`** — the
     model writing a section's CONTENT on the `## ` line and leaving the body empty, measured on
     2 of 3 notes in a real sweep (8/14 headings over 80 chars, longest 339). It was the worst
@@ -639,3 +653,75 @@ correction to the rules above so it persists.
   hands off to the same `/api/generate` pipeline (the model still structures the note
   and the after-generate gap-flagging still catches skips) — it does not map fields
   directly or change model behavior. Free dictation remains the default mode.
+
+23. **Three more ICD narrowings, and the reason each is narrow (2026-08, 1,440-case sweep).**
+    Rule 12(a) opened ICD-10 to per-body-part closed tables. Running long-form (~1,000-word)
+    evaluation dictations against it found three ways a closed table still emits a wrong claim.
+    Each fix is deliberately as narrow as its justification, all in `billing.py:detect_icd`.
+    (a) **Code the diagnosis, not its symptoms.** A long dictation names the SYMPTOM repeatedly
+    ("Chief complaint, … shoulder pain"; "Assessment summary, patient presents with shoulder pain")
+    while the diagnosis is stated once, so a generic pain code rode along on nearly every eval —
+    **152 false positives, ICD precision 64%**. ICD-10-CM says code the established diagnosis and
+    not its symptoms; billing M25.512 alongside M75.41 is a duplicate claim line. `IcdRule` gained
+    `symptom_only`, set on the 10 pain/stiffness rules, and they are dropped when a definitive
+    diagnosis is also found — but **kept when the symptom is all the therapist gave**, because then
+    it is the only honest code available. Precision 64% → 90% from this alone.
+    (b) **Mutually exclusive variants can't both be true.** M48.062 (stenosis WITH neurogenic
+    claudication) and M48.061 (WITHOUT) were both emitted for one patient. The per-clause `break`
+    cannot catch it: a long dictation states the diagnosis more than once at different precision —
+    the full phrase in the referral, the bare phrase in the assessment — which is two clauses and so
+    two codes. `IcdRule.family` marks variants exclusive; the first match wins, which is the most
+    specific because rules are ordered that way.
+    (c) **A side mentioned in the transcript is not the diagnosis's side.** The laterality fallback
+    scanned the WHOLE dictation. Defensible at 35–120 words, where a lone side mention almost
+    certainly was the diagnosis; a ~1,000-word intake states a side constantly in places that say
+    nothing about the diagnosis ("right straight leg raise negative"), and the fallback promoted the
+    first — turning an unspecified sciatica (M54.30) into a confident right-sided claim. Rule 12
+    already said an unstated side yields the unspecified code plus a gap flag, **never a guess**;
+    the transcript-wide fallback simply was one. The fix is a WINDOW, not diagnosis-clauses-only: a
+    side is often a bare fragment beside the diagnosis carrying no context of its own ("Left knee.
+    Diagnosis is degenerative knee."), and scoping to diagnosis clauses alone silently dropped it —
+    caught by an existing test. A neighbour donates a side only if it is a bare fragment (≤ 5
+    words); a full adjacent sentence is about its own subject, and borrowing from it moves the bug
+    one clause over rather than fixing it. That last case was found by a test written for the fix,
+    not by the corpus.
+    Net across 1,440 cases / 5 seeds: **zero CPT false positives, zero laterality errors, zero
+    distractor leaks, zero overstated units; ICD precision 99.2%, recall 97.0%.** The 12 remaining
+    ICD false positives are all the DESIGNED rule-21(a) paraphrase-gap fallback — none standalone.
+    Those paraphrases stay rejected on purpose: **"new hip" collides with "new hip pain"** (recent
+    onset, not a replacement — a false Z47.1 aftercare claim), "pulled his back" straddles sprain
+    S33.5 and strain S39.012, and "turned his ankle" is a mechanism, not a diagnosis.
+
+24. **The note WRITER now has a scored harness too — and a measurement tool can fabricate findings.**
+    `scripts/audit_notes.py` measures generated notes against the dictations that produced them,
+    checking the two directions that matter and are deterministically checkable, with **no LLM
+    judge** (which would be circular per rule 21): **DROPPED** (a stated fact the note doesn't
+    carry — rule 15) and **INVENTED** (a fact the note asserts that the dictation never stated —
+    rules 14/19). Medications are the probe: a closed, explicitly-stated list of proper nouns that
+    either appear in the source or don't, no paraphrase question, and the exact failure rule 15 was
+    written about. Structural and fabrication counts call the SAME functions the pipeline runs, so
+    the audit cannot drift from the app. First run over 18 real MedGemma notes: **61 medications
+    named, 61 traceable, 0 invented, 0 dropped; 0 folded headings; 8 invented assistive devices, all
+    caught by the rule-20 layer** (rule 14's "ambulates with a cane" recurring in 6 of 6 follow-ups).
+    The medication result is the rule-15 intake work confirmed end-to-end — the same pipeline used
+    to write "Ibuprofen 400mg, twice daily" for a dictation naming no drug at all.
+    **The process lesson is worth more than the numbers.** Getting there took three corrections to
+    the AUDIT itself, and its first "honest" reading was **15 dropped medications** when the true
+    answer was **0**: the `flag_*` functions return the whole section list rather than a findings
+    list (so every fabrication column read the section count); requiring a NUMERIC dose scored three
+    notes that had carried every medication perfectly ("Levothyroxine eighty-eight micrograms
+    daily") as having dropped all of them, measuring dose FORMAT and reporting it as lost facts; and
+    requiring a capital initial missed drugs written mid-list in lowercase. A metric that
+    manufactures alarming findings about the thing it exists to reassure you about is worse than no
+    metric. **Verify a new measurement against a case you have read by hand before believing it** —
+    the discipline rule 21(b) applies to gold labels, applied to the ruler.
+
+25. **When a score looks wrong, suspect the generator before the cue table.** Ten ICD false
+    positives across three regions traced to `evals/synth/intake.py` hardcoding "patient presents
+    with {part} pain" in the assessment summary — a diagnosis-FRAMING clause — so a patient whose
+    diagnosis was *stiffness* had a pain diagnosis in their transcript. The extractor read it
+    correctly and was scored a false positive for doing the right thing. The tempting fix (loosen
+    or special-case the cue table) would have damaged a component that was already correct. This is
+    rule 21's "check the gold labels before touching the cue table" recurring on the RENDERING side
+    rather than the label side, and it is why the sweep prints the spoken diagnosis beside every
+    mismatch — a bare count of false positives would have sent the fix to the wrong file.
