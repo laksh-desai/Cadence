@@ -27,16 +27,20 @@ def _new_id(prefix: str) -> str:
 
 def create_patient(
     name: str, dob: str | None, mrn: str | None, condition: str | None,
-    scheduling_notes: str | None = None,
+    scheduling_notes: str | None = None, *, synthetic: bool = False,
 ) -> dict:
+    """`synthetic=True` marks a demo/seed row (scripts/seed_demo_data.py). Keyword-only with a
+    default so every existing call site keeps working and a human-entered patient can never be
+    accidentally flagged as disposable."""
     patient_id = _new_id("p")
     created_at = _now_iso()
     conn = db.get_connection()
     try:
         conn.execute(
             "INSERT INTO patients (id, name, dob, mrn, condition, created_at, "
-            "scheduling_notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (patient_id, name, dob, mrn, condition, created_at, scheduling_notes, created_at),
+            "scheduling_notes, updated_at, synthetic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (patient_id, name, dob, mrn, condition, created_at, scheduling_notes, created_at,
+             1 if synthetic else 0),
         )
         conn.commit()
     finally:

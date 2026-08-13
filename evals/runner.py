@@ -30,6 +30,11 @@ CONDENSE_WARNING = "was long and was automatically condensed"
 CONDENSE_WARNING_HARD = "had to be condensed to fit the model even after"
 
 
+#: form_id recorded for a billing-only sweep. Not a real form — it marks a result whose note-side
+#: blocks were never measured, so a reader cannot mistake empty invariants for passing ones.
+BILLING_ONLY_FORM = "(billing-only)"
+
+
 def build_missing(parsed_missing: list[str], code_flags: list[str],
                   was_condensed: bool, still_over: bool) -> list[str]:
     missing = list(parsed_missing) + list(code_flags)
@@ -119,6 +124,37 @@ def score_one(record, form, sections, missing, was_condensed, seconds, run, pars
         is_synthetic=record.is_synthetic,
         body_part=record.body_part,
         folded_headings_raw=folded_raw,
+    )
+
+
+def score_billing_only(record, draft, *, seconds: float = 0.0, run: int = 1
+                       ) -> scoring.RecordResult:
+    """Score ONLY the dictation-derived billing draft, with no model call.
+
+    The billing extractor is deterministic and reads the DICTATION, never the note, so its accuracy
+    can be measured without generating anything. That was true all along but had no recorded path:
+    `eval_corpus.py` always generated, which at ~1.5 min per record means a 162-record billing
+    sweep costs four hours of CPU to measure a component that answers in milliseconds. So billing
+    sweeps got run as throwaway scripts and their numbers never reached `evals/results/` — which is
+    what the Evals tab reads, so the most-iterated part of the system was the least recorded.
+
+    Generation fields stay at their defaults rather than being faked: `checks` is empty because no
+    invariant was evaluated, and an empty list is honestly "not measured" where a synthetic pass
+    would be a lie. `evals/results.py` aggregates over whatever blocks are present.
+    """
+    has_gold = record.has_billing_gold
+    return scoring.RecordResult(
+        record_id=record.id,
+        form_id=BILLING_ONLY_FORM,
+        run=run,
+        seconds=seconds,
+        was_condensed=False,
+        icd=scoring.score_icd(draft, record.icd_codes) if has_gold and record.icd_codes else None,
+        billing_detection=scoring.score_billing_detection(draft, record) if has_gold else None,
+        minutes=scoring.score_minutes(draft, record) if has_gold else None,
+        units=scoring.score_units(draft, record) if has_gold else None,
+        is_synthetic=record.is_synthetic,
+        body_part=record.body_part,
     )
 
 

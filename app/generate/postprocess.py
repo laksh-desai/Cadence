@@ -200,6 +200,57 @@ def _spec_instruction_phrases(spec: str) -> list[str]:
     return phrases
 
 
+def strip_spec_instruction_headings(form_id: str, sections: list[dict]) -> list[dict]:
+    """Drop a template INSTRUCTION the model copied onto the heading line.
+
+    The heading twin of `flag_template_echo`, which only ever looked at bodies. Observed on real
+    Follow-Up generations (2 of 6 notes in a seeded batch):
+
+        ## Precautions — weight-bearing status, range-of-motion limits, and any other precautions
+           still in effect.
+        ## Summary of Daily Skilled Services — 1-3 sentences on the skilled PT provided today.
+
+    with correct clinical content in the body underneath. `split_folded_headings` cannot help:
+    that repair requires an EMPTY body, and it MOVES text rather than deleting it — which is right
+    for content on a heading line and wrong here, because this text is not content at all. It is
+    the spec's own guidance, and it belongs in neither the heading nor the body.
+
+    Why it matters beyond looking wrong on a note a payer reads: `cpt.code_for_heading` matches
+    against the heading, so instruction text carrying an intervention name ("...note the
+    therapeutic exercise performed...") could earn a chip for a treatment nobody performed - the
+    misfire rule 12's heading-only design exists to prevent.
+
+    Deletion is safe here in a way it is nowhere else in this module ONLY because the removed text
+    is matched against the form's own spec, so it is verbatim template boilerplate rather than
+    anything the clinician said. A tail that does not match the spec is left completely alone.
+    """
+    from app.generate.forms import FORMS
+
+    form = FORMS.get(form_id)
+    if form is None:
+        return sections
+    phrases = _spec_instruction_phrases(form.spec)
+    if not phrases:
+        return sections
+
+    out = []
+    for s in sections:
+        heading = s.get("heading", "")
+        parts = re.split(r"\s+[—–]\s+|\s+--\s+|:\s+", heading.strip(), maxsplit=1)
+        if len(parts) != 2:
+            out.append(s)
+            continue
+        label, tail = parts[0].strip(), _norm_echo(parts[1])
+        # The label must survive as a real label, and the tail must be the template's own words.
+        matched = tail and any(tail == p or tail.startswith(p) or p.startswith(tail)
+                               for p in phrases if len(tail.split()) >= 4)
+        if matched and label and len(label) <= MAX_LABEL_CHARS:
+            out.append({**s, "heading": label})
+        else:
+            out.append(s)
+    return out
+
+
 def flag_template_echo(form_id: str, sections: list[dict]) -> list[dict]:
     """Replace a section body that just parrots the template's own field INSTRUCTION (the model wrote
     'ambulation distance, assistive device, assist level, and stairs, updated to reflect today' as the
@@ -403,6 +454,11 @@ def apply(form_id: str, sections: list[dict]) -> list[dict]:
     # "[carry forward]" spec instruction before the split could strand it in the body where
     # nothing strips it.
     sections = strip_carry_instruction_headings(sections)
+    # Then the general spec-instruction strip, BEFORE the fold repair. Order matters: if such a
+    # heading also had an empty body, split_folded_headings would MOVE the instruction text down
+    # into the body, where it would masquerade as clinical content and no later pass removes it.
+    # Stripping first means the fold repair only ever sees real content.
+    sections = strip_spec_instruction_headings(form_id, sections)
     # The split must precede the zero-minutes drop. That drop matches "Minutes: 0" at the START OF
     # THE BODY, so a folded "Minutes: 0 — ultrasound not performed today" leaves an empty body, the
     # drop never fires, and the invented placeholder section survives into the note. Splitting

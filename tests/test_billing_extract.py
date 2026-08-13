@@ -586,19 +586,45 @@ class TableIntegrityTests(unittest.TestCase):
         "shoulderS"."""
         for part, cues in coding_tables.BODY_PART_CUES.items():
             for cue in cues:
+                if cue in coding_tables.SHARED_BODY_PART_CUES:
+                    # A shared cue MUST NOT identify a region on its own - that is the whole point
+                    # of sharing it. Assert the safe outcome instead: ambiguous, so no table.
+                    with self.subTest(part=part, cue=cue, shared=True):
+                        self.assertIsNone(
+                            coding_tables.body_part_for(f"Patient with {cue} pain."),
+                            f"{cue!r} is shared, so alone it must resolve to no region, not one")
+                    continue
                 with self.subTest(part=part, cue=cue):
                     self.assertEqual(coding_tables.body_part_for(f"Patient with {cue} pain."), part)
 
     def test_body_part_cues_do_not_collide_across_regions(self):
         """Two regions claiming the same cue makes `body_part_for` tie and return None, which
-        disables ICD for both."""
+        disables ICD for both.
+
+        `SHARED_BODY_PART_CUES` is the deliberate exception: a handful of words name a structure
+        that more than one joint HAS, so the word genuinely cannot name a joint and must not be
+        allowed to decide one. Everything else must stay unique, which is what catches the
+        accidental collision - a typo, or a cue copy-pasted between regions.
+        """
         seen: dict[str, str] = {}
         for part, cues in coding_tables.BODY_PART_CUES.items():
             for cue in cues:
+                if cue in coding_tables.SHARED_BODY_PART_CUES:
+                    continue
                 with self.subTest(cue=cue):
                     self.assertNotIn(cue, seen,
                                      f"{cue!r} is claimed by both {seen.get(cue)} and {part}")
                     seen[cue] = part
+
+    def test_every_shared_cue_is_actually_claimed_by_more_than_one_region(self):
+        """Keeps the exception list honest. A cue listed as shared but present in only one region
+        is a stale entry that silently disables the collision check for a word that no longer
+        needs it."""
+        for cue in coding_tables.SHARED_BODY_PART_CUES:
+            owners = [p for p, cues in coding_tables.BODY_PART_CUES.items() if cue in cues]
+            with self.subTest(cue=cue):
+                self.assertGreater(len(owners), 1,
+                                   f"{cue!r} is marked shared but only {owners} claims it")
 
     def test_every_icd_rule_is_reachable_from_its_own_cues(self):
         """A rule ordered after a more generic one that swallows its cue can never fire. Catches
@@ -639,3 +665,165 @@ class TableIntegrityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LongFormSweepRegressionTests(unittest.TestCase):
+    """Four defects found by a 288-case sweep (6 regions x 2 note types x 3 complexities x 8),
+    once the synthetic dictations became realistic long-form evaluations. None was reachable with
+    the short dictations the corpus used before — they only appear in prose a real PT would speak.
+    """
+
+    def test_plan_of_treatment_does_not_bill_its_listed_approaches(self):
+        """A FOUR-CODE overbill on an evaluation. Same class as record 108's "Interventions
+        planned include", different wording, and it fired on every long-form eval."""
+        draft = billing.extract(
+            "Right shoulder initial evaluation. Referring diagnosis right impingement syndrome. "
+            "Plan of treatment, treatment approaches include therapeutic exercise, neuromuscular "
+            "re-education, manual therapy for range of motion, and therapeutic activities."
+        )
+        self.assertEqual(draft.billable, ())
+        for code in ("97110", "97112", "97140", "97530"):
+            with self.subTest(code=code):
+                self.assertEqual(_status(draft, code), PLANNED)
+
+    def test_a_symptom_code_is_suppressed_when_a_real_diagnosis_is_present(self):
+        """ICD-10-CM: code the established diagnosis, not its symptoms. A long-form dictation
+        names the symptom repeatedly ("Chief complaint, ... shoulder pain", "Assessment summary,
+        patient presents with shoulder pain") while the diagnosis is stated once — 152 false
+        positives across the sweep, ICD precision 64%."""
+        draft = billing.extract(
+            "Left shoulder. Referring diagnosis is left adhesive capsulitis. Assessment summary, "
+            "patient presents with left shoulder pain and decreased range of motion."
+        )
+        codes = {c.code for c in draft.icd_candidates}
+        self.assertIn("M75.02", codes)
+        self.assertNotIn("M25.512", codes, "a duplicate claim line for the symptom")
+
+    def test_a_symptom_code_survives_when_it_is_all_that_was_said(self):
+        """The other direction: suppressing it unconditionally would throw away the only honest
+        code available when the therapist named no definitive diagnosis."""
+        draft = billing.extract("Left shoulder. Referring diagnosis is left shoulder pain.")
+        self.assertIn("M25.512", {c.code for c in draft.icd_candidates})
+
+    def test_bilaterally_as_a_findings_qualifier_is_not_the_diagnosis_laterality(self):
+        """"grip five out of five bilaterally" was read as the DIAGNOSIS's side. Doubly wrong:
+        most families have no bilateral code, so `code_for` returned BOTH sides and emitted two
+        false codes for a condition the therapist never lateralised."""
+        draft = billing.extract(
+            "Low back. Referring diagnosis is sciatic pain. Strength, hip abduction four out of "
+            "five bilaterally, Spurling test negative bilaterally."
+        )
+        codes = {c.code for c in draft.icd_candidates}
+        self.assertEqual(codes, {"M54.30"}, "one unspecified-side code, not right AND left")
+
+    def test_a_genuinely_bilateral_diagnosis_still_yields_both_sides(self):
+        draft = billing.extract("Shoulder. Referring diagnosis is bilateral adhesive capsulitis.")
+        self.assertEqual({c.code for c in draft.icd_candidates}, {"M75.01", "M75.02"})
+
+
+class GeneratorIntegrityTests(unittest.TestCase):
+    def test_every_paraphrase_bank_entry_is_a_tuple_not_a_string(self):
+        """A single-element entry written `("capsulitis")` is a STRING, and `rng.choice` on a
+        string picks one CHARACTER — the spoken diagnosis became "s" and the gold label became
+        "Bilateral s". Six entries were corrupted this way when paraphrases were purged."""
+        from evals.synth import banks
+        for key, value in banks.DIAGNOSIS_PARAPHRASES.items():
+            with self.subTest(key=key):
+                self.assertIsInstance(value, tuple, f"{key} lost its trailing comma")
+                for phrase in value:
+                    self.assertGreater(len(phrase), 2, f"{key} contains a single character")
+        for code, value in banks.INTERVENTION_SPOKEN.items():
+            with self.subTest(code=code):
+                self.assertIsInstance(value, tuple)
+
+
+class MutualExclusivityAndLateralityScopeTests(unittest.TestCase):
+    """Three defects found by re-running the sweep on a freshly re-seeded corpus (a
+    GENERATOR_VERSION bump redraws every sample), so they were not artifacts of the seeds the
+    earlier fixes had been tuned against.
+
+    All three are WRONG-CLAIM defects — a code on the draft that a coder would have to remove —
+    which is the class rule 12 exists to prevent.
+    """
+
+    def test_one_condition_stated_twice_at_two_precisions_yields_one_code(self):
+        """M48.062 ("with neurogenic claudication") and M48.061 ("without") are mutually
+        exclusive: a patient cannot have both, so billing both is a duplicate claim line.
+
+        The per-clause `break` does not cover this. A long dictation states the diagnosis more
+        than once at different precision — the full phrase in the referral, the bare phrase in
+        the assessment — which is two clauses and so two codes.
+        """
+        draft = billing.extract(
+            "Referring diagnosis lumbar spinal stenosis with neurogenic claudication. "
+            "Assessment summary, findings are consistent with spinal stenosis."
+        )
+        codes = [c.code for c in draft.icd_candidates]
+        self.assertEqual(codes, ["M48.062"], "the more specific variant must win, alone")
+
+    def test_lumbago_with_sciatica_supersedes_bare_sciatica(self):
+        """Same family mechanism on the other lumbar pair, where the generic cue ("sciatica") is
+        a literal substring of the specific one ("lumbago with sciatica")."""
+        draft = billing.extract(
+            "Referring diagnosis lumbago with sciatica. Assessment, sciatica is the primary driver."
+        )
+        codes = [c.code for c in draft.icd_candidates]
+        self.assertEqual(len(codes), 1, f"expected one sciatica-family code, got {codes}")
+        self.assertTrue(codes[0].startswith("M54.4"),
+                        f"the specific 'lumbago with sciatica' code must win, got {codes[0]}")
+
+    def test_a_side_far_from_the_diagnosis_does_not_lateralise_it(self):
+        """The laterality fallback used to scan the WHOLE transcript. That was defensible at
+        35-120 words, where a lone side mention almost certainly was the diagnosis. In a
+        ~1,000-word intake a side is stated constantly in places that say nothing about which
+        side the DIAGNOSIS is, and the fallback promoted the first one — turning an unspecified
+        sciatica (M54.30) into a confident right-sided claim (M54.31).
+
+        Rule 12: an unstated side yields the unspecified code plus a gap flag, never a guess.
+        """
+        draft = billing.extract(
+            "Referring diagnosis sciatica with lumbar involvement. "
+            "On examination the right straight leg raise was negative, right grip was intact, "
+            "and right ankle dorsiflexion strength was five out of five."
+        )
+        codes = [c.code for c in draft.icd_candidates if c.code.startswith("M54.3")]
+        self.assertEqual(codes, ["M54.30"], "unspecified, not the side mentioned in the exam")
+
+    def test_a_side_stated_beside_the_diagnosis_still_lateralises_it(self):
+        """The other half, and the reason the fix is a WINDOW rather than diagnosis-clauses-only.
+        A side is very often a bare fragment next to the diagnosis, carrying no diagnosis context
+        of its own; scoping to diagnosis clauses alone silently dropped it."""
+        draft = billing.extract("Left knee. Diagnosis is degenerative knee.")
+        self.assertTrue(draft.icd_candidates, "a diagnosis should still be found")
+        self.assertEqual(draft.icd_candidates[0].laterality, "left")
+
+
+class IntakeGeneratorFidelityTests(unittest.TestCase):
+    """The generator must not assert a diagnosis the gold label does not carry.
+
+    `intake.py` hardcoded "patient presents with {part} pain" in the assessment summary — a
+    diagnosis-FRAMING clause. For a patient whose diagnosis was stiffness, that put a pain
+    diagnosis in the transcript, so the extractor read it correctly and was scored as a false
+    positive for doing the right thing. Ten of the corpus's remaining ICD false positives were
+    this one generator bug across three regions.
+
+    Rule 21: when the score looks wrong, check the labels before the cue table.
+    """
+
+    def test_a_stiffness_diagnosis_never_speaks_a_pain_diagnosis(self):
+        from evals.synth import generate as synth
+
+        checked = 0
+        for part in ("knee", "hip", "ankle", "shoulder"):
+            for cx in ("low", "medium", "high"):
+                for s in synth.generate_corpus(body_part=part, note_type="initial",
+                                               count=8, complexity=cx, seed=7777):
+                    if "stiff" not in s.diagnosis.lower() and "motion" not in s.diagnosis.lower():
+                        continue
+                    checked += 1
+                    got = {c.code for c in billing.extract(s.transcript).icd_candidates}
+                    with self.subTest(part=part, said=s.diagnosis):
+                        self.assertFalse(got - set(s.icd_codes),
+                                         f"extra code(s) {sorted(got - set(s.icd_codes))} "
+                                         f"for a stiffness diagnosis")
+        self.assertGreater(checked, 0, "no stiffness samples drawn — the guard is not exercising")

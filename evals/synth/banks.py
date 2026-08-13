@@ -230,7 +230,7 @@ def technique_detail(body_part: str, code: str) -> tuple[str, ...]:
 DIAGNOSIS_PARAPHRASES: dict[tuple[str, str], tuple[str, ...]] = {
     # --- shoulder
     ("shoulder", "rotator cuff tendinopathy"): ("torn rotator cuff", "cuff tear", "RCT"),
-    ("shoulder", "adhesive capsulitis"): ("capsulitis"),
+    ("shoulder", "adhesive capsulitis"): ("capsulitis",),
     ("shoulder", "impingement syndrome"): ("impingement", "subacromial pain syndrome"),
     ("shoulder", "bicipital tendinitis"): ("long head biceps tendinopathy", "biceps tendonosis"),
     ("shoulder", "slap tear"): ("superior labrum tear", "labral pathology"),
@@ -238,8 +238,8 @@ DIAGNOSIS_PARAPHRASES: dict[tuple[str, str], tuple[str, ...]] = {
     # --- knee
     ("knee", "anterior cruciate ligament tear"): ("blown ACL", "anterior cruciate rupture",
                                                   "ACL deficiency"),
-    ("knee", "medial meniscus tear"): ("meniscal injury"),
-    ("knee", "patellofemoral pain syndrome"): ("PFPS"),
+    ("knee", "medial meniscus tear"): ("meniscal injury",),
+    ("knee", "patellofemoral pain syndrome"): ("PFPS",),
     ("knee", "primary osteoarthritis of the knee"): ("degenerative knee", "wear and tear in the knee",
                                                      "tricompartmental OA"),
     ("knee", "total knee arthroplasty"): ("new knee", "knee replacement surgery"),
@@ -262,15 +262,15 @@ DIAGNOSIS_PARAPHRASES: dict[tuple[str, str], tuple[str, ...]] = {
     ("cervical", "cervical disc herniation"): ("slipped disc in the neck", "disc bulge in the neck"),
     ("cervical", "cervicogenic headache"): ("headaches coming from the neck", "neck related headache"),
     # --- hip
-    ("hip", "trochanteric bursitis"): ("GTPS"),
+    ("hip", "trochanteric bursitis"): ("GTPS",),
     ("hip", "primary osteoarthritis of the hip"): ("degenerative hip", "arthritic hip", "worn hip"),
     ("hip", "femoroacetabular impingement"): ("cam impingement", "pincer impingement"),
     ("hip", "total hip arthroplasty"): ("new hip", "hip replacement surgery"),
     ("hip", "hip labral tear"): ("torn labrum in the hip", "acetabular labrum injury"),
-    ("hip", "iliotibial band syndrome"): ("ITB friction syndrome"),
+    ("hip", "iliotibial band syndrome"): ("ITB friction syndrome",),
     # --- ankle / foot
     ("ankle", "ankle sprain"): ("rolled ankle", "inversion injury", "turned his ankle"),
-    ("ankle", "plantar fasciitis"): ("plantar heel pain"),
+    ("ankle", "plantar fasciitis"): ("plantar heel pain",),
     ("ankle", "achilles tendinitis"): ("achilles tendinosis", "tendinopathy of the achilles"),
     ("ankle", "posterior tibial tendon dysfunction"): ("PTTD", "post tib dysfunction"),
     ("ankle", "osteoarthritis of the ankle"): ("degenerative ankle", "arthritic ankle"),
@@ -411,12 +411,132 @@ VOICES: tuple[dict[str, str], ...] = (
 )
 
 VISIT_TYPES: dict[str, tuple[str, ...]] = {
+    # No post-op variant here: the intake block renders a GRADUAL onset, and "post-op week 4"
+    # alongside "onset was gradual about two months ago" is a contradiction a clinician spots
+    # instantly. Post-surgical evals need their own onset story before that variant comes back.
     "initial": ("Initial Evaluation", "Initial evaluation, new patient",
-                "Initial Evaluation, post-op week 4"),
+                "Initial Evaluation, new referral"),
     "followup": ("Follow-up, week 3", "Follow-up visit", "Follow-up, week 6",
                  "Follow-up, post-op week 8"),
 }
 
 FRACTIONS: tuple[tuple[str, float], ...] = (
     ("a third", 1 / 3), ("a half", 1 / 2), ("a quarter", 1 / 4), ("two thirds", 2 / 3),
+)
+
+
+# ==================================================================================
+# Initial-evaluation intake
+# ==================================================================================
+# An INITIAL EVAL is not a short follow-up with a different title. `templates/initial.md` asks for
+# ~17 fields — medications, allergies, past medical history, social history and living
+# environment, prior level of function, ROM and strength by region, goals, plan of treatment — and
+# a dictation that contains none of them leaves the 4B model to invent them all. Observed on the
+# first demo seed: the model wrote "Ibuprofen 400mg, twice daily" and "no known drug allergies"
+# for a dictation that mentioned neither. That is CLAUDE.md rule 19 (completeness over-read as
+# "every section must be filled") firing because the SOURCE was empty, and rule 15's fix applies
+# in reverse — the template was fine; the dictation had nothing to put in it.
+#
+# These banks give an initial-eval dictation real intake to be extracted FROM, so the note is
+# filled from stated facts and the gap flags mean something.
+
+MEDICATIONS: tuple[str, ...] = (
+    "lisinopril ten milligrams daily", "metformin five hundred milligrams twice a day",
+    "atorvastatin twenty milligrams at bedtime", "levothyroxine eighty-eight micrograms daily",
+    "amlodipine five milligrams daily", "ibuprofen two hundred milligrams as needed for pain",
+    "acetaminophen one thousand milligrams three times a day as needed",
+    "omeprazole twenty milligrams daily", "sertraline fifty milligrams daily",
+    "apixaban five milligrams twice a day", "gabapentin three hundred milligrams at night",
+    "a daily multivitamin", "vitamin D two thousand units daily",
+)
+
+ALLERGIES: tuple[str, ...] = (
+    "No known drug allergies", "Allergic to penicillin, it gives her a rash",
+    "Allergic to sulfa drugs", "No known drug allergies except codeine, which makes him nauseous",
+    "Allergic to latex",
+)
+
+PAST_MEDICAL_HISTORY: tuple[str, ...] = (
+    "hypertension", "type two diabetes", "high cholesterol", "hypothyroidism",
+    "atrial fibrillation", "asthma", "osteoarthritis in the other knee", "chronic kidney disease",
+    "a prior back surgery", "depression", "obstructive sleep apnea",
+)
+
+SOCIAL_HISTORY: tuple[str, ...] = (
+    "Lives alone in a single story home with one step to enter",
+    "Lives with {poss} spouse in a two story home, bedroom upstairs, fourteen steps with a rail",
+    "Lives with {poss} spouse in a ranch home, no steps to enter",
+    "Lives alone in a second floor apartment with no elevator",
+    "Lives with {poss} daughter who assists with meals and transport",
+)
+
+# {Subj}/{subj}/{poss} are filled from the sample's single VOICE — a note that says "She works
+# from home" and then "He was independent" is a generator artifact no therapist produces.
+OCCUPATION: tuple[str, ...] = (
+    "{Subj} works part time as a cashier",
+    "{Subj} is retired, previously a high school teacher",
+    "{Subj} works from home at a desk",
+    "{Subj} is a delivery driver, currently on modified duty",
+    "{Subj} is a nurse and is on {poss} feet all shift",
+    "{Subj} is retired and volunteers twice a week",
+)
+
+# Region-neutral: "stopped doing anything overhead" is a shoulder story and read as nonsense on a
+# knee patient.
+PRIOR_LEVEL_OF_FUNCTION: tuple[str, ...] = (
+    "Prior level of function was fully independent, walking in the community without a device",
+    "Prior level of function independent, {subj} walked about a mile a day for exercise",
+    "Prior level of function independent with all activities of daily living",
+    "{Subj} was independent but had been limiting activity for about a year because of this",
+)
+
+PATIENT_GOALS: dict[str, tuple[str, ...]] = {
+    "shoulder": ("reach the overhead cabinets", "sleep on that side again", "get back to swimming"),
+    "knee": ("get up and down the stairs without the rail", "return to walking the dog",
+             "kneel in the garden again"),
+    "lumbar": ("sit through a full workday", "lift her grandchild", "get back to the gym"),
+    "cervical": ("drive and check the blind spot comfortably", "work at the computer without headaches"),
+    "hip": ("get in and out of the car easily", "walk to the shops without stopping"),
+    "ankle": ("get back to running", "stand a full shift at work", "walk on uneven ground safely"),
+}
+
+# ROM and strength phrased the way a therapist dictates them, per region. The numbers are real
+# values the note must carry through, and the verification layer anchors against them.
+OBJECTIVE_BY_PART: dict[str, tuple[str, ...]] = {
+    "shoulder": ("Right shoulder active flexion one hundred ten degrees, abduction ninety degrees, "
+                 "external rotation forty degrees, left side is full",
+                 "Strength, shoulder flexion four minus out of five, abduction three plus out of five",),
+    "knee": ("Knee active range five to ninety degrees, extension lacking five degrees",
+             "Strength, quadriceps three plus out of five, hamstrings four out of five",),
+    "lumbar": ("Lumbar flexion limited to fingertips at the knees, extension twenty degrees",
+               "Strength, hip abduction four out of five bilaterally, straight leg raise sixty degrees",),
+    "cervical": ("Cervical rotation sixty degrees to the right and fifty to the left",
+                 "Strength, deep neck flexor endurance twelve seconds",),
+    "hip": ("Hip flexion ninety degrees, internal rotation fifteen degrees",
+            "Strength, hip abduction three plus out of five on the involved side",),
+    "ankle": ("Ankle dorsiflexion five degrees on the involved side, fifteen on the other",
+              "Strength, ankle eversion four minus out of five",),
+}
+
+PAIN_REPORTS: tuple[str, ...] = (
+    "Pain is worst seven out of ten, best two out of ten, currently four out of ten",
+    "Pain worst eight out of ten, best three out of ten, current six out of ten",
+    "Pain is worst five out of ten, best one out of ten, currently three out of ten",
+)
+
+FALL_RISK: tuple[str, ...] = (
+    "No falls in the past year", "One fall about eight months ago in the bathroom, no injury",
+    "No falls, but {subj} reports feeling unsteady on uneven ground",
+)
+
+PLAN_OF_TREATMENT: tuple[str, ...] = (
+    "Plan is twice a week for six weeks, forty-five minutes a session, certification period sixty days",
+    "Plan is three times a week for eight weeks, sixty minutes a session, certification period sixty days",
+    "Plan is twice a week for twelve weeks, forty-five minutes a session, certification period sixty days",
+)
+
+ASSESSMENT_LINES: tuple[str, ...] = (
+    "Assessment is that skilled physical therapy is medically necessary, rehab potential is good",
+    "Clinical complexity is moderate given the comorbidities, rehab potential is good",
+    "Skilled PT medically necessary for strength and mobility deficits limiting function",
 )
