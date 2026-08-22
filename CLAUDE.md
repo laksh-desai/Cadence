@@ -725,3 +725,158 @@ correction to the rules above so it persists.
     rule 21's "check the gold labels before touching the cue table" recurring on the RENDERING side
     rather than the label side, and it is why the sweep prints the spoken diagnosis beside every
     mismatch — a bare count of false positives would have sent the fix to the wrong file.
+
+---
+
+## Where things stand, and the honest next steps (as of 2026-08-21)
+
+Written at a context reset so a cold session can pick up without re-deriving any of it. **Re-verify
+the dates and numbers before trusting this** — if the git log has moved well past `e655af5`, treat
+this section as history rather than status.
+
+### What is BUILT (feature inventory)
+
+Everything below is implemented and working locally unless marked otherwise. Sections above this
+one carry the reasoning; this is the flat list.
+
+**Input — four modalities, all on-device** (`app/ui/static/app.js`)
+- Free-text dictation box (the default).
+- Mic dictation -> local MedASR (`setupDictation`, `/api/transcribe`).
+- Audio-file upload (`setupAudioUpload`).
+- Live in-session capture (`setupLiveCapture`): continuous recording, auto-chunked into ~3-min
+  segments, a single serialized MedASR worker so the CPU budget holds; recording never blocks on
+  transcription. v1 has NO speaker diarization and needs patient consent — both documented, not bugs.
+- **Guided dictation**: walks the clinician through the selected form section by section with a
+  concrete example each. Content lives in each template's `steps:` frontmatter. Invariant: `steps`
+  are an input aid and NEVER enter the generation prompt (`tests/test_forms_guide.py`).
+
+**Generation** (`app/generate/`)
+- MedGemma 4B via Ollama, CPU-only, `num_ctx=8192` / `num_predict=3072` (rule 16).
+- The template's outline body IS the generation spec, so editing a template changes the prompt.
+- `chunked.fit_dictation` condenses an over-long dictation at sentence boundaries; a normal-length
+  one is returned byte-identical with zero extra model calls.
+- `prompt.clean_dictation` strips vocalized pauses deterministically at the single chokepoint.
+- **Deterministic postprocess backstops** (`postprocess.apply`, in order): carry-instruction heading
+  strip -> `strip_spec_instruction_headings` -> `split_folded_headings` -> zero-minute section drop
+  -> `enforce_carry_tags` -> `flag_template_echo` -> `flag_code_sections` / `flag_code_field_lines`
+  -> `normalize_strength_grades` -> `strip_checklist_affirmations`.
+- **Verification layer** (`traceability.add_verification_flags`), six fabrication/quality classes:
+  unanchored clinical values, unsupported normals, unsupported vitals, invented assistive devices,
+  cross-section paste-duplication, fabricated pain-slot scores. All FLAG, never delete.
+- **Carry-forward** for Follow-Up Visits, with a body-scan fallback so it survives block-format or a
+  model regression that folds a note.
+
+**Billing** (`billing.py`, `cpt.py`, `coding_tables.py`) — the model never authors a code
+- CPT suggestion from the note's own treatment HEADINGS (deterministic table).
+- CPT + ICD extraction from the DICTATION, guarded four ways: clause-scoped matching, strong/weak
+  cue tiers, a status enum (`performed | negated | prior_visit | planned | home_program |
+  uncertain`) that excludes with a visible reason, and `confirm_required=True` on every path.
+- ICD-10 from **six per-body-part closed tables** (shoulder, knee, lumbar, cervical, hip,
+  ankle/foot), matched only in a diagnosis-framing clause, never a hedged one; laterality only from
+  what was said; symptom codes suppressed when a definitive diagnosis exists; mutually exclusive
+  variants collapsed; body part resolved from the diagnosis clause when the transcript ties.
+- **8-minute rule units over TIMED codes only**, returning BOTH CMS substitution and the AMA rule of
+  eights with the disagreement shown, plus `units_if_confirmed`.
+- `billing.reconcile` cross-checks the note against the dictation and raises `dictation_only` gaps.
+- Billing is response metadata, never a note section, and is computed even when the model returns
+  an unparseable note.
+
+**Templates** (`forms.py` + Templates tab) — runtime editable
+- 3 built-ins (`initial`, `initial_updated`, `followup`); create / duplicate / edit / reset /
+  delete; built-in edits stored as spec-only overrides so shipped files stay pristine.
+
+**Storage** (`app/storage/`)
+- Fernet-encrypted SQLite, decrypt-to-temp on start / re-encrypt on write.
+- Cross-process PID lock + `(mtime, size)` staleness guard — two writers would otherwise be
+  last-writer-wins over the WHOLE database.
+- `synthetic` column on patients AND notes so demo rows are precisely removable.
+- **Correction capture** (rule 22): `original_sections_json`, `revise_instructions_json`,
+  `edited_section_count` (NULL = not captured, 0 = accepted as generated), plus generation
+  provenance. Write-only; deliberately NOT on the HTTP read surface.
+
+**UI** (`app/ui/`)
+- Patient roster, per-section review and edit, nothing persisted until Save.
+- Amber gap chips (`[[NEEDS: …]]`) and blue code chips (`[[CPT: …]]`).
+- **"Copy for Office Ally"** — buckets any note's sections into Subjective/Objective/Assessment/Plan
+  for one-click paste.
+- Templates tab; Evals tab (run sweeps, read recorded results).
+
+**Evaluation and QA**
+- `evals/synth/`: label-first seeded generator, 6 regions, short follow-ups AND ~1,000-word
+  long-form intakes (`intake.py`), with a DELIBERATE paraphrase gap so recall stays honest.
+- 18 hand-written control records — the only non-circular check (gold labels still unverified).
+- Scored harness + timestamped results store + `eval_compare.py`; `--no-generate` records a
+  billing sweep in seconds with no model call.
+- `scripts/audit_notes.py`: measures generated notes against their dictations for DROPPED and
+  INVENTED facts, no LLM judge.
+- **633 tests.**
+
+**Ops / tooling**
+- `launcher.py` (desktop shortcut), `setup.ps1`, `scripts/backup.py`, `scripts/seed_demo_data.py`,
+  `scripts/verify_pipeline.py`, `scripts/verify_transcription.py`, `scripts/validate_quality.py`.
+- Google Sheets roster sync — code-complete, **blocked** on Cloud project permissions.
+
+### What is measured and green
+
+- **633 tests, exactly one failing**, and that one fails on purpose: the billing sign-off gate.
+- **Billing extraction**, 1,440 synthetic cases over 5 seeds: ICD precision **99.2%**, recall
+  **97.5%**; CPT precision **100%**, auto-billed 84%, surfaced 100%. **Zero** CPT false positives,
+  laterality errors, distractor leaks, fabricated minutes, or overstated units.
+- **162-record corpus** (`scripts/eval_corpus.py --no-generate`, seconds, no model needed):
+  synthetic ICD r92%/p100%, hand-written control ICD r93%/p100%, CPT 100%/100% on the control.
+  Per rule 21(c) the synthetic set scoring BELOW the control is the intended direction.
+- **Note generation**, 18 real MedGemma notes via `scripts/audit_notes.py`: 61 medications named,
+  **61 traceable, 0 invented, 0 dropped**; 0 folded headings; 8 invented assistive devices, all 8
+  caught by the rule-20 layer.
+- 8 sweeps recorded in `evals/results/` and visible in the Evals tab.
+
+### The three things that actually matter next
+
+**1. Nothing here has met a real user, and that is now the binding constraint.** Every number above
+is self-referential: a corpus written by the same author as the extractor, scored against gold
+labels hand-read by that author. The 18-record hand-written control is the only non-circular check
+and shares the same author. **One real dictation from the clinician, on the target ThinkPad, run
+end to end, tests more than another 10,000 synthetic cases** — MedASR against a real voice and a
+non-native accent, how a PT actually structures speech, note quality, and the UX, all at once.
+Every structural defect found this session came from the hand-written control precisely because a
+template generator cannot invent phrasings nobody gave it. Do this before writing more eval code.
+
+**2. Generation is 3-5x over its stated time budget, and nobody had noticed.** CLAUDE.md budgets
+~1-2 minutes per note. Measured across **21 real generations on the DEV box**: median **7.0 min**,
+range **4.6-9.5 min**, and **21 of 21 exceeded the budget**. The target i5-8365U is SLOWER than the
+box those numbers came from. Critically, the 4.6-minute floor was a **91-word follow-up**, so this
+is not the long-form intake work (rule 15/16) — generation time is driven by OUTPUT length and
+template size, not input length. A therapist between patients will not wait seven minutes. This
+needs a product decision, not more accuracy work: accept it as a queued background job, cut
+`num_predict`, or generate per-section. Measure on the ThinkPad before choosing.
+
+**3. The ICD tables are unverified, which blocks billing entirely.** Six regions (~70 codes) plus
+all 18 control records: `TABLE_PROVENANCE.verified_by` and `gold_provenance.verified_by` are blank
+everywhere. `tests/test_billing_extract.py` fails while they are, deliberately, so it cannot be
+forgotten. **This is not a code task** — it needs a certified coder or the clinician with the
+ICD-10-CM tabular list. Until then every chip is one author's reading of the codebook, and rule 12
+exists because a confidently-wrong code is worse than no code.
+
+### What to STOP doing
+
+**The synthetic billing sweeps are saturated.** 99.2% precision, and all 12 remaining false
+positives are the BY-DESIGN rule-21(a) paraphrase gap ("new hip" must keep colliding with "new hip
+pain"). More seeds now measure less. Resist the pull of another harness improvement over getting a
+real dictation — that is avoidance wearing the clothes of rigor. Worth remembering as a caution:
+`scripts/audit_notes.py` shipped with three bugs of its own and its first "honest" reading was 15
+dropped medications when the true answer was 0 (rule 24).
+
+### Loose ends, ranked
+
+1. **Demo roster is 3 of 18.** The previous 18 were `--clear`ed before a regeneration that was
+   stopped early to free the DB lock for the server. Re-run with `scripts/seed_demo_data.py`
+   (`--clear` first to avoid duplicating the 3), ~90 min, and **close the app first** — the lock in
+   `app/storage/db.py` will refuse otherwise, which is the point.
+2. **Chunked generation (rule 16) still never validated** on a genuinely long real transcript.
+3. **`initial_updated` still uses the block format** that the 4B model folds unpredictably.
+4. **Google Sheets sync** is code-complete but blocked on Cloud project permissions
+   (`docs/google-sheets-sync-setup.md`).
+5. **The backup routine** (`scripts/backup.py`) has never been exercised on the target machine.
+
+The single next action, if only one: **record one real session on the ThinkPad and run it through.**
+It will reorder everything above it.
