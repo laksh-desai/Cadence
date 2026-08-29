@@ -69,32 +69,46 @@ class FitDictationTests(unittest.TestCase):
     def test_long_dictation_is_condensed(self):
         gen = _StubGen(lambda p: "CONDENSED")
         long = "Sentence one is here. Sentence two is here. Sentence three is here."
-        text, condensed, over = asyncio.run(chunked.fit_dictation(long, self.TINY_BUDGET_OVERHEAD, gen))
+        text, condensed, over = asyncio.run(chunked.fit_dictation(long, self.TINY_BUDGET_OVERHEAD, gen, enabled=True))
         self.assertTrue(condensed)
         self.assertGreaterEqual(len(gen.calls), 1)
         self.assertIn("CONDENSED", text)
 
     def test_condense_prompt_carries_the_chunk_text(self):
         gen = _StubGen(lambda p: "ok")
-        asyncio.run(chunked.fit_dictation("Patient walked a long way today and more.", self.TINY_BUDGET_OVERHEAD, gen))
+        asyncio.run(chunked.fit_dictation("Patient walked a long way today and more.", self.TINY_BUDGET_OVERHEAD, gen, enabled=True))
         self.assertIn("Patient walked a long way today", gen.calls[0])
 
     def test_still_over_true_when_condense_does_not_shrink_enough(self):
         gen = _StubGen(lambda p: "x" * 400)  # condensed output still large
-        _, condensed, over = asyncio.run(chunked.fit_dictation("a" * 400, self.TINY_BUDGET_OVERHEAD, gen))
+        _, condensed, over = asyncio.run(chunked.fit_dictation("a" * 400, self.TINY_BUDGET_OVERHEAD, gen, enabled=True))
         self.assertTrue(condensed)
         self.assertTrue(over)
 
     def test_still_over_false_when_condense_shrinks_below_budget(self):
         gen = _StubGen(lambda p: "tiny")
-        _, condensed, over = asyncio.run(chunked.fit_dictation("a" * 400 + ".", self.TINY_BUDGET_OVERHEAD, gen))
+        _, condensed, over = asyncio.run(chunked.fit_dictation("a" * 400 + ".", self.TINY_BUDGET_OVERHEAD, gen, enabled=True))
         self.assertTrue(condensed)
         self.assertFalse(over)
+
+    def test_over_budget_is_NOT_condensed_by_default(self):
+        """The default changed after the A/B (CLAUDE.md rule 16): condensing lost to plain
+        truncation 18/78 vs 59/78, and its second attempt FABRICATED — five specific dictated
+        goals came back as five generic invented ones, which no verification layer can catch
+        because the note ends up with fewer values rather than invented ones. Truncation loses
+        the tail VISIBLY and cannot invent, so it is the better failure."""
+        gen = _StubGen(lambda p: "SHOULD-NOT-BE-CALLED")
+        long = "Sentence one is here. Sentence two is here. Sentence three is here."
+        text, condensed, over = asyncio.run(chunked.fit_dictation(long, self.TINY_BUDGET_OVERHEAD, gen))
+        self.assertEqual(text, long, "the raw dictation must be passed through untouched")
+        self.assertFalse(condensed)
+        self.assertTrue(over, "still_over must be True so the caller warns the clinician")
+        self.assertEqual(gen.calls, [], "no second model call may run on clinical content")
 
     def test_empty_condense_falls_back_to_raw_dictation(self):
         # Model returns nothing for every chunk -> must NOT feed an empty dictation to generation.
         gen = _StubGen(lambda p: "")
-        text, condensed, over = asyncio.run(chunked.fit_dictation("A long dictation here.", self.TINY_BUDGET_OVERHEAD, gen))
+        text, condensed, over = asyncio.run(chunked.fit_dictation("A long dictation here.", self.TINY_BUDGET_OVERHEAD, gen, enabled=True))
         self.assertEqual(text, "A long dictation here.")  # fell back to the raw dictation
         self.assertTrue(condensed)                         # still flagged so the clinician is warned
         self.assertTrue(over)

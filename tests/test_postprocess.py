@@ -364,6 +364,40 @@ class HeadingFoldRepairTests(unittest.TestCase):
                 secs = [_sec(heading, "")]
                 self.assertEqual(postprocess.split_folded_headings(secs), secs)
 
+    def test_a_value_folded_with_no_separator_at_all_is_split(self):
+        """Measured on 4 real Follow-Up generations (docs/synthetic-run-outputs-full.json runs
+        12-15): 3 of 4 folded the value onto the heading with NO punctuation between them and left
+        the body empty. The em/en dash requirement above missed every one, so three real notes
+        carried a blood pressure that `flag_unsupported_vitals` could not see and that
+        `renderEditView` gave the clinician no textarea to correct.
+        """
+        for heading, want_label, want_body in [
+            ("Vitals 122/76", "Vitals", "122/76"),
+            ("Vitals 72 bpm, 78/45", "Vitals", "72 bpm, 78/45"),
+            ("Pain - At Rest 1/10", "Pain - At Rest", "1/10"),
+            ("Therapeutic Exercise 20 minutes", "Therapeutic Exercise", "20 minutes"),
+        ]:
+            with self.subTest(heading=heading):
+                out = postprocess.split_folded_headings([_sec(heading, "")])[0]
+                self.assertEqual(out["heading"], want_label)
+                self.assertEqual(out["body"], want_body)
+
+    def test_a_numeric_label_is_not_cut_in_half(self):
+        """The cost of the rule above is that it reads NUMBERS as the boundary, so the real
+        outcome-measure labels that contain one have to survive it. They do, because none of them
+        is a number followed by a UNIT — which is what the value pattern actually requires."""
+        for heading in ("6-Minute Walk Test", "10 Meter Walk", "5 Times Sit to Stand",
+                        "Response to Treatment Good", "Section 2 Findings"):
+            with self.subTest(heading=heading):
+                secs = [_sec(heading, "")]
+                self.assertEqual(postprocess.split_folded_headings(secs), secs)
+
+    def test_a_populated_body_still_blocks_the_no_separator_split(self):
+        """Every fold repair requires an empty body — the value must have nowhere else to live.
+        A heading that repeats a value the body already states is untidy, not lost."""
+        secs = [_sec("Vitals 122/76", "BP was 122/76 at rest.")]
+        self.assertEqual(postprocess.split_folded_headings(secs), secs)
+
     def test_a_short_heading_the_split_cannot_parse_is_left_alone(self):
         """The truncation fallback exists for long folded prose. Applying it to a short label we
         simply couldn't parse would mangle a legitimate heading for no benefit."""

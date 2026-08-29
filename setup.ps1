@@ -15,7 +15,26 @@ device hardening in docs\device-safeguards-checklist.md before any real patient 
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$py  = Join-Path $root '.venv\Scripts\python.exe'
+
+# An INSTALLED Cadence lives at <install>ersions\<version>\, with the data, the shared venv and
+# the `current` junction one level up. Two things must NOT live inside the version folder:
+#
+#   * the venv - it is ~2 GB of torch, and rebuilding it on every update would make a five-minute
+#     patch a half-hour download;
+#   * the desktop shortcut's target - pointing it at this version means the clinician keeps
+#     launching the OLD one after every update, which is the kind of bug nobody reports because it
+#     looks like "the update did nothing".
+#
+# In a plain checkout both collapse back to the project folder, so development is unchanged.
+$installed = (Split-Path -Leaf (Split-Path -Parent $root)) -eq 'versions'
+if ($installed) {
+  $base       = Split-Path -Parent (Split-Path -Parent $root)
+  $launchRoot = Join-Path $base 'current'     # follows the junction, so it survives updates
+} else {
+  $base       = $root
+  $launchRoot = $root
+}
+$py  = Join-Path $base '.venv\Scripts\python.exe'
 $MODEL      = 'williamljx/medgemma-4b-it-Q4_K_M-GGUF'   # quality tier (docs/shipping.md)
 $FAST_MODEL = 'gemma2:2b'                                # optional Fast-draft tier
 
@@ -37,8 +56,8 @@ else { Ok "$ver" }
 # --- 2. venv + dependencies ---------------------------------------------------
 Section 'Virtual environment + dependencies'
 if(-not (Test-Path $py)){
-  Write-Host '  creating .venv ...'
-  & python -m venv (Join-Path $root '.venv')
+  Write-Host "  creating .venv at $base ..."
+  & python -m venv (Join-Path $base '.venv')
 }
 & $py -m pip install --upgrade pip | Out-Null
 Write-Host '  installing requirements (large: torch, transformers) ...'
@@ -86,14 +105,15 @@ Warn 'Restart Ollama now (quit the tray app and reopen) so the settings above ta
 
 # --- 6. Desktop shortcut ------------------------------------------------------
 Section 'Desktop shortcut'
-$pyw      = Join-Path $root '.venv\Scripts\pythonw.exe'
-$launcher = Join-Path $root 'launcher.py'
+$pyw      = Join-Path $base '.venv\Scripts\pythonw.exe'
+$launcher = Join-Path $launchRoot 'launcher.py'
 $lnk      = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Cadence.lnk'
 $ws = New-Object -ComObject WScript.Shell
 $sc = $ws.CreateShortcut($lnk)
 $sc.TargetPath       = $pyw
+# Via `current`, never this version folder - see the note at the top.
 $sc.Arguments        = "`"$launcher`""
-$sc.WorkingDirectory = $root
+$sc.WorkingDirectory = $launchRoot
 $sc.Description       = 'Cadence - local clinical note generator'
 $sc.Save()
 Ok "shortcut created: $lnk"

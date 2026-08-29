@@ -10,8 +10,10 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+from app import paths
+
 TRANSCRIBE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = TRANSCRIBE_DIR / "hf_config.yaml"
+CONFIG_PATH = paths.config_dir(TRANSCRIBE_DIR) / "hf_config.yaml"
 
 
 def load_hf_token() -> str | None:

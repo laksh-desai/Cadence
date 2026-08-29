@@ -44,6 +44,21 @@
       signal: AbortSignal.timeout(30*60*1000),
     });
   }
+  // Background generation queue. A note is 5-9 minutes on this hardware, so it runs on the SERVER
+  // and the browser just watches: enqueue, then poll by cursor. Closing the tab, switching
+  // patients, or reloading no longer kills the note.
+  async function enqueueGeneration(payload){
+    const r=await fetch("/api/generate/jobs",{
+      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+    if(!r.ok){ const b=await r.json().catch(()=>({})); throw new Error(b.detail||"Could not start the note."); }
+    return r.json();
+  }
+  async function listJobs(){ const r=await fetch("/api/generate/jobs"); return r.ok ? r.json() : []; }
+  async function tailJob(id, cursor){
+    const r=await fetch(`/api/generate/jobs/${id}?cursor=${cursor|0}`);
+    return r.ok ? r.json() : null;
+  }
+  async function cancelJob(id){ await fetch(`/api/generate/jobs/${id}`,{method:"DELETE"}); }
   // Streaming generate: reads newline-delimited JSON events from /api/generate/stream and fans them
   // out to callbacks. The note is watched live as the model writes it, so a long generation is never
   // a blank wait and is never lost to a timeout (data flows the whole time). 30-min ceiling matches
@@ -127,7 +142,13 @@
   function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
   function withGaps(s){ return esc(s)
     .replace(/\[\[NEEDS:\s*([^\]]+)\]\]/g,'<span class="gap">⌖ $1</span>')
-    .replace(/\[\[CPT:\s*([^\]]+)\]\]/g,'<span class="code">CPT · $1</span>'); }
+    // A chip still carrying "— confirm" is an open question; once the clinician decides, the
+    // suffix is dropped and the chip renders as settled. The marker text IS the state — there is
+    // no parallel bookkeeping to fall out of sync with what the saved note actually says.
+    .replace(/\[\[CPT:\s*([^\]]+)\]\]/g, (m, inner)=>
+      /—\s*confirm\s*$/.test(inner)
+        ? '<span class="code">CPT · '+inner+'</span>'
+        : '<span class="code code-ok">✓ CPT · '+inner+'</span>'); }
   // Count the amber [[NEEDS:...]] flags (model gaps + verification-layer fabrication/verify flags)
   // sitting INSIDE section bodies, so the save hint reflects them too — a note can have
   // missing_info: none yet still carry inline flags, and "Looks complete" would then mislead.
@@ -151,13 +172,86 @@
                       home_program:"home program", uncertain:"needs confirming"};
   // The rich card: the server's deterministic draft from the DICTATION — codes, per-intervention
   // minutes, both unit methods, and the excluded lines with their reasons.
-  function billingDraftHTML(b){
+  // ---------- CPT code decisions ----------
+  // `confirm_required=True` has always been true of the DATA; until now there was nowhere to
+  // actually do the confirming, so every code reached Save still marked "— confirm" and the
+  // decision happened in the clinician's head or in Office Ally. Each decision rewrites the
+  // [[CPT: ...]] marker inside the section body, which means the NOTE is the record of what was
+  // decided — nothing to persist separately, and a saved note cannot disagree with the card.
+  const CPT_MARKER_RE = /\[\[CPT:\s*([^\]]+)\]\]/g;
+
+  function codeDecision(r, code){ return (r.codeDecisions||{})[code] || {state:"pending"}; }
+
+  function rewriteCptMarkers(sections, code, state, replacement){
+    return (sections||[]).map(sec=>{
+      const body=(sec.body||"").replace(CPT_MARKER_RE, (marker, inner)=>{
+        if(inner.trim().indexOf(code)!==0) return marker;      // a different code's chip
+        if(state==="removed" && !replacement) return "";
+        const label=inner.replace(/\s*—\s*confirm\s*$/,"").replace(/^\S+\s*/,"").trim();
+        if(state==="removed" && replacement){
+          // A clinician-assigned code carries no table label — Cadence must not invent one for a
+          // code it did not choose.
+          return "[[CPT: "+replacement+" — clinician-assigned]]";
+        }
+        return "[[CPT: "+code+(label?" "+label:"")+"]]";       // confirmed: drop the question
+      });
+      // Collapse the double space a removed marker leaves mid-sentence.
+      return {...sec, body: body.replace(/[ \t]{2,}/g," ").replace(/\s+$/,"")};
+    });
+  }
+
+  function setCodeDecision(r, code, state, replacement){
+    r.codeDecisions = r.codeDecisions || {};
+    if(state==="pending"){
+      // Undo has to restore the "— confirm" suffix, or an un-decided line would still read as
+      // settled in the note.
+      r.sections = (r.sections||[]).map(sec=>({...sec,
+        body:(sec.body||"").replace(CPT_MARKER_RE,(marker,inner)=>{
+          if(inner.trim().indexOf(code)!==0) return marker;
+          const label=inner.replace(/\s*—\s*(confirm|clinician-assigned)\s*$/,"").replace(/^\S+\s*/,"").trim();
+          return "[[CPT: "+code+(label?" "+label:"")+" — confirm]]";
+        })}));
+      delete r.codeDecisions[code];
+    } else {
+      const prev=r.codeDecisions[code];
+      // Re-deciding must start from the original marker, not from a already-rewritten one.
+      if(prev) setCodeDecision(r, code, "pending");
+      r.codeDecisions[code]={state:state, replacement:replacement||null};
+      r.sections = rewriteCptMarkers(r.sections, code, state, replacement);
+    }
+    renderResult(r);
+  }
+
+  function codeActionsHTML(r, code){
+    const d=codeDecision(r, code);
+    if(d.state==="confirmed"){
+      return '<span class="bstate bstate-ok">✓ confirmed</span>'
+        +'<button class="btn btn-ghost btn-sm bundo" data-code="'+esc(code)+'">Undo</button>';
+    }
+    if(d.state==="removed"){
+      return '<span class="bstate bstate-no">removed'+(d.replacement?' → '+esc(d.replacement):'')+'</span>'
+        +'<button class="btn btn-ghost btn-sm bundo" data-code="'+esc(code)+'">Undo</button>'
+        +(d.replacement?'':'<span class="brepl"><input class="brepl-in" data-code="'+esc(code)
+          +'" placeholder="replacement code" size="8"><button class="btn btn-ghost btn-sm brepl-go" data-code="'
+          +esc(code)+'">Use</button></span>');
+    }
+    return '<button class="btn btn-ghost btn-sm bconfirm" data-code="'+esc(code)+'">Confirm</button>'
+      +'<button class="btn btn-ghost btn-sm bremove" data-code="'+esc(code)+'">Remove</button>';
+  }
+
+  function billingDraftHTML(b, r){
     const billable=(b.interventions||[]).filter(x=>x.status==="performed");
     const excluded=(b.interventions||[]).filter(x=>x.status!=="performed");
     const icd=b.icd_candidates||[];
     if(!billable.length && !excluded.length && !icd.length) return "";
     const codeList=billable.map(c=>c.code).concat(icd.map(c=>c.code)).join(", ");
-    let h='<div class="billing"><h3>Billing draft <span class="bhint">— confirm every line before submitting</span> <button class="btn btn-ghost btn-sm copy-codes" data-codes="'+esc(codeList)+'">Copy codes</button></h3>';
+    const undecided = r ? billable.filter(c=>codeDecision(r,c.code).state==="pending").length : 0;
+    let h='<div class="billing"><h3>Billing draft <span class="bhint">— '
+      +(r ? (undecided ? undecided+' code'+(undecided===1?'':'s')+' still to confirm' : 'all codes decided')
+          : 'confirm every line before submitting')
+      +'</span> '
+      +(r && undecided ? '<button class="btn btn-ghost btn-sm bconfirm-all">Confirm all</button> ' : '')
+      +'<button class="btn btn-ghost btn-sm copy-codes" data-codes="'+esc(codeList)+'">Copy codes</button></h3>';
 
     if(icd.length){
       h+='<p class="bsub">Diagnosis (ICD-10)</p><ul>';
@@ -171,10 +265,13 @@
     if(billable.length){
       h+='<p class="bsub">Treatments performed</p><ul>';
       billable.forEach(c=>{
-        h+='<li><span class="bcode">'+esc(c.code)+'</span> '+esc(c.label)
+        const st = r ? codeDecision(r, c.code).state : "pending";
+        h+='<li class="bline bline-'+st+'"><span class="bcode">'+esc(c.code)+'</span> '+esc(c.label)
           +' <span class="bmin">('+(c.timed?'timed':'untimed')
           +(c.minutes!=null?' · '+c.minutes+' min':'; minutes not stated')+')</span>'
-          +'<span class="bcue">“'+esc(c.cue)+'”</span></li>';
+          +'<span class="bcue">“'+esc(c.cue)+'”</span>'
+          +(r?'<span class="bacts">'+codeActionsHTML(r, c.code)+'</span>':'')
+          +'</li>';
       });
       h+='</ul>';
     }
@@ -221,8 +318,8 @@
   }
   // Consolidated billing block. Prefers the server draft; falls back to the note\'s own CPT chips
   // for a saved note, where only the sections were persisted.
-  function billingHTML(sections, billing){
-    if(billing) return billingDraftHTML(billing);
+  function billingHTML(sections, billing, resultForCodes){
+    if(billing) return billingDraftHTML(billing, resultForCodes);
     const codes=billingCodes(sections);
     if(!codes.length) return "";
     const codeList=codes.map(c=>c.code).join(", ");
@@ -401,6 +498,10 @@
     $("pName").innerHTML=esc(p.name)+(p.note_count===0?' <span class="fake-tag">· new patient</span>':"");
     $("pSub").textContent=p.sub;
     priorOn=!!p.has_prior;
+    // Stop tailing whatever note was writing into this pane. The JOB keeps running (that is the
+    // point of the queue) but streaming patient A's note into a view headed by patient B is
+    // exactly how a note gets reviewed against the wrong chart.
+    detachJob();
     dictation.value="";
     // New patient loaded = fresh session: reset any in-progress guided walkthrough.
     guidedResetFor(FORMS_BY_ID[currentForm]);
@@ -906,6 +1007,46 @@
     try{ await navigator.clipboard.writeText(b.dataset.codes||""); toast("Codes copied: "+(b.dataset.codes||"")); }
     catch(_){ toast("Couldn't copy — select and copy manually."); }
   });
+  // Delegated CPT decision handlers. Scoped to `output` so they can only ever act on the note
+  // currently under review — never on a saved note, which has no draft to decide about.
+  output.addEventListener("click", (e)=>{
+    if(!lastResult) return;
+    const confirmAll=e.target.closest(".bconfirm-all");
+    if(confirmAll){
+      const billable=((lastResult.billing||{}).interventions||[]).filter(x=>x.status==="performed");
+      billable.forEach(c=>{
+        if(codeDecision(lastResult, c.code).state==="pending"){
+          lastResult.codeDecisions=lastResult.codeDecisions||{};
+          lastResult.codeDecisions[c.code]={state:"confirmed", replacement:null};
+          lastResult.sections=rewriteCptMarkers(lastResult.sections, c.code, "confirmed", null);
+        }
+      });
+      renderResult(lastResult);
+      toast("All codes confirmed.");
+      return;
+    }
+    const ok=e.target.closest(".bconfirm");
+    if(ok){ setCodeDecision(lastResult, ok.dataset.code, "confirmed"); return; }
+    const no=e.target.closest(".bremove");
+    if(no){ setCodeDecision(lastResult, no.dataset.code, "removed"); return; }
+    const undo=e.target.closest(".bundo");
+    if(undo){ setCodeDecision(lastResult, undo.dataset.code, "pending"); return; }
+    const go=e.target.closest(".brepl-go");
+    if(go){
+      const input=output.querySelector('.brepl-in[data-code="'+go.dataset.code+'"]');
+      const val=((input&&input.value)||"").trim();
+      if(!val){ if(input) input.focus(); return; }
+      setCodeDecision(lastResult, go.dataset.code, "removed", val);
+    }
+  });
+  // Enter in the replacement box applies it, so the clinician never has to reach for the mouse.
+  output.addEventListener("keydown", (e)=>{
+    if(e.key!=="Enter" || !e.target.classList.contains("brepl-in")) return;
+    e.preventDefault();
+    const val=(e.target.value||"").trim();
+    if(val && lastResult) setCodeDecision(lastResult, e.target.dataset.code, "removed", val);
+  });
+
   // The template-reference footer link jumps to the Templates tab (showPage is hoisted).
   output.addEventListener("click", (e)=>{
     const g=e.target.closest(".linkbtn[data-goto]"); if(!g) return;
@@ -922,14 +1063,16 @@
   // elapsed timer runs alongside; the raw stream is a live draft, replaced by the structured, flagged
   // note when it completes.
   let genTimer=null;
-  function startGenLive(form){
+  function startGenLive(form, elapsedSeconds){
     output.innerHTML='<div class="genlive">'+
       '<div class="genlive-head"><span class="spin"></span><span class="genlive-label">Writing the '+esc(form.name)+'…</span><span class="genlive-el" id="genpEl">0:00</span></div>'+
       '<div class="genlive-status" id="genLiveStatus"></div>'+
       '<pre class="genlive-text" id="genLiveText"></pre>'+
       '<div class="genlive-hint">Streaming live from the on-device model — read it as it writes; nothing is lost if it takes a while.</div>'+
       '</div>';
-    const start=Date.now();
+    // Offset by however long the job has ALREADY been running, so re-attaching after a reload
+    // shows the note's real age rather than restarting the clock at 0:00.
+    const start=Date.now() - (elapsedSeconds||0)*1000;
     genTimer=setInterval(()=>{ const el=$("genpEl"); if(!el){ stopGenProgress(); return; } el.textContent=fmtClock(Date.now()-start); },1000);
   }
   function appendGenLive(t){
@@ -939,6 +1082,184 @@
   }
   function setGenLiveStatus(t){ const el=$("genLiveStatus"); if(el) el.textContent=t||""; }
   function stopGenProgress(){ if(genTimer){ clearInterval(genTimer); genTimer=null; } }
+
+  // ---------- Notes in progress (the generation queue) ----------
+  // Generation runs server-side; the browser is a viewer. `attachedJob` is the one being tailed
+  // into the live pane — at most one, because there is only one output pane. Every other job keeps
+  // running regardless, which is the entire point: start a note, go see the next patient.
+  let attachedJob=null, attachCursor=0, attachTimer=null, trayTimer=null;
+  const TRAY_POLL_MS=1500;
+
+  function trayRowHTML(j){
+    const bits=[j.form_name];
+    if(j.status==="queued") bits.push(j.queue_position ? ("#"+j.queue_position+" in line") : "waiting");
+    else if(j.status==="running") bits.push((j.detail||"Writing…")+" · "+fmtClock(j.elapsed_seconds*1000));
+    else if(j.status==="done") bits.push("ready to review · took "+fmtClock(j.elapsed_seconds*1000));
+    else if(j.status==="error") bits.push(j.error||"failed");
+    else bits.push("cancelled");
+    if(j.fast) bits.push("fast draft");
+    const canOpen = j.status==="done";
+    return '<div class="tray-row '+esc(j.status)+'">'+
+      '<span class="tray-dot"></span>'+
+      '<div class="tray-main"><div class="tray-who">'+esc(j.patient_name)+'</div>'+
+      '<div class="tray-meta">'+esc(bits.join(" · "))+'</div></div>'+
+      '<div class="tray-actions">'+
+        (canOpen ? '<button class="btn btn-primary btn-sm tray-open" data-job="'+esc(j.id)+'">Review</button>' : '')+
+        (j.status==="running" && attachedJob!==j.id ? '<button class="btn btn-ghost btn-sm tray-watch" data-job="'+esc(j.id)+'">Watch</button>' : '')+
+        '<button class="btn btn-ghost btn-sm tray-x" data-job="'+esc(j.id)+'">'+(j.status==="queued"||j.status==="running" ? "Cancel" : "Dismiss")+'</button>'+
+      '</div></div>';
+  }
+
+  // Announce a note that finished while the clinician was elsewhere. Without this the queue is
+  // silent and they have to keep checking, which puts the waiting back on them.
+  const trayLastStatus={};
+  function announceFinished(rows){
+    rows.forEach(j=>{
+      const prev=trayLastStatus[j.id];
+      if(prev && prev!==j.status){
+        if(j.status==="done") toast("Note ready to review — "+j.patient_name+".");
+        else if(j.status==="error") toast("Note failed for "+j.patient_name+".");
+      }
+      trayLastStatus[j.id]=j.status;
+    });
+    Object.keys(trayLastStatus).forEach(id=>{
+      if(!rows.some(r=>r.id===id)) delete trayLastStatus[id];
+    });
+  }
+
+  async function refreshTray(){
+    const tray=$("genTray"); if(!tray) return [];
+    let rows=[];
+    try{ rows=await listJobs(); }catch(_){ return []; }
+    announceFinished(rows);
+    tray.classList.toggle("hidden", rows.length===0);
+    if(!rows.length){ $("trayList").innerHTML=""; $("traySub").textContent=""; return rows; }
+    const active=rows.filter(r=>r.status==="queued"||r.status==="running").length;
+    const ready=rows.filter(r=>r.status==="done").length;
+    $("traySub").textContent=[active?active+" writing":null, ready?ready+" ready to review":null]
+      .filter(Boolean).join(" · ");
+    $("trayList").innerHTML=rows.map(trayRowHTML).join("");
+    return rows;
+  }
+
+  // One poll loop for the tray, running only while something is actually in it. Stopping when the
+  // tray empties keeps an idle app from waking the CPU every 1.5s — this machine needs its cores.
+  function ensureTrayPolling(){
+    if(trayTimer) return;
+    trayTimer=setInterval(async ()=>{
+      const rows=await refreshTray();
+      if(!rows.length){ clearInterval(trayTimer); trayTimer=null; }
+    }, TRAY_POLL_MS);
+  }
+
+  // Tail one job's output into the live pane. Detaching (switching patients, watching another
+  // note) stops the POLL, never the job.
+  function clearAttachPoll(){ if(attachTimer){ clearInterval(attachTimer); attachTimer=null; } }
+  function detachJob(){
+    clearAttachPoll();
+    attachedJob=null; attachCursor=0; stopGenProgress();
+  }
+
+  function attachJob(jobId){
+    // clearAttachPoll, NOT detachJob: the caller has just called startGenLive to put the elapsed
+    // clock on screen, and detachJob stops that clock. Re-attaching swaps which job we poll; it
+    // does not tear down the view we are about to write into.
+    clearAttachPoll();
+    attachedJob=jobId; attachCursor=0;
+    ensureTrayPolling();
+    const poll=async ()=>{
+      if(attachedJob!==jobId) return;
+      const t=await tailJob(jobId, attachCursor);
+      if(!t){ detachJob(); return; }
+      attachCursor=t.cursor;
+      if(t.text) appendGenLive(t.text);
+      if(t.status==="queued"){
+        setGenLiveStatus(t.queue_position ? ("Waiting — #"+t.queue_position+" in line behind another note.")
+                                          : "Waiting to start…");
+      } else if(t.status==="running"){ setGenLiveStatus(t.detail||""); }
+      if(t.status==="done"){
+        detachJob();
+        adoptResult(t.result, {patientId: t.patient_id, summary: t.summary, extraInfo: t.extra_info});
+        refreshTray();
+      } else if(t.status==="error"){
+        detachJob(); showError(t.error||"Generation failed."); refreshTray();
+      } else if(t.status==="cancelled"){
+        detachJob(); output.innerHTML='<div class="empty">Generation cancelled.</div>'; refreshTray();
+      }
+    };
+    attachTimer=setInterval(poll, 900);
+    poll();
+  }
+
+  document.addEventListener("click", async (e)=>{
+    const open=e.target.closest(".tray-open");
+    if(open){
+      const t=await tailJob(open.dataset.job, 0);
+      if(!t || !t.result) return;
+      // Re-open on the patient the note was written for — reviewing note A while the header says
+      // patient B is exactly how a note gets saved to the wrong chart.
+      if(t.patient_id && t.patient_id!==currentPatient){
+        currentPatient=t.patient_id; patientSel.value=t.patient_id; await onPatientChange();
+      }
+      showPage("home");
+      adoptResult(t.result, {patientId: t.patient_id, summary: t.summary, extraInfo: t.extra_info});
+      return;
+    }
+    const watch=e.target.closest(".tray-watch");
+    if(watch){
+      showPage("home");
+      const j=(await listJobs()).find(r=>r.id===watch.dataset.job);
+      startGenLive({name:(j&&j.form_name)||"note"}, j&&j.elapsed_seconds);
+      attachJob(watch.dataset.job);
+      return;
+    }
+    const x=e.target.closest(".tray-x");
+    if(x){
+      if(attachedJob===x.dataset.job){ detachJob(); output.innerHTML='<div class="empty">Generation cancelled.</div>'; }
+      await cancelJob(x.dataset.job);
+      refreshTray();
+    }
+  });
+
+  // Turn a /api/generate result into the reviewable `lastResult` and render it. Shared by the
+  // live attach below and by re-opening a finished job from the tray, so a note reviewed ten
+  // minutes later is byte-identical to one reviewed the moment it finished.
+  function adoptResult(data, ctx){
+    if(!data.sections || !data.sections.length){
+      if(data.raw_text && data.raw_text.trim()){
+        output.innerHTML='<div class="sheet"><div class="sec"><div class="sec-body">'+withGaps(data.raw_text)+'</div></div></div>';
+      } else { showError("The model didn't return a note this time."); }
+      return;
+    }
+    // mapSections is called TWICE on purpose so `sections` and `originalSections` are genuinely
+    // independent object graphs. If they ever aliased, the "Done editing" handler — which writes
+    // r.sections[i].body in place — would destroy the original exactly as it did before capture
+    // existed, and no test would catch it. Object.freeze is cheap insurance on top.
+    const mapSections = arr => (arr||[]).map(s=>({heading:s.heading, body:s.body, carriedForward:s.carried_forward}));
+    lastResult={
+      sections: mapSections(data.sections),
+      // Pinned ONCE at generation and never overwritten. The question this must answer later is
+      // "how far is the signed note from what the model produced unaided?" — the revise channel
+      // is recorded separately, so the two stay disentangleable.
+      originalSections: Object.freeze(mapSections(data.sections).map(Object.freeze)),
+      reviseInstructions: [],
+      modelId: data.model_id || null,
+      fastTier: !!data.fast,
+      templateSpecSha: data.template_spec_sha || null,
+      templateCustomized: !!data.template_customized,
+      missingInfo: data.missing_info || [],
+      formName: data.form_name, formId: data.form_id,
+      patientId: ctx.patientId,
+      dictationRaw: ctx.extraInfo ? (ctx.summary+"\n\nADDITIONAL DETAILS: "+ctx.extraInfo) : ctx.summary,
+      usedPrior: !!data.used_prior,
+      // The server's deterministic billing draft (app/generate/billing.py), derived from the
+      // DICTATION. Null on a revise, which has only the note's prose to work from — the client
+      // then keeps whatever draft the original generate produced.
+      billing: data.billing || (lastResult && lastResult.billing) || null,
+      date: new Date(),
+    };
+    renderResult(lastResult);
+  }
 
   async function generate(extraInfo){
     // If the user hits Generate while still in the guided walkthrough, fold their
@@ -951,57 +1272,17 @@
     if(!summary){ dictation.focus(); dictation.style.borderColor="#cf4631"; setTimeout(()=>dictation.style.borderColor="",1200); return; }
     const form=FORMS_BY_ID[currentForm];
     const btn=$("generateBtn"); btn.disabled=true;
-    startGenLive(form);
-    let finalResult=null, hadError=false;
-    await generateStream(
-      { patient_id: currentPatient, form_id: currentForm, summary, use_prior: priorOn, extra_info: extraInfo || null, fast: fastMode },
-      {
-        onStatus: (t)=>setGenLiveStatus(t),
-        onToken:  (t)=>appendGenLive(t),
-        onDone:   (r)=>{ finalResult=r; },
-        onError:  (m)=>{ hadError=true; stopGenProgress(); showError(m); },
-      }
-    );
-    stopGenProgress(); btn.disabled=false;
-    if(finalResult){
-      const data=finalResult;
-      if(!data.sections || !data.sections.length){
-        if(data.raw_text && data.raw_text.trim()){
-          output.innerHTML='<div class="sheet"><div class="sec"><div class="sec-body">'+withGaps(data.raw_text)+'</div></div></div>';
-        } else { showError("The model didn't return a note this time."); }
-        return;
-      }
-      // mapSections is called TWICE on purpose so `sections` and `originalSections` are genuinely
-      // independent object graphs. If they ever aliased, the "Done editing" handler — which writes
-      // r.sections[i].body in place — would destroy the original exactly as it did before capture
-      // existed, and no test would catch it. Object.freeze is cheap insurance on top.
-      const mapSections = arr => (arr||[]).map(s=>({heading:s.heading, body:s.body, carriedForward:s.carried_forward}));
-      lastResult={
-        sections: mapSections(data.sections),
-        // Pinned ONCE at generation and never overwritten. The question this must answer later is
-        // "how far is the signed note from what the model produced unaided?" — the revise channel
-        // is recorded separately below, so the two stay disentangleable.
-        originalSections: Object.freeze(mapSections(data.sections).map(Object.freeze)),
-        reviseInstructions: [],
-        modelId: data.model_id || null,
-        fastTier: !!data.fast,
-        templateSpecSha: data.template_spec_sha || null,
-        templateCustomized: !!data.template_customized,
-        missingInfo: data.missing_info || [],
-        formName: data.form_name, formId: data.form_id,
-        patientId: currentPatient,
-        dictationRaw: extraInfo ? (summary+"\n\nADDITIONAL DETAILS: "+extraInfo) : summary,
-        usedPrior: !!data.used_prior,
-        // The server's deterministic billing draft (app/generate/billing.py), derived from the
-        // DICTATION. Null on a revise, which has only the note's prose to work from — the client
-        // then keeps whatever draft the original generate produced.
-        billing: data.billing || (lastResult && lastResult.billing) || null,
-        date: new Date(),
-      };
-      renderResult(lastResult);
-    } else if(!hadError){
-      showError("The model didn't return a note this time.");
+    let job;
+    try{
+      job = await enqueueGeneration({ patient_id: currentPatient, form_id: currentForm, summary,
+        use_prior: priorOn, extra_info: extraInfo || null, fast: fastMode });
+    }catch(e){
+      btn.disabled=false; showError(e.message||"Could not start the note."); return;
     }
+    btn.disabled=false;                 // the note is the SERVER's job now — start another whenever
+    startGenLive(form);
+    refreshTray();
+    attachJob(job.id);
   }
   function showError(msg){ output.innerHTML='<div class="empty">'+esc(msg)+' Try Generate again — the local model can occasionally be slow to respond.</div>'; }
 
@@ -1084,7 +1365,7 @@
       missing.forEach(x=> html+="<li>"+esc(x)+"</li>");
       html+='</ul><div class="resolve"><textarea id="resolveBox" placeholder="Add the missing details (e.g. \'manual therapy 10 minutes, BP 128/78, HR 72\') — type or dictate."></textarea><div class="resolve-actions"><button class="btn btn-mic" id="resolveMic"><span class="pulse"></span><span id="resolveMicLabel">Dictate</span></button><button class="btn btn-amber" id="resolveBtn">Add details &amp; update note</button></div><p class="mic-help-sm" id="resolveMicHelp"></p></div></div>';
     }
-    html+=billingHTML(r.sections, r.billing);
+    html+=billingHTML(r.sections, r.billing, r);
     html+=officeAllyHTML(r.sections);
     html+=sheetHTML(r.formName, p, r.sections, r.date);
     // Ask-for-changes: the clinician tells the model what to adjust in plain language and it
@@ -1131,18 +1412,29 @@
       "/api/revise/stream"
     );
     stopGenProgress();
-    const applied = !!(finalResult && finalResult.sections && finalResult.sections.length);
+    const returned = !!(finalResult && finalResult.sections && finalResult.sections.length);
+    // "Did we get sections back" was the old test, and it is true even when the model handed the
+    // note back word for word — so the clinician waited minutes and was told "Changes applied"
+    // about a note that had not changed. Compare the actual text instead.
+    const sig = arr => (arr||[]).map(x=>(x.heading||"")+" "+(x.body||"")).join("");
+    const changed = returned && sig(finalResult.sections) !== sig(r.sections);
     // The clinician describing in their own words what was wrong is the highest-signal correction
     // data in the app, and it used to be discarded the moment the stream ended. A FAILED revision
     // is recorded too — "the model couldn't do X" is signal, and it costs nothing.
     (r.reviseInstructions || (r.reviseInstructions=[])).push(
-      {text: instruction, applied: applied, at: new Date().toISOString()});
-    if(applied){
+      {text: instruction, applied: changed, at: new Date().toISOString()});
+    if(changed){
       // Only r.sections is reassigned — r.originalSections stays pinned to the first generation.
       r.sections=finalResult.sections.map(s=>({heading:s.heading, body:s.body, carriedForward:s.carried_forward}));
       r.missingInfo=finalResult.missing_info||[];
       renderResult(r);
       toast("Changes applied — review before saving.");
+    } else if(returned){
+      // The model answered and produced nothing different. Say exactly that — a clinician who is
+      // told "applied" about an unchanged note stops trusting the button, and re-running the same
+      // request is the one thing guaranteed not to help.
+      renderResult(r);
+      toast("The model returned the note unchanged — try naming the section and the exact wording.");
     } else if(!hadError){
       renderResult(r);
       toast("The model couldn't produce a revision — the note is unchanged.");
@@ -1454,7 +1746,16 @@
       statusMount.innerHTML='<div class="files-empty">Couldn\'t load status just now.</div>';
       return;
     }
-    let h='<div class="status-list">';
+    // Version first. It is the thing you read out loud when reporting a problem, and the thing
+    // the updater compares against — so it belongs at the top of Status, not buried in an About box.
+    let h='';
+    if(data.version){
+      h+='<div class="status-item"><span class="status-dot ok"></span>'
+        +'<div class="status-meta"><span class="status-name">Cadence '+esc(data.version)+'</span>'
+        +'<span class="status-detail">Every note you save records the version that wrote it.</span></div>'
+        +'<span class="status-badge ok">Installed</span></div>';
+    }
+    h='<div class="status-list">'+h;
     (data.integrations||[]).forEach(it=>{
       const cls=it.ready?"ok":"bad";
       h+='<div class="status-item">'+
@@ -1803,6 +2104,15 @@
     if(currentPatient){ await onPatientChange(); }
     else { setHasPatient(false); $("pName").textContent="No patients yet"; $("pSub").textContent="Click + New to add one"; }
     if(currentForm) onFormChange();
+    // Reattach to anything the server is still writing. This is what makes a reload (or a closed
+    // and reopened browser) a non-event rather than seven lost minutes.
+    const rows=await refreshTray();
+    if(rows.length) ensureTrayPolling();
+    const live=rows.find(r=>r.status==="running"||r.status==="queued");
+    if(live && live.patient_id===currentPatient){
+      startGenLive({name: live.form_name}, live.elapsed_seconds);
+      attachJob(live.id);
+    }
   }
   init();
 })();

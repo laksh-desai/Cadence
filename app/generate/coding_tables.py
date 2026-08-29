@@ -319,6 +319,16 @@ TEMPORAL_FUTURE_CUES: tuple[str, ...] = (
     "plan of treatment", "treatment approaches", "approaches include", "treatment will include",
     "interventions include", "plan of care", "treatment plan includes", "proposed treatment",
     "anticipate", "goals include",
+    # The DELIBERATION family, found by the hand-written long-form control (evals/data/
+    # longform_intake.txt): "I considered functional electrical stimulation for the left
+    # dorsiflexors but I want to check with the surgeon first" billed 97014 as performed. The
+    # therapist had ALSO said "I did not do any electrical stimulation" one sentence earlier —
+    # the negation was detected and then discarded, because `_dedupe` keeps the most billable
+    # mention of a code. Contemplating a treatment is not performing it, and every phrase here
+    # says "not today" in the plainest possible terms.
+    "considered", "considering", "thinking about", "thought about", "may add", "might add",
+    "could add", "would consider", "pending", "awaiting", "on hold", "once cleared",
+    "if cleared", "when cleared", "discussed adding", "talked about adding",
 )
 
 # The patient does it at home — unsupervised, so not a billable treatment minute.
@@ -342,6 +352,38 @@ CORRECTION_CUES: tuple[str, ...] = (
     "sorry", "i mean", "i meant", "correction", "scratch that", "strike that",
     "let me correct", "no wait", "wait no", "rather", "make that", "excuse me",
 )
+
+
+# --- evaluation complexity (97161/97162/97163) --------------------------------------
+#
+# CAPTURE ONLY, never inference. Rule 12 keeps complexity out of the auto-assigned set because
+# choosing a level is a clinician judgment -- and that stays true. What was wrong is that Cadence
+# asked for the level on EVERY evaluation even when the therapist had already said it out loud
+# ("clinical decision making is moderate complexity"), which is not caution, it is discarding a
+# stated fact and then demanding it back. Rule 12(b) already settled the principle for CPT:
+# scanning the DICTATION for a stated billing fact is permitted where scanning the NOTE is not.
+# Recording the clinician's own judgment is not making one for them.
+#
+# Every phrase requires the noun "complexity" or a literal code. "complex" alone is deliberately
+# absent -- it appears inside "complex regional pain syndrome", and matching that would attach an
+# evaluation code to a diagnosis.
+EVAL_COMPLEXITY_CUES: tuple[tuple[str, str, str], ...] = (
+    # A code the therapist dictated is the most explicit form there is; capturing it is required
+    # (the model still never authors one).
+    ("97161", "97161", "PT evaluation, low complexity"),
+    ("97162", "97162", "PT evaluation, moderate complexity"),
+    ("97163", "97163", "PT evaluation, high complexity"),
+    ("low complexity", "97161", "PT evaluation, low complexity"),
+    ("complexity is low", "97161", "PT evaluation, low complexity"),
+    ("moderate complexity", "97162", "PT evaluation, moderate complexity"),
+    ("complexity is moderate", "97162", "PT evaluation, moderate complexity"),
+    ("high complexity", "97163", "PT evaluation, high complexity"),
+    ("complexity is high", "97163", "PT evaluation, high complexity"),
+    ("highly complex evaluation", "97163", "PT evaluation, high complexity"),
+)
+
+#: The evaluation codes, so callers can recognise one without hard-coding the numbers.
+EVAL_CPT_CODES: frozenset[str] = frozenset({"97161", "97162", "97163"})
 
 
 # --- ICD-10 ------------------------------------------------------------------------

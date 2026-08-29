@@ -76,6 +76,9 @@ class IntegrationStatus(BaseModel):
 
 
 class StatusResponse(BaseModel):
+    #: The running build. Shown in the UI and used by the updater to compare against the latest
+    #: published release.
+    version: str = ""
     integrations: list[IntegrationStatus]
 
 
@@ -234,3 +237,37 @@ class SaveNoteRequest(BaseModel):
 class SaveNoteResponse(BaseModel):
     id: str
     created_at: str
+
+
+class JobSummary(BaseModel):
+    """One entry in the generation tray. No note content — the tray is a status list, and the
+    result is fetched only when the clinician opens the job."""
+    id: str
+    patient_id: str
+    patient_name: str
+    form_id: str
+    form_name: str
+    fast: bool
+    status: str            # queued | running | done | error | cancelled
+    detail: str = ""       # human-readable stage
+    created_at: float
+    elapsed_seconds: float = 0.0
+    chars_written: int = 0
+    #: 1-based place in the wait line; None when running or finished. Deliberately a position and
+    #: not an ETA — throughput on this box swings with whatever else is open, so a minutes estimate
+    #: would be a number Cadence cannot stand behind.
+    queue_position: int | None = None
+    error: str | None = None
+
+
+class JobDetail(JobSummary):
+    #: Character offset to pass back as `cursor` next poll.
+    cursor: int = 0
+    #: Note text written since the cursor the caller sent.
+    text: str = ""
+    result: GenerateResponse | None = None
+    #: The dictation this job was queued with. Echoed back so a note reviewed after a page reload
+    #: can still record what it was generated FROM — the client composes `dictation_raw` from these
+    #: and would otherwise have lost them with its in-memory state.
+    summary: str = ""
+    extra_info: str | None = None

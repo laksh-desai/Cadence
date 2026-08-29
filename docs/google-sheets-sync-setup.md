@@ -124,6 +124,18 @@ confirm it's working without waiting:
 
 ## If something looks wrong
 
+**Run the preflight first — it names the failing step instead of making you guess:**
+
+```
+python scripts/verify_sheets.py
+```
+
+It walks the same calls the sync makes, in the order this doc builds them up, and stops at the
+first failure with the fix for it: API not enabled, Sheet not shared with the service account,
+wrong tab name, wrong header row, bad spreadsheet id. It is read-only and never writes to the
+Sheet. The Status page inside the app can only tell you a config file *exists*, which every one of
+those failures looks identical from.
+
 - **Sync isn't running at all**: check that both `app/integrations/.sheets_credentials.json`
   and `app/integrations/sheets_config.yaml` exist. If either is missing, sync is
   silently disabled (by design — the app must work normally with zero Google setup)

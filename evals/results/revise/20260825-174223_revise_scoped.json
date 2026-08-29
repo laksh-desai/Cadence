@@ -1,0 +1,83 @@
+{
+  "strategy": "scoped",
+  "model": "williamljx/medgemma-4b-it-Q4_K_M-GGUF",
+  "fixture": "record1001_followup_run1.note.md",
+  "results": [
+    {
+      "id": 1,
+      "instruction": "In Response to Treatment, say she tolerated the session well with no increase in pain.",
+      "target": "Response to Treatment",
+      "seconds": 15.1,
+      "parse_failed": false,
+      "applied": true,
+      "identical": false,
+      "changed_sections": [
+        "response to treatment"
+      ],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 14,
+      "raw_chars": 82
+    },
+    {
+      "id": 2,
+      "instruction": "Pain at rest should be 3 out of 10, I misspoke.",
+      "target": "Pain - At Rest",
+      "seconds": 15.4,
+      "parse_failed": false,
+      "applied": true,
+      "identical": false,
+      "changed_sections": [
+        "pain - at rest"
+      ],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 14,
+      "raw_chars": 38
+    },
+    {
+      "id": 3,
+      "instruction": "Delete the Vitals section, I did not take vitals today.",
+      "target": "Vitals",
+      "seconds": 18.0,
+      "parse_failed": false,
+      "applied": true,
+      "identical": false,
+      "changed_sections": [],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 13,
+      "raw_chars": 21
+    },
+    {
+      "id": 4,
+      "instruction": "Write the Precautions section as a bulleted list.",
+      "target": "Precautions",
+      "seconds": 23.2,
+      "parse_failed": false,
+      "applied": true,
+      "identical": false,
+      "changed_sections": [
+        "precautions"
+      ],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 14,
+      "raw_chars": 169
+    },
+    {
+      "id": 5,
+      "instruction": "There are two Neuromuscular Reeducation sections. Merge them into one.",
+      "target": null,
+      "seconds": 155.3,
+      "parse_failed": false,
+      "applied": false,
+      "identical": true,
+      "changed_sections": [],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 14,
+      "raw_chars": 3213
+    }
+  ]
+}

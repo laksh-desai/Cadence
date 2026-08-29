@@ -28,6 +28,17 @@
     <button class="nav-tab" data-page="status">Status</button>
   </nav>
 
+  <!-- Notes in progress. A note takes minutes on this hardware, so generation runs on the server
+       and this tray is how the clinician keeps track of it while doing something else. Hidden
+       entirely when nothing is queued, so the app looks exactly as before when it is not needed. -->
+  <section class="tray hidden" id="genTray" aria-live="polite">
+    <div class="tray-head">
+      <span class="tray-title">Notes in progress</span>
+      <span class="tray-sub" id="traySub"></span>
+    </div>
+    <div id="trayList"></div>
+  </section>
+
   <div class="privacy">
     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
     <p><strong>Cadence runs entirely on this computer.</strong> Patients, dictation, and notes are stored locally in an encrypted file and are never sent anywhere. Note generation also runs on this machine. The model drafts every note — review and correct it before signing; it can still make mistakes.</p>

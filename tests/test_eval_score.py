@@ -271,3 +271,51 @@ class BillingOnlySweepTests(unittest.TestCase):
             payload = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(payload["config"]["mode"], "billing-only")
             self.assertEqual(payload["aggregate"]["all"]["records"], 1)
+
+
+class GenerationTimingTests(unittest.TestCase):
+    """A wall-clock the harness cannot believe must not be averaged into one it can.
+
+    On Windows both `perf_counter` and `monotonic` keep counting while the machine is SUSPENDED,
+    so a sweep left running overnight recorded one generation as 84,715 seconds — 23 hours — and
+    dragged the reported mean from 324s to 10,873s. That is the difference between "5 minutes a
+    note, as documented" and "3 hours a note", on the single metric CLAUDE.md uses to argue about
+    whether Cadence is usable between patients. The excluded runs are COUNTED, not silently
+    dropped, so a sweep can never quietly discard most of its own timings.
+    """
+
+    class _R:
+        def __init__(self, seconds):
+            self.seconds = seconds
+
+    def test_a_suspend_inflated_run_is_excluded(self):
+        from evals import runner
+        runs = [self._R(333), self._R(84715), self._R(280)]
+        self.assertEqual([r.seconds for r in runner._timed(runs)], [333, 280])
+
+    def test_a_zero_is_not_counted_as_a_timing(self):
+        """`--no-generate` sweeps have no model call, so 0 means "not measured" rather than
+        "instant" — averaging zeros in would understate the real cost."""
+        from evals import runner
+        runs = [self._R(0), self._R(300)]
+        self.assertEqual([r.seconds for r in runner._timed(runs)], [300])
+
+    def test_the_real_sweep_numbers(self):
+        """The actual observed case, kept as a regression: 8 runs, one of them a closed laptop."""
+        from evals import runner
+        observed = [333, 297, 338, 84715, 280, 297, 271, 454]
+        kept = [r.seconds for r in runner._timed([self._R(s) for s in observed])]
+        self.assertEqual(len(kept), 7)
+        self.assertAlmostEqual(sum(kept) / len(kept), 324, delta=1)
+
+    def test_the_threshold_is_far_above_any_real_generation(self):
+        """The slowest real note measured anywhere here is ~10 minutes, so the cut has to sit well
+        above that and well below what a suspend produces — otherwise it would start discarding
+        genuinely slow generations, which are the ones worth knowing about."""
+        from evals import runner
+        self.assertGreaterEqual(runner._MAX_PLAUSIBLE_SECONDS, 1800)
+        self.assertLessEqual(runner._MAX_PLAUSIBLE_SECONDS, 7200)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -11,6 +11,14 @@ target would need `.venv/bin/` paths and a different launcher.
 
 ---
 
+> **As of v1.0.0, read [`releasing.md`](releasing.md) first.** This document describes copying the
+> project folder, which is still exactly right for a DEVELOPER moving their own checkout. But a
+> CLINICIAN's machine should be installed from a release zip into the versioned layout
+> (`C:\Cadence\versions\<v>\`, with the data in `C:\Cadence\data\`), because that is what lets it
+> take an update later without stranding the patient database inside an old version folder.
+> Everything below — prerequisites, models, the HF token, the HIPAA hardening — applies to both;
+> only the folder you unzip into differs.
+
 ## What actually has to exist on the new machine
 
 | Piece | Ships in the folder? | How it gets there |
@@ -213,3 +221,8 @@ genuinely can't be frozen anyway — the Ollama service and the model downloads.
 supported distribution path is this source + venv procedure, sped up by **`setup.ps1`**
 (project root), which automates section A steps 4–9 — the right investment here rather
 than a frozen binary.
+
+That reasoning still holds at v1.0.0; only the packaging AROUND it changed. `scripts/release.py`
+builds a checksummed source zip from an ALLOWLIST, so no database, keyfile or credential can be
+swept in, and `scripts/update.py` installs it into a versioned layout so an update is reversible.
+Still no frozen binary, and still for the same reason.

@@ -10,6 +10,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from app import version as app_version
 from app.storage import db
 
 # Sentinel distinguishing "field not provided" (leave unchanged) from an explicit
@@ -318,8 +319,9 @@ def create_note(
             "INSERT INTO notes (id, patient_id, form_id, form_name, created_at, "
             "sections_json, missing_json, dictation_raw, used_prior, "
             "original_sections_json, revise_instructions_json, edited_section_count, "
-            "model_id, fast_tier, template_spec_sha, template_customized, synthetic) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "model_id, fast_tier, template_spec_sha, template_customized, app_version, "
+            "synthetic) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 note_id, patient_id, form_id, form_name, created_at,
                 json.dumps(sections), json.dumps(missing_info), dictation_raw,
@@ -331,6 +333,10 @@ def create_note(
                 1 if fast else 0,
                 template_spec_sha,
                 1 if template_customized else 0,
+                # Stamped from the running build, never accepted from the client — the browser
+                # must not be the authority on which version wrote a clinical record, for the
+                # same reason model_id is stamped server-side.
+                app_version(),
                 1 if synthetic else 0,
             ),
         )

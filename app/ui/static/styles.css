@@ -21,6 +21,25 @@ header.top{display:flex;align-items:baseline;justify-content:space-between;gap:1
 .nav-tab:hover{color:var(--teal)}
 .nav-tab.active{color:var(--teal);border-bottom-color:var(--teal)}
 
+/* Notes in progress. Sits under the nav so it is visible from EVERY tab — the whole point is that
+   the clinician can leave the Home page while a note writes. */
+.tray{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 14px;margin-bottom:18px}
+.tray.hidden{display:none}
+.tray-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px}
+.tray-title{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.tray-sub{font-size:12px;color:var(--muted)}
+.tray-row{display:flex;align-items:center;gap:12px;padding:9px 2px;border-top:1px solid var(--line)}
+.tray-row:first-child{border-top:none}
+.tray-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px;background:var(--muted)}
+.tray-row.running .tray-dot{background:var(--teal);animation:traypulse 1.4s ease-in-out infinite}
+.tray-row.done .tray-dot{background:var(--teal)}
+.tray-row.error .tray-dot,.tray-row.cancelled .tray-dot{background:var(--amber)}
+@keyframes traypulse{0%,100%{opacity:.35}50%{opacity:1}}
+.tray-main{flex:1;min-width:0}
+.tray-who{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tray-meta{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tray-actions{display:flex;gap:6px;flex:0 0 auto}
+
 .page.hidden{display:none}
 .pagehead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;flex-wrap:wrap}
 .pagehead h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.01em}
@@ -352,3 +371,18 @@ footer b{color:var(--ink)}
 .linkbtn:hover{color:#0f413f}
 
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* CPT confirm / remove / replace. The decision is written into the note's [[CPT: ...]] marker, so
+   these states are a view of the note text rather than separate bookkeeping. */
+.bline{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bline-removed{opacity:.55}
+.bline-removed .bcode,.bline-removed .bmin{text-decoration:line-through}
+.bacts{display:inline-flex;align-items:center;gap:4px;margin-left:auto}
+.bstate{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:999px}
+.bstate-ok{color:var(--teal);background:var(--teal-soft)}
+.bstate-no{color:var(--amber);background:var(--amber-soft)}
+.brepl{display:inline-flex;align-items:center;gap:4px}
+.brepl-in{font-family:inherit;font-size:12.5px;padding:3px 7px;border:1px solid var(--line);border-radius:8px;width:9ch}
+.brepl-in:focus{outline:none;border-color:var(--teal)}
+/* A confirmed code chip in the note body: settled, not a pending question. */
+.code-ok{background:var(--teal-soft);border-color:var(--teal);color:var(--teal)}
