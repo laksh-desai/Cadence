@@ -25,8 +25,10 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 COLUMNS = ["id", "name", "dob", "mrn", "condition", "scheduling_notes", "last_edited"]
 EDITABLE_COLUMNS = COLUMNS[:-1]  # everything except last_edited
 
+from app import paths
+
 INTEGRATIONS_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = INTEGRATIONS_DIR / "sheets_config.yaml"
+CONFIG_PATH = paths.config_dir(INTEGRATIONS_DIR) / "sheets_config.yaml"
 
 
 @dataclass(frozen=True)

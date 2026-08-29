@@ -70,6 +70,31 @@ class BackupRestoreTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             backup.do_restore(out, storage_dir=occupied, force=False)
 
+    def test_dry_run_writes_nothing_and_needs_no_force(self):
+        """A backup nobody has ever restored is not a backup. Rehearsing must be possible WITHOUT
+        the live patient database being overwritten to find out — which was the only option before
+        --dry-run, so the safe advice was "never test your backups"."""
+        src = _make_store()
+        out = backup.do_backup(Path(mkdtemp(prefix="cad_dest_")), storage_dir=src)
+        occupied = _make_store()
+        before = ((occupied / backup.KEYFILE_NAME).read_bytes(),
+                  (occupied / backup.ENC_NAME).read_bytes())
+
+        backup.do_restore(out, storage_dir=occupied, force=False, dry_run=True)  # no SystemExit
+
+        self.assertEqual(((occupied / backup.KEYFILE_NAME).read_bytes(),
+                          (occupied / backup.ENC_NAME).read_bytes()), before)
+        self.assertEqual(list(occupied.glob("*.pre-restore-*")), [],
+                         "a rehearsal must not leave safety copies behind either")
+
+    def test_dry_run_still_refuses_a_broken_backup(self):
+        """The rehearsal's whole value is catching a bad pair before the real restore does."""
+        src = _make_store()
+        out = backup.do_backup(Path(mkdtemp(prefix="cad_dest_")), storage_dir=src)
+        (out / backup.KEYFILE_NAME).write_bytes(Fernet.generate_key())  # mismatched keyfile
+        with self.assertRaises(SystemExit):
+            backup.do_restore(out, storage_dir=_make_store(), dry_run=True)
+
     def test_restore_force_saves_current_files_aside(self):
         src = _make_store()
         out = backup.do_backup(Path(mkdtemp(prefix="cad_dest_")), storage_dir=src)

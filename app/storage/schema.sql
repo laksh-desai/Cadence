@@ -46,6 +46,10 @@ CREATE TABLE IF NOT EXISTS notes (
   fast_tier                INTEGER,  -- NULL = unknown (legacy rows)
   template_spec_sha        TEXT,     -- forms.spec_sha() at generation time
   template_customized      INTEGER,
+  -- Which Cadence version wrote this note. Cadence's generation rules change what notes SAY, so
+  -- "which version produced this?" is a clinical question: it is how you answer "did that fix
+  -- reach the notes I already signed?". NULL = written before this column existed.
+  app_version              TEXT,
   -- The one NOT NULL DEFAULT, because "unknown" must never read as "safe to export".
   synthetic                INTEGER NOT NULL DEFAULT 0
 );

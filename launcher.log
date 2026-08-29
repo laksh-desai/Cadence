@@ -1,0 +1,20 @@
+INFO:     Started server process [6324]
+INFO:     Waiting for application startup.
+Loading weights:   0%|          | 0/368 [00:00<?, ?it/s]Loading weights:  42%|####2     | 155/368 [00:00<00:00, 1540.51it/s]Loading weights:  93%|#########3| 343/368 [00:00<00:00, 1738.84it/s]Loading weights: 100%|##########| 368/368 [00:00<00:00, 1799.50it/s]
+C:\Users\kusha.DESKTOP-PGUPO2J\Modality_Project\.venv\Lib\site-packages\torch\nn\modules\conv.py:380: UserWarning: Using padding='same' with even kernel lengths and odd dilation may require a zero-padded copy of the input be created (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\aten\src\ATen\native\Convolution.cpp:1091.)
+  return F.conv1d(
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8420 (Press CTRL+C to quit)
+INFO:     127.0.0.1:65210 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65210 - "GET /static/styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65209 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65209 - "GET /api/patients HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65210 - "GET /api/forms HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65209 - "GET /api/generate/jobs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65217 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64664 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64664 - "GET /static/styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64668 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64664 - "GET /api/patients HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64668 - "GET /api/forms HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64668 - "GET /api/generate/jobs HTTP/1.1" 200 OK

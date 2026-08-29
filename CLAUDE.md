@@ -44,8 +44,14 @@ submissions don't look templated.
 
 Lenovo ThinkPad, Intel Core i5-8365U (4 cores / 8 threads, 8th gen, **no dedicated
 GPU** — Intel UHD 620), 16 GB RAM, 238 GB SSD. **CPU-only inference.** This caps the
-local LLM at roughly 4B parameters. Expect ~1–2 minutes to generate a note; that is
-acceptable for this workflow. Do not assume a GPU or large VRAM.
+local LLM at roughly 4B parameters. Do not assume a GPU or large VRAM.
+
+**Generation takes 5–9 minutes per note, not the 1–2 this file used to claim.** Measured across
+21 real generations on the DEV box: median 7.0 min, range 4.6–9.5, 21 of 21 over the old budget,
+and the target ThinkPad is SLOWER than that box. The floor was set by a **91-word follow-up**, so
+the cost is output length and template size, not how much the therapist said. That number is not
+reachable by tuning — see rule 26 for why the two obvious levers don't work and what was built
+instead.
 
 ## Production stack
 
@@ -105,6 +111,12 @@ creating a custom template.
 Custom templates are always non-carry (v1).
 
 ### Block-format vs field-per-section (resolved — the reason `initial`/`followup` are field-per-section)
+
+> **Read rule 27 alongside this.** Everything below is still why the forms are shaped as they are,
+> but the risk assessment in it is out of date: measured on 25 real generations, `initial_updated`'s
+> block format is the BEST-behaved of the three (100% template conformance) and the
+> field-per-section Follow-Up is the worst (62%, dropping its carry-forward sections). Treat this
+> section as the design rationale, not as a live worry.
 
 Confirmed on real generations: block-outline templates (═══ dividers + `Field:` labels) do NOT map
 cleanly to the app's `## <section>`-per-field pipeline. The 4B model is **nondeterministic** about
@@ -277,6 +289,26 @@ every note-generation prompt:
     `cpt.suggest_codes` cannot match to 97530 by heading, so the note-side chip was missing
     entirely while the dictation-side extraction found it and `billing.reconcile` raised it as a
     `dictation_only` rule-15 omission.
+    **(d) Two more leaks, both found by a hand-written control the day it was written (2026-08,
+    `evals/data/longform_intake.txt`), and both in the same sentence pair.** The therapist said
+    "we did not do any manual therapy today and I did not do any electrical stimulation", then a
+    sentence later "I considered functional electrical stimulation for the left dorsiflexors but I
+    want to check with the surgeon first". 97014 was **billed as performed**.
+    * **Contemplating a treatment is not performing it.** "Considered" was not a recognised
+      exclusion cue, and the "planned for a future visit" that followed sat in a LATER clause, so
+      clause scoping — correctly — never saw it. Fixing the scope would have widened it for
+      everything; the fix belongs on the verb. `TEMPORAL_FUTURE_CUES` gained a deliberation family
+      ("considered", "thinking about", "pending", "may add", …). Same shape as the rule-21(b)
+      noun-form fix, and the same safe direction: a future cue can only move a treatment OUT of
+      the billable set.
+    * **An explicit negation must not be silently outvoted.** The negation WAS detected correctly
+      and then discarded, because `_dedupe` keeps the most billable mention of a code. Two mentions
+      that contradict each other cannot be resolved automatically, so the code now drops to
+      `uncertain` carrying BOTH clauses, and the clinician decides. Blanket "negation wins" would
+      be wrong too — "no manual therapy at first … later we did fifteen minutes" is real — so the
+      answer is to stop guessing, which is what the status enum exists for.
+    The 162-record corpus was unchanged by both (zero leaks before and after), which is the point:
+    this class only appears in speech nobody thought to generate.
 13. **Carry-forward reconciliation ("update, don't copy") is not reliable for every
     section, even when the prior snapshot and today's data are both available in the
     prompt.** Confirmed case: a real second-visit test (used_prior: true, snapshot
@@ -335,9 +367,63 @@ every note-generation prompt:
     "verify completeness" flag appended to the missing-info list. Caveats (per rules
     14/15): the condense pass is itself a 4B call and could drop a fact, and verification
     still anchors against the RAW dictation so a condense-introduced value with no basis
-    is flagged. Not yet validated on a genuinely huge real dictation — the deterministic
-    scaffolding + orchestration are unit-tested (`tests/test_chunked.py`), but confirm the
-    end-to-end condense behaviour on a real 30-min+ transcript before relying on it.
+    is flagged.
+    **NOW VALIDATED (2026-08), and the validation failed the feature. Two things were wrong, and
+    the second is the interesting one.** `scripts/validate_longform.py` runs a hand-authored
+    2,363-word intake (`evals/data/longform_intake.txt`) with a 78-fact ledger tagged head / mid /
+    tail, as an **A/B against the silent truncation condensing replaces** — because the claim is
+    comparative, and a one-armed run could only ever say "the condensed note is imperfect", which
+    was never in dispute.
+    (a) **The threshold was documented wrong by nearly 2x.** The budget is not `num_ctx`, it is
+    `num_ctx - num_predict - the prompt scaffolding` — for an Initial Evaluation, ~2,255 tokens,
+    about **1,350 words or a ~10-minute dictation**. `chunked.py` claimed "a ~20-minute dictation
+    already fits". It does not: a real long-form intake measures 1.60x over. Condensing is a
+    ROUTINE path for a full evaluation, not the rare escape hatch it was written as.
+    (b) **The condense pass did its stated job and made the note far worse.** Raw **59/78** facts;
+    condensed **18/78**, in double the time (29.6 min vs 15.3). Yet the condensed TEXT retained
+    **73/78** — the facts were all still there. The cause was one clause in the condense prompt:
+    "do NOT format it as a note — just clean sentences". A therapist dictating a long intake
+    SIGNPOSTS it out loud ("Medications." … "Cervical range of motion, active." … "Short term
+    goals, four weeks."), and flattening that into narrative removed the only map the 4B writer
+    has. It produced 5 sections instead of 18 and lost the entire middle and tail. The prompt now
+    requires those spoken labels to be preserved, one per line, in order.
+    **The transferable lesson: fact retention is not the objective, RECOVERABLE fact retention is.**
+    A preprocessing step can score 94% on content and still destroy the note, and no
+    content-only metric would show it. This is also why the A/B framing matters — graded alone,
+    18/78 reads as "imperfect, as the caveats said"; against 59/78 it reads as "ship the
+    truncation instead".
+    (c) **The fix for (b) made it fabricate, and THAT is why condensing is now OFF BY DEFAULT.**
+    Rewriting the condense prompt to preserve the therapist's spoken section labels worked — the
+    labels and their lists came back intact. Underneath one of them, the model had rewritten the
+    CONTENT. Five specific dictated short-term goals ("patient will ambulate three hundred feet
+    with a rolling walker and supervision only"; "improve Berg Balance Scale to forty five out of
+    fifty six") came back as five generic ones ("Improve balance and reduce fall risk"; "Improve
+    ability to ambulate safely"). Every number gone, every goal invented, in a passage that reads
+    perfectly professional.
+    **Nothing in Cadence can catch that.** `traceability` flags values in the NOTE that are absent
+    from the DICTATION — here the note ends up with FEWER values, not invented ones, so no flag
+    fires. It is rule 14's "arbitrary invented prose" class, introduced by a second model call the
+    clinician never sees, upstream of every guard. Truncation is the strictly better failure: it
+    loses the tail VISIBLY and it cannot invent.
+    So `chunked.CONDENSE_ENABLED` defaults to False (`CADENCE_CONDENSE_LONG_DICTATION=1` re-enables
+    it for an experiment), an over-budget dictation takes the raw path, and `_finalize_note` now
+    warns on `still_over` whether or not condensing ran — "part of it was not seen ... check every
+    section, especially the beginning and end, or split the visit into two shorter dictations."
+    The silent case, which is what this rule was written about, is still impossible.
+    **The general principle, which is worth more than this feature:** a preprocessing step that
+    RE-WRITES clinical content puts a model call upstream of every verification layer, where by
+    construction nothing can check it. Cleanup that DELETES on a matched pattern
+    (`clean_dictation`'s vocalized pauses) is safe because the deletion is bounded and inspectable.
+    Cleanup that PARAPHRASES is not, at 4B, on clinical content.
+    **Next thing to try, and it is the option this rule originally rejected:** raise `num_ctx` so a
+    long-form intake simply fits (3,599 + 2,865 + 3,072 needs ~9.5k; 12288 would do it) and delete
+    the second pass entirely. The rejection was "a 4B model's attention over a very long context
+    degrades" — true, but the raw arm ALREADY feeds a 6,464-token prompt and scores 76%, so
+    degraded attention is measurably the cheaper problem. It costs KV-cache memory on a box that
+    is already swapping (`docs/performance-tuning.md`), so measure it there before adopting it.
+    Re-measure with `scripts/validate_longform.py` after ANY change to the condense prompt, the
+    rules, or a template — the last of those moves the budget. `--condense-only` scores the
+    intermediate for half the runtime.
 17. **Spoken-artifact cleanup beyond fillers (prompt-level; clinician review still
     required).** The transcript also carries dictated *checklist* answers ("Patient
     worries about falling, yes"), garbled ASR passages, and self-contradictions that
@@ -484,6 +570,30 @@ every note-generation prompt:
     "edema not documented" alone); a second flagged an invented cane/walker goal and a fabricated
     40-minute session intensity, and surfaced the two edge cases fixed above. All flags reuse
     `[[NEEDS: ...]]` because that is the only marker the UI renders in amber.
+    **(g) The NORMALIZER was wrong in three ways, and two of them produced FALSE flags on
+    correctly-transcribed values** (2026-08, found by the long-form control before a single note
+    was generated — the ledger's self-check against its own source transcript failed 4/78, which
+    is what a ruler that checks itself is for). All three are spoken forms a PT uses constantly:
+    * **"one thousand feet" → "1 thousand feet".** `thousand` was not a scale word, so a perfectly
+      ordinary community-distance goal did not match the note's "1000 feet" and the `distance`
+      pattern flagged it as fabricated. A false amber flag on a real value is worse than a miss —
+      it teaches the clinician to skim past the flags that matter.
+    * **"point six eight" → "point 14".** The parser SUMMED the digits after "point", so a
+      dictated gait speed normalized to a number nobody said, and the note's honest "0.68 meters"
+      had nothing to anchor to. Spoken decimals are read digit by digit now.
+    * **"one thirty eight over eighty two" → "39/82".** The colloquial hundreds form summed to 39.
+      No live false flag (rule 20(c) had already routed vitals around value-matching for exactly
+      this reason) but the normalizer was inventing a number, which no downstream consumer should
+      inherit. Now scoped to the "<value> over <value>" idiom on BOTH sides, because that is the
+      only place the reading is unambiguous — "one thirty" alone is a clock time as often as a
+      pressure.
+    **Deliberately NOT done:** now that spoken BPs normalize, rule 20(c)'s reason for type-matching
+    vitals instead of value-matching them is weaker, and a `\d{2,3}/\d{2,3}` value pattern would
+    catch a fabricated BP or a fabricated Berg/SCIM score — a real fraud-risk class that is
+    currently invisible. It was left out because only the two commonest idioms are covered, a note
+    re-composing a value differently would false-flag, and rule 24's lesson is that a measurement
+    which manufactures findings is worse than no measurement. Add it WITH a real-note measurement,
+    not on the strength of the argument.
 
 21. **Synthetic evals measure the extractor, not the world — keep the non-circular control.**
     `evals/synth/` generates labeled dictations LABEL-FIRST (draw the diagnosis, interventions,
@@ -641,6 +751,13 @@ correction to the rules above so it persists.
   still run); CPU transcription can lag a long session (bounded only by queue memory); and a
   recorded visit needs the patient's **consent** (surfaced in the UI copy). Speaker attribution and
   chunked *generation* for very long transcripts (rule 16) remain future work.
+- **Generation is queued, not awaited** (rule 26). `POST /api/generate/jobs` returns immediately;
+  the "Notes in progress" tray under the nav is visible from every tab and is how the clinician
+  tracks a note while doing something else. One serialized worker, an append-only buffer read by
+  cursor so a reload reattaches, in-memory only (an unreviewed draft never touches the encrypted
+  store), and a queue POSITION rather than an invented ETA. `/api/generate/stream` and
+  `/api/generate` both still exist and share `_generation_setup`/`_finalize_note` with the queue,
+  so the three paths cannot drift.
 - **Guided dictation** (the Home dictate card's "Guided" mode) walks the clinician
   through the selected form one section at a time, each with a concrete example,
   because a static "what to mention" list couldn't tell them which of a dense form's
@@ -725,3 +842,458 @@ correction to the rules above so it persists.
     rule 21's "check the gold labels before touching the cue table" recurring on the RENDERING side
     rather than the label side, and it is why the sweep prints the spoken diagnosis beside every
     mismatch — a bare count of false positives would have sent the fix to the wrong file.
+
+26. **The 1–2 minute generation budget is unreachable on this hardware, so the WAIT was removed
+    instead of the minutes.** Measured: median 7.0 min over 21 real generations, 21 of 21 over
+    budget, floor set by a 91-word follow-up. This file previously floated three fixes; two of them
+    do not survive the measurement, and knowing why saves someone re-trying them:
+    * **"Cut `num_predict`."** 3072 is a CEILING, not a target. A note is ~1,200–2,500 tokens, so
+      the ceiling never binds — lowering it would truncate long notes before it saved a second.
+    * **"Generate per-section."** The same total output tokens through more prompts, and each
+      section would lose the whole-note context that internal consistency (rule 4) depends on.
+    Time is output-tokens ÷ tok/s, and both are already near their floor (see
+    `docs/performance-tuning.md`: the biggest lever is free RAM, not config). So the third option is
+    the real one, and it is a PRODUCT change rather than a speed one: **generation moved off the
+    request into a server-side queue** (`app/generate/jobs.py`, `POST/GET/DELETE
+    /api/generate/jobs`). The clinician starts a note, walks to the next patient, dictates that one
+    too, and reviews both at the end of the block; a "Notes in progress" tray under the nav shows
+    every note queued, writing, or waiting for review, from any tab. Design points that are
+    load-bearing rather than incidental:
+    * **ONE worker, strictly serialized.** Two 4B generations on 4 CPU cores run twice as slowly
+      each and double the memory pressure that is the actual bottleneck. Same reason live capture
+      uses a single serialized MedASR worker.
+    * **The buffer is append-only and read by CURSOR**, so closing the tab, switching patients, or
+      reloading reattaches to a running note. The old `/api/generate/stream` tied a note's life to
+      one HTTP connection; it still exists for tooling and for watching a single note write.
+    * **Jobs are in memory and die with the server, deliberately.** A generated note is an
+      unreviewed draft, and persisting unreviewed model output beside signed records is the wrong
+      place for it. The queue survives the browser, which is the case that happens.
+    * **The tray shows a queue POSITION, never an ETA.** Throughput on this box swings with
+      whatever else is open, so a minutes estimate would be a number Cadence cannot stand behind.
+    * Switching patients DETACHES the live tail (the job keeps running) — streaming patient A's
+      note into a view headed by patient B is how a note gets reviewed against the wrong chart.
+
+27. **Template conformance is now measured, and it caught the wrong form being worried about.**
+    This file spent a long section on `initial_updated`'s block format being the risky one. Scored
+    against the 25 stored real generations (`docs/synthetic-run-outputs-full.json`) with the new
+    `scripts/audit_notes.py` conformance metric — did the note produce the sections its template
+    actually named? — the ranking inverts:
+    **`initial_updated` 28/28 = 100% (7 runs). `initial` 225/238 = 95%. `followup` 25/40 = 62%.**
+    The block form is the *best behaved* of the three; the field-per-section Follow-Up is the worst,
+    and it drops exactly the sections that matter most — `Summary of Daily Skilled Services`
+    (replaced by an invented `## Follow-Up Visit` title), `Plan`, and the CARRY-FORWARD labels
+    `Precautions` / `Short-Term Goals` / `Long-Term Goals` that `CARRY_SECTION_LABELS` depends on.
+    Treat the block-vs-field tradeoff section above as history: it is still the reason the forms are
+    shaped as they are, but it is no longer where the risk lives. Two lessons:
+    (a) A structural worry recorded once tends to outlive the evidence for it. Re-measure before
+    acting on one — the fix for `initial_updated` would have been work spent on the healthy form.
+    (b) The metric had to be verified against notes read BY HAND before being believed (rule 24).
+    Its first two versions were wrong in opposite directions: filtering spec lines by instruction
+    WORDS silently dropped two real sections whose guidance text contained "NEVER", and an
+    unanchored `## ` regex matched the `"## "` inside the specs' own prose. Both would have made a
+    conforming note look broken.
+
+28. **A folded heading does not need a separator, and the ones without one were invisible.**
+    Rule 19's `split_folded_headings` repairs `## Vitals — BP: 120/80` (em dash) and long prose
+    headings. Measuring the 4 real Follow-Up notes above found the same fold with **no punctuation
+    at all** — `## Vitals 122/76`, `## Vitals 72 bpm, 78/45`, `## Pain - At Rest 1/10`,
+    `## Therapeutic Exercise 20 minutes`, every one with an EMPTY body — on 3 of 4 notes. Same
+    consequences as rule 19 describes and for the same reason: `traceability` reads bodies only, so
+    a blood pressure on the heading line is never checked against the dictation, and
+    `renderEditView` gives a textarea only for the body, so the clinician cannot correct it either.
+    The repair now recognises the boundary by the VALUE rather than by punctuation: a heading whose
+    tail starts a measured quantity, with a legitimate label in front of it. Across all 25 real
+    runs this took empty bodies from 8 to 3, and every remaining one is genuinely empty or carries
+    a non-numeric value. **`## Response to Treatment Good` is deliberately NOT repaired** — "Good"
+    is a value to a reader but not a mechanically detectable one, and a rule that split on a
+    trailing adjective would start cutting real labels in half. Same discipline as rule 17's
+    refusal to strip a checklist ", no": when the safe half is separable, take only that half.
+
+29. **Shipping: the program and the clinician's data are different things, and updates are where
+    that stops being philosophy.** Until v1.0 Cadence was one folder with the encrypted database
+    sitting inside it next to the code. Installing a new version alongside the old one breaks that
+    immediately — the database is either stranded in the previous version folder or a fresh empty
+    one appears and the clinician opens Cadence to an empty roster. So `app/paths.py` splits them:
+    `CADENCE_DATA_DIR` holds storage / the clinician's templates / credentials, outside every
+    version folder. **Unset, every path is byte-identical to what it was** — that is why a checkout
+    and all 716 tests are unaffected, and it is deliberate, because a data-location change that
+    silently moved a patient database would be the worst possible bug in that file.
+    The install layout, and the reason for each part:
+    `versions/<v>/` (replaced wholesale), `data/` (never touched), `current` → a directory
+    JUNCTION, not a symlink, because Windows creates junctions without administrator rights and an
+    update the clinician cannot run is not an update. `current` is repointed LAST, so an
+    interrupted update leaves an unused folder rather than a half-broken install.
+    Built-in templates ship WITH the code and an update should replace them; only overrides and
+    custom templates are the clinician's. `schema.sql` likewise travels with the code — a version's
+    migrations are part of that version.
+    Three refusals matter more than the happy path: the updater will not run while the app is open
+    (reusing the DATABASE LOCK rather than inventing a second liveness check that could disagree
+    with it), `scripts/release.py` will not build from a dirty tree or a version that is already
+    tagged, and the release zip is an ALLOWLIST — a denylist that misses one entry ships a patient
+    database, and `tests/test_release_packaging.py` asserts both directions (nothing sensitive in,
+    the app itself not accidentally excluded out).
+    **There is no auto-update.** An update changes what notes SAY — a prompt rule, a backstop, a
+    template — so the clinician reads what changed, in clinical language, and decides. Verified end
+    to end on a simulated install: a patient created under 1.0.0 was visible from 1.0.1, and the
+    note still carried `app_version = 1.0.0`, which is the point of stamping it.
+
+30. **The billing gate is COMPUTED, not configured.** `cpt.billing_enabled()` returns False while
+    any ICD region is unverified, so v1.0 ships with CPT/ICD suggestions hidden and a Status line
+    saying why — and turns them on by itself the moment the last region is signed off. A flag
+    someone has to remember to set is a flag someone forgets. The failing sign-off test protects
+    the developer; this protects the clinician, and only one of those still works after the code
+    leaves this machine. `CADENCE_BILLING=on|off` overrides it for development and the eval
+    harness, and the gate lives at the SERVER boundary so `billing.extract` / `cpt.suggest_codes`
+    stay pure and the harness keeps measuring the extractor regardless.
+
+31. **"Ask for changes" — rewrite the section, not the note. Measured 3/5 → 4/5 applied, 4 damaged
+    sections → 0, minutes → seconds.** The whole-note rewrite asked a 4B model to re-emit ~2,000
+    tokens to change one line; on a real 14-section note it returned the note byte-identical twice
+    in five, and one "successful" revision DELETED FOUR SECTIONS and reworded four more. Collateral
+    drift in a clinical note is worse than a missed edit — the clinician asks to reword the
+    assessment and the medication list quietly changes. Scoping fixes it structurally rather than
+    by instruction: only the named section is sent and returned, everything else is spliced through
+    byte-identical, so the model **cannot** reword what it never saw. Selection is deterministic
+    (`select_revise_sections`) and REFUSES on a partial match, because editing the wrong section is
+    worse than editing them all; structural requests (merge / reorder / move) still take the
+    whole-note path, since a per-section splice cannot change which sections exist.
+    **Three prompt failures were measured, not guessed, and each is now a test:**
+    (a) leading with the formatting rules and burying the change made the model echo the section
+    back unchanged; the change now comes LAST and says the body MUST DIFFER;
+    (b) a "here are the other section names, for context, do not output them" block was echoed
+    VERBATIM into the answer — it guarded a speculative problem and caused a measured one;
+    (c) a prompt ending in prose gets CONTINUED like prose, so it now ends on a bare
+    `REVISED SECTION:` cue, which turns the task from "continue this document" into "fill this in".
+    The general lesson is about the loop, not the prompt: going from a 4-minute whole-note revision
+    to a 20-second scoped one is what made three iterations affordable in the time one measurement
+    used to take. **Cheap feedback is a correctness feature.**
+
+32. **The Follow-Up conformance defect (rule 27) had ONE root cause, and it disabled a feature one
+    visit later.** On 3 of 4 real Follow-Up generations the model turned the template's own TITLE
+    LINE into a section heading:
+    `## Follow-Up Visit` / body `Precautions [carry forward] — weight-bearing status…`
+    That does two things at once. It invents a section nobody asked for, and it CONSUMES the real
+    first one — "Summary of Daily Skilled Services" vanishes and the Precautions content is filed
+    under a heading that is not Precautions. **`Precautions` is a carry-forward label**, so
+    `CARRY_SECTION_LABELS` stops matching it and the NEXT visit has nothing to carry forward. A
+    heading bug that looks cosmetic silently switches off carry-forward one visit downstream, which
+    is why "the note still reads fine" is not a sufficient test.
+    The good run of the four echoed the same title line as PLAIN PROSE and then got everything
+    right, which is what identified the title line as the trigger rather than the template's shape.
+    Three repairs, all anchored on labels the template itself declares
+    (`forms.spec_section_labels` — ONE definition, now shared with `audit_notes.py`, because two
+    copies would let the app and the thing measuring the app disagree about what the template asked
+    for):
+    (a) `relabel_spec_title_heading` — a heading equal to the form's ALL-CAPS title whose body
+    OPENS with a declared label is relabelled to that label. Anchored twice, so it can only rename
+    a section the template named. When the body reveals no label it is left alone: a miss is
+    recoverable, a wrong relabel files clinical content under the wrong heading.
+    (b) `split_shifted_section_bodies` — the same shift continues down the note
+    (`## Pain - At Rest 1/10` whose body is `Pain - With Movement 4/10`), so the following
+    section does not exist at all. Splitting it out also leaves an empty body, which is exactly
+    what `split_folded_headings` then repairs — the two chain, and that is why the order in
+    `apply()` matters. Guarded by "that section must be ABSENT": a Plan body opening
+    "Short-Term Goals will be reassessed…" is prose, and the giveaway is that Short-Term Goals
+    already exists.
+    (c) `split_declared_label_headings` — rule 28's fold repair cannot see
+    `## Response to Treatment Good`, because "Good" is a value to a reader and nothing to a regex.
+    The declared label makes it tractable. Guarded against a label CONTINUATION, or
+    "Plan of Treatment" would split into a "Plan" section whose body is "of Treatment".
+    **Measured over the same 25 real notes: Follow-Up conformance 62% -> 75%, empty bodies 3 -> 2,
+    `initial` and `initial_updated` unchanged at 95% and 100%.** The remaining Follow-Up gaps are
+    genuine model omissions (it stops before Plan and the goals), not mislabelling — a different
+    problem, and one no relabelling can fix. n=4 is still a thin sample; generate more with
+    `scripts/eval_corpus.py --form followup` before concluding anything about the residual.
+
+33. **A 41% "stated-value capture" that was mostly a harness misuse, and underneath it a real
+    rule-15 template gap.** Running the 8 hand-written shoulder controls with
+    `--form followup` reported that only 41% of dictated values reached the note. Alarming, and
+    largely not a generation defect:
+    (a) **Three of those eight records are Initial Evaluations**, and `--form followup` forced them
+    through the Follow-Up template. An evaluation dictation is dense with range-of-motion and
+    strength values, and the Follow-Up outline had NO section for either — so those values had
+    nowhere to go by construction. Splitting the two apart: genuine follow-ups captured **57%**,
+    the forced evaluations **19%**. This is rule 25's lesson recurring one level further out —
+    suspect the harness INVOCATION, not just the generator or the cue table. `eval_corpus.py` now
+    prints a warning naming the records whose derived form `--form` overrides, and that warning
+    sits BEFORE the `--no-generate` early return, because the first version of it was placed after
+    and so never fired for the very command that motivated it.
+    (b) **The residue is real, and it is a TEMPLATE problem, not a prompt one.** Of the 22 values
+    genuine follow-ups dropped, **15 were ROM or MMT — values the outline could not hold** — and
+    only 7 had a section available. That is exactly rule 15's documented root cause ("the template
+    had nowhere to put the content, so no prompt rule could have saved them. Fix the template
+    first"). `templates/followup.md` gained an **Objective Measures** section (and a matching
+    guided-dictation step, or the walkthrough would march the clinician straight past the thing the
+    section exists to capture). On the same corpus that should take genuine-follow-up capture from
+    57% to roughly 86% — **a projection, not a measurement; re-run the sweep before quoting it.**
+    **BOTH CHANGES WERE THEN REVERTED — see rule 35.** The Objective Measures section shipped in
+    the same sweep as the rule-32 prompt roster, the pair regressed section coverage from 93% to
+    47%, and neither could be individually convicted. The rule-15 gap described here is REAL and
+    still open; the fix has to be re-attempted on its own.
+
+34. **A clock that counts while the laptop sleeps made the one performance metric useless.** On
+    Windows both `perf_counter` and `monotonic` keep counting through SUSPEND, so a sweep left
+    running overnight recorded a single generation as 84,715 seconds — 23 hours — and dragged the
+    reported mean from **324s to 10,873s**. That is the difference between "5.4 minutes a note,
+    matching the documented median" and "3 hours a note", on the exact number rule 26 uses to argue
+    about whether Cadence is usable between patients. Nobody would have believed 3 hours; the
+    damage is that it makes the metric ignorable, and an ignored metric cannot report a real
+    regression either.
+    `evals/runner._timed` now excludes an implausible wall-clock from the mean and COUNTS the
+    exclusions, so a sweep can never quietly discard most of its own timings. Zero is reported
+    separately from implausible, because a `--no-generate` sweep legitimately has no timing and
+    calling that "the machine slept" would be the harness asserting something false about itself.
+    Same defect, same session, in `scripts/validate_revise.py` — worth assuming any elapsed-time
+    measurement in this repo has it until checked. **The general form: a measurement taken across
+    an interval the process does not control needs a plausibility bound, and the bound belongs
+    next to the metric rather than in the reader's head.**
+
+35. **Two plausible fixes, shipped together, made it worse — and the metric that improved was the
+    one that mattered less.** Rule 32 added a template-derived SECTION ROSTER to the prompt
+    ("every one of these must appear, in this order… the final section is Plan; do not stop
+    early") and rule 33 added an OBJECTIVE MEASURES section to the Follow-Up template. Measured on
+    the same 5 real records, before and after:
+    | | before | after |
+    |---|---|---|
+    | stated-value capture | 57% | **65%** |
+    | template section coverage | **93%** | **47%** |
+    Three of five notes stopped after the treatment sections — no Plan, no Goals, no Functional
+    Status. **A note missing its Plan is not improved by containing more measurements**, so the
+    value-capture gain is a trap, not a trade. Both changes are reverted;
+    `prompt._section_roster_rule` is kept UNUSED with the result in its docstring, and
+    `tests/test_section_recovery.py` asserts the revert so re-enabling it fails loudly.
+    Two lessons, and the second is the expensive one:
+    (a) **Change ONE thing per measurement.** Shipping both together means neither is individually
+    convicted, so the honest outcome is to revert both — including the one that might have been
+    fine. That is the cost of a confounded experiment, paid in work already done.
+    (b) **A checklist may make a small model stop sooner, not later.** The plausible mechanism
+    (untested): naming the required sections gives a 4B a short concrete list to satisfy, and it
+    satisfies the front of it and stops. Telling it "do not stop early" appears to do less than
+    implying there is a finite list it can finish. Same family as rule 19's finding that forceful
+    completeness wording was over-read into inventing normals — directive prompt text on this
+    model reliably produces a literal reading nobody intended.
+    **What SURVIVED is the deterministic half.** Rule 32's three postprocess repairs are unaffected
+    by any of this — they run after generation, cannot change how many sections the model writes,
+    and are still measured at 62% -> 75% conformance with carry-forward restored. When a
+    prompt-side idea and a code-side one address the same failure, the code-side one is the one
+    that keeps working.
+
+---
+
+## Where things stand, and the honest next steps (as of 2026-08-24)
+
+Written so a cold session can pick up without re-deriving any of it. **Re-verify the dates and
+numbers before trusting this** — if the git log has moved well past `ef517ac`, treat this section
+as history rather than status.
+
+### What is BUILT (feature inventory)
+
+Everything below is implemented and working locally unless marked otherwise. Sections above this
+one carry the reasoning; this is the flat list.
+
+**Input — four modalities, all on-device** (`app/ui/static/app.js`)
+- Free-text dictation box (the default).
+- Mic dictation -> local MedASR (`setupDictation`, `/api/transcribe`).
+- Audio-file upload (`setupAudioUpload`).
+- Live in-session capture (`setupLiveCapture`): continuous recording, auto-chunked into ~3-min
+  segments, a single serialized MedASR worker so the CPU budget holds; recording never blocks on
+  transcription. v1 has NO speaker diarization and needs patient consent — both documented, not bugs.
+- **Guided dictation**: walks the clinician through the selected form section by section with a
+  concrete example each. Content lives in each template's `steps:` frontmatter. Invariant: `steps`
+  are an input aid and NEVER enter the generation prompt (`tests/test_forms_guide.py`).
+
+**Generation** (`app/generate/`)
+- MedGemma 4B via Ollama, CPU-only, `num_ctx=8192` / `num_predict=3072` (rule 16).
+- The template's outline body IS the generation spec, so editing a template changes the prompt.
+- `chunked.fit_dictation` condenses an over-long dictation at sentence boundaries; a normal-length
+  one is returned byte-identical with zero extra model calls.
+- `prompt.clean_dictation` strips vocalized pauses deterministically at the single chokepoint.
+- **Deterministic postprocess backstops** (`postprocess.apply`, in order): carry-instruction heading
+  strip -> `strip_spec_instruction_headings` -> `split_folded_headings` (long headings, em-dash
+  folds, AND separator-less value folds — rule 28) -> zero-minute section drop -> `enforce_carry_tags`
+  -> `flag_template_echo` -> `flag_code_sections` / `flag_code_field_lines`
+  -> `normalize_strength_grades` -> `strip_checklist_affirmations`.
+- **Verification layer** (`traceability.add_verification_flags`), six fabrication/quality classes:
+  unanchored clinical values, unsupported normals, unsupported vitals, invented assistive devices,
+  cross-section paste-duplication, fabricated pain-slot scores. All FLAG, never delete.
+- **Carry-forward** for Follow-Up Visits, with a body-scan fallback so it survives block-format or a
+  model regression that folds a note.
+
+**Billing** (`billing.py`, `cpt.py`, `coding_tables.py`) — the model never authors a code
+- CPT suggestion from the note's own treatment HEADINGS (deterministic table).
+- CPT + ICD extraction from the DICTATION, guarded four ways: clause-scoped matching, strong/weak
+  cue tiers, a status enum (`performed | negated | prior_visit | planned | home_program |
+  uncertain`) that excludes with a visible reason, and `confirm_required=True` on every path.
+- ICD-10 from **six per-body-part closed tables** (shoulder, knee, lumbar, cervical, hip,
+  ankle/foot), matched only in a diagnosis-framing clause, never a hedged one; laterality only from
+  what was said; symptom codes suppressed when a definitive diagnosis exists; mutually exclusive
+  variants collapsed; body part resolved from the diagnosis clause when the transcript ties.
+- **8-minute rule units over TIMED codes only**, returning BOTH CMS substitution and the AMA rule of
+  eights with the disagreement shown, plus `units_if_confirmed`.
+- `billing.reconcile` cross-checks the note against the dictation and raises `dictation_only` gaps.
+- Billing is response metadata, never a note section, and is computed even when the model returns
+  an unparseable note.
+
+**Templates** (`forms.py` + Templates tab) — runtime editable
+- 3 built-ins (`initial`, `initial_updated`, `followup`); create / duplicate / edit / reset /
+  delete; built-in edits stored as spec-only overrides so shipped files stay pristine.
+
+**Storage** (`app/storage/`)
+- Fernet-encrypted SQLite, decrypt-to-temp on start / re-encrypt on write.
+- Cross-process PID lock + `(mtime, size)` staleness guard — two writers would otherwise be
+  last-writer-wins over the WHOLE database.
+- `synthetic` column on patients AND notes so demo rows are precisely removable.
+- **Correction capture** (rule 22): `original_sections_json`, `revise_instructions_json`,
+  `edited_section_count` (NULL = not captured, 0 = accepted as generated), plus generation
+  provenance. Write-only; deliberately NOT on the HTTP read surface.
+
+**UI** (`app/ui/`)
+- Patient roster, per-section review and edit, nothing persisted until Save.
+- **"Notes in progress" tray** (rule 26) — visible from every tab; queue position, live elapsed
+  time, Watch / Review / Cancel, and a toast when a note finishes while the clinician is elsewhere.
+- Amber gap chips (`[[NEEDS: …]]`) and blue code chips (`[[CPT: …]]`).
+- **"Copy for Office Ally"** — buckets any note's sections into Subjective/Objective/Assessment/Plan
+  for one-click paste.
+- Templates tab; Evals tab (run sweeps, read recorded results).
+
+**Evaluation and QA**
+- `evals/synth/`: label-first seeded generator, 6 regions, short follow-ups AND ~1,000-word
+  long-form intakes (`intake.py`), with a DELIBERATE paraphrase gap so recall stays honest.
+- 18 hand-written control records — the only non-circular check (gold labels still unverified).
+- Scored harness + timestamped results store + `eval_compare.py`; `--no-generate` records a
+  billing sweep in seconds with no model call.
+- `scripts/audit_notes.py`: measures generated notes against their dictations for DROPPED and
+  INVENTED facts, no LLM judge — plus TEMPLATE CONFORMANCE (rule 27), which is what caught the
+  Follow-Up form dropping its carry-forward sections.
+- `scripts/validate_longform.py` + `evals/data/longform_intake.txt` / `_ledger.json`: a
+  hand-authored 2,363-word intake with a 78-fact ledger tagged head/mid/tail, run as an A/B
+  (raw vs condensed) so rule 16 is measured against the truncation it replaces rather than
+  graded alone. The ledger self-checks against its own transcript before scoring anything.
+- **633 tests.**
+
+**Ops / tooling**
+- `launcher.py` (desktop shortcut), `setup.ps1`, `scripts/backup.py` (now with a `restore
+  --dry-run` rehearsal — an untested backup is not a backup, and testing one used to mean
+  overwriting the live database), `scripts/seed_demo_data.py`, `scripts/verify_pipeline.py`,
+  `scripts/verify_transcription.py`, `scripts/validate_quality.py`.
+- `scripts/coding_signoff.py`: prints the ICD/CPT sign-off worksheet a coder can actually work
+  from, and records a completed sign-off per region (`--sign <region> --by … --on …`). The tables
+  live inside a Python module, so "please review the codes" used to mean "please read
+  coding_tables.py", which is not a request you can make of a coder.
+- `scripts/verify_sheets.py`: preflights the Sheets sync and names the failing setup step (API not
+  enabled / Sheet not shared / wrong tab / wrong header) instead of surfacing a stack trace in a
+  background poll. Read-only.
+- Google Sheets roster sync — code-complete, **blocked** on Cloud project permissions.
+
+### What is measured and green
+
+- **682 tests, exactly one failing**, and that one fails on purpose: the billing sign-off gate.
+- **Billing extraction**, 1,440 synthetic cases over 5 seeds: ICD precision **99.2%**, recall
+  **97.5%**; CPT precision **100%**, auto-billed 84%, surfaced 100%. **Zero** CPT false positives,
+  laterality errors, distractor leaks, fabricated minutes, or overstated units.
+- **162-record corpus** (`scripts/eval_corpus.py --no-generate`, seconds, no model needed):
+  synthetic ICD r92%/p100%, hand-written control ICD r93%/p100%, CPT 100%/100% on the control.
+  Per rule 21(c) the synthetic set scoring BELOW the control is the intended direction. Unchanged
+  by the two rule-12(d) billing fixes, which is the point — that class of leak only shows up in
+  speech nobody thought to generate.
+- **Note generation**, 18 real MedGemma notes via `scripts/audit_notes.py`: 61 medications named,
+  **61 traceable, 0 invented, 0 dropped**; 0 folded headings; 8 invented assistive devices, all 8
+  caught by the rule-20 layer.
+- **Template conformance** (rules 27/32), 25 stored real generations: `initial_updated` **100%**,
+  `initial` **95%**, `followup` **75%** (was 62% before the rule-32 postprocess repairs). The
+  prompt-side attempt at the same problem was measured WORSE and reverted — rule 35.
+- **Generation time**, corrected: mean **324s (5.4 min)** per note on the dev box. The harness had
+  been reporting 10,873s because its clock counted through a machine suspend (rule 34). Across the same 25 notes / 324 sections, the rule-28 fold
+  fix took empty bodies from **8 to 3**, and every remaining one is genuinely empty or holds a
+  non-numeric value.
+- 9 sweeps recorded in `evals/results/` and visible in the Evals tab.
+
+**And one thing that measured RED, which is the more useful result** — see rule 16 and
+`evals/results/longform/`. Rule 16's condensing path had never been run on a real long dictation.
+Run as an A/B against the silent truncation it replaces, it made the note dramatically WORSE:
+**18/78 facts vs the raw path's 59/78, in double the time** — and the rewritten prompt that fixed
+that then FABRICATED, turning five specific dictated goals into five generic invented ones.
+**Condensing is now off by default and an over-budget dictation is flagged instead.** A feature can
+be correct at its stated job (73/78 facts survived the condense pass) and still be net harmful, and
+only an A/B shows that — grading the condensed note alone would have read as "imperfect, as
+documented".
+
+### The three things that actually matter next
+
+**1. Nothing here has met a real user, and that is now the binding constraint.** Every number above
+is self-referential: a corpus written by the same author as the extractor, scored against gold
+labels hand-read by that author. The 18-record hand-written control is the only non-circular check
+and shares the same author. **One real dictation from the clinician, on the target ThinkPad, run
+end to end, tests more than another 10,000 synthetic cases** — MedASR against a real voice and a
+non-native accent, how a PT actually structures speech, note quality, and the UX, all at once.
+Every structural defect found this session came from the hand-written control precisely because a
+template generator cannot invent phrasings nobody gave it. Do this before writing more eval code.
+
+**2. Generation time — ADDRESSED, but the fix needs confirming on the ThinkPad.** The old text
+here asked for a product decision between a queued background job, a smaller `num_predict`, and
+per-section generation. Rule 26 records why the last two do not survive the measurement and what
+was built instead: generation now runs in a server-side queue with a "Notes in progress" tray, so
+the clinician starts a note and walks away rather than waiting seven minutes. **The minutes did
+not change** — that is the honest framing. What changed is that they are no longer the clinician's
+minutes. Still to do: run it on the target i5-8365U, which is slower than the box every number
+here came from, and confirm the tray reads well when three notes are queued behind each other.
+
+**3. The ICD tables are unverified, which blocks billing entirely — but the ask is now a
+worksheet, not a code-reading exercise.** Six regions (~70 codes) plus
+all 18 control records: `TABLE_PROVENANCE.verified_by` and `gold_provenance.verified_by` are blank
+everywhere. `tests/test_billing_extract.py` fails while they are, deliberately, so it cannot be
+forgotten. **This is still not a code task** — it needs a certified coder or the clinician with the
+ICD-10-CM tabular list. Until then every chip is one author's reading of the codebook, and rule 12
+exists because a confidently-wrong code is worse than no code.
+
+What DID change is that the ask is now deliverable. `python scripts/coding_signoff.py --out
+signoff.md` prints a printable worksheet: every code with its label, its laterality variants, the
+exact dictation phrases that trigger it, and three questions per row in the order they cause harm.
+It also lists what is deliberately excluded and why. When a region passes,
+`--sign <region> --by "<name, credential>" --on <date>` records it, per region, so the practice can
+start billing shoulder and knee while the regions it rarely sees stay visibly unverified. Before
+this, "please review the codes" meant "please read `app/generate/coding_tables.py`", which is not
+a request you can make of a coder — the blocker was partly a tooling gap wearing a domain-expertise
+costume. **Send the worksheet.**
+
+### What to STOP doing
+
+**The synthetic billing sweeps are saturated.** 99.2% precision, and all 12 remaining false
+positives are the BY-DESIGN rule-21(a) paraphrase gap ("new hip" must keep colliding with "new hip
+pain"). More seeds now measure less. Resist the pull of another harness improvement over getting a
+real dictation — that is avoidance wearing the clothes of rigor. Worth remembering as a caution:
+`scripts/audit_notes.py` shipped with three bugs of its own and its first "honest" reading was 15
+dropped medications when the true answer was 0 (rule 24).
+
+### Loose ends, ranked
+
+1. **Follow-Up notes still stop early.** Rule 32 fixed the MISLABELLING half (62% -> 75%
+   conformance; `Precautions` is recovered on every affected note, so carry-forward works again).
+   What remains is different in kind: the model simply stops before `Plan`, `Short-Term Goals` and
+   `Long-Term Goals` on some runs, and no relabelling can fix an omission. Candidates, in the order
+   I would try them: the treatment sections are unbounded and may be eating the output budget
+   before the tail is reached; the spec's title line may still be steering it (echoing that line
+   as prose correlated with the one clean run); or the goals belong earlier in the outline.
+   **n=4 is far too thin to choose** — generate more first with
+   `scripts/eval_corpus.py --form followup --limit 8`, score with `scripts/audit_notes.py`.
+2. **Demo roster is 3 of 18.** Re-run `scripts/seed_demo_data.py` (`--clear` first to avoid
+   duplicating the 3), ~90 min, and **close the app first** — the lock in `app/storage/db.py` will
+   refuse otherwise, which is the point.
+3. **Google Sheets sync** is code-complete but blocked on Cloud project permissions
+   (`docs/google-sheets-sync-setup.md`). `scripts/verify_sheets.py` will name the exact failing
+   step the moment someone picks it up again.
+4. **The backup routine has never been exercised on the TARGET machine.** It now has been on the
+   dev box, against the real encrypted store: verify → backup → verify → list → `restore
+   --dry-run`, all green. Run the same five commands on the ThinkPad, to a real USB drive.
+
+**Closed since the last write-up:** rule 16 validated on a real long transcript (and the feature
+turned OFF as a result — item 2 of the old list; the follow-up is the `num_ctx` experiment rule 16
+now describes); `initial_updated`'s block format measured clean at
+100% conformance, so the old item 3 was a worry about the wrong form; generation time addressed by
+the queue (rule 26); the coding sign-off turned into a worksheet.
+
+The single next action, if only one: **record one real session on the ThinkPad and run it through.**
+It will reorder everything above it. Nothing in this session changed that — every number here is
+still self-referential, produced by the same author as the thing it measures, and the defects that
+mattered most were all found by the one hand-written control rather than by any amount of
+generated corpus.

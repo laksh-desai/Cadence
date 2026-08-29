@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.generate import postprocess, traceability
+from app.generate.forms import FORMS, spec_section_labels as FORMS_SPEC_LABELS
 from app.storage import db
 
 _DOSE = (r"\d|as\b|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|"
@@ -124,9 +125,37 @@ def _dropped_medications(transcript: str, carried: set[str]) -> set[str]:
     return {c for c in cand - _NOT_DRUGS if c not in carried}
 
 
+def _declared_headings(form_id: str) -> list[str]:
+    """Delegates to `forms.spec_section_labels`, which the postprocess repairs also use.
+
+    This used to be a second implementation living here, and that is exactly the drift this file's
+    docstring promises not to have: the audit would have been scoring notes against a different
+    idea of what the template asked for than the app was repairing them against.
+    """
+    return [h.lower() for h in FORMS_SPEC_LABELS(form_id)]
+
+
+def _conformance(form_id: str, sections: list[dict]) -> tuple[int, int, int]:
+    """(declared, produced-and-declared, declared-but-missing).
+
+    This is the block-format question CLAUDE.md left open for `initial_updated`, asked of every
+    form: did the model actually produce the sections the template named? A block template that
+    the model folds into one section, or a field-per-section template it collapses, both show up
+    here as missing headings — and unlike a fold, a COLLAPSE leaves bodies populated, so no other
+    structural counter catches it.
+    """
+    declared = _declared_headings(form_id)
+    if not declared:
+        return 0, 0, 0
+    produced = {(s.get("heading") or "").strip().lower() for s in sections}
+    matched = sum(1 for d in declared if any(d == p or d in p or p in d for p in produced))
+    return len(declared), matched, len(declared) - matched
+
+
 def audit_note(row) -> dict:
     sections = json.loads(row["sections_json"])
     transcript = row["dictation_raw"] or ""
+    declared, matched, missing = _conformance(row["form_id"], sections)
 
     named = _note_medications(sections)
     carried = _dictated_medications(transcript, named)
@@ -141,6 +170,9 @@ def audit_note(row) -> dict:
         "empty": sum(1 for s in sections if not s.get("body", "").strip()),
         "long_head": sum(1 for s in sections
                          if len(s.get("heading", "")) > postprocess.MAX_HEADING_CHARS),
+        "declared": declared,
+        "matched": matched,
+        "missing_sections": missing,
         "meds_in_note": len(named),
         "meds_ok": len(carried),
         "meds_invented": sorted(invented),
@@ -180,12 +212,13 @@ def main() -> int:
 
     results = [audit_note(r) for r in rows]
 
-    header = (f"{'note':<10}{'form':<10}{'sec':>4}{'fold':>5}{'empty':>6}{'>80':>4}"
+    header = (f"{'note':<10}{'form':<10}{'sec':>4}{'/tpl':>6}{'fold':>5}{'empty':>6}{'>80':>4}"
               f"{'meds':>6}{'inv':>4}{'drop':>5}{'unanch':>7}{'norm':>5}{'dev':>4}"
               f"{'flags':>6}{'dict':>6}{'note':>6}")
     print(header)
     for r in results:
-        print(f"{r['id']:<10}{r['form']:<10}{r['sections']:>4}{r['folded']:>5}{r['empty']:>6}"
+        tpl = f"{r['matched']}/{r['declared']}" if r['declared'] else "-"
+        print(f"{r['id']:<10}{r['form']:<10}{r['sections']:>4}{tpl:>6}{r['folded']:>5}{r['empty']:>6}"
               f"{r['long_head']:>4}{r['meds_ok']:>6}{len(r['meds_invented']):>4}"
               f"{len(r['meds_dropped']):>5}{r['unanchored']:>7}{r['normals']:>5}"
               f"{r['devices']:>4}{r['flags']:>6}{r['dict_words']:>6}{r['note_words']:>6}")
@@ -196,6 +229,13 @@ def main() -> int:
     print(f"\n=== {len(results)} notes ===")
     print(f"STRUCTURE   folded {tot('folded')}   empty bodies {tot('empty')}   "
           f"headings over {postprocess.MAX_HEADING_CHARS} chars {tot('long_head')}")
+    scored = [r for r in results if r["declared"]]
+    if scored:
+        d, m = tot("declared"), tot("matched")
+        worst = sorted(scored, key=lambda r: r["matched"] / r["declared"])[:3]
+        print(f"CONFORMANCE {m}/{d} template sections produced ({m / d:.0%})   "
+              f"weakest: " + ", ".join(f"{r['id']} {r['form']} {r['matched']}/{r['declared']}"
+                                       for r in worst))
     print(f"MEDICATIONS {tot('meds_in_note')} named in notes, {tot('meds_ok')} traceable to the "
           f"dictation, {tot('meds_invented')} INVENTED, {tot('meds_dropped')} dropped")
     print(f"FABRICATION unanchored values {tot('unanchored')}   unsupported normals "

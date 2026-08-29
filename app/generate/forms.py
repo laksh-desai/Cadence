@@ -8,13 +8,17 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+from app import paths
+
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 # User edits to a SHIPPED template land here as an override (spec body only), keeping the
 # original templates/*.md pristine so any built-in can be reset to default. User-CREATED
 # templates are full files in custom/ (their own frontmatter + body). Both dirs are created
 # lazily on first write; neither ships with the repo.
-OVERRIDES_DIR = TEMPLATES_DIR / "overrides"
-CUSTOM_DIR = TEMPLATES_DIR / "custom"
+#: The clinician's own work: their edits to a built-in outline, and templates they created. These
+#: survive an update; the built-in `templates/*.md` beside them do not, and should not.
+OVERRIDES_DIR = paths.templates_data_dir() / "overrides"
+CUSTOM_DIR = paths.templates_data_dir() / "custom"
 
 # Display order matches the prototype's FORM_ORDER (cadence-prototype.html:315) —
 # not alphabetical, so the UI dropdown order doesn't silently change. This is the
@@ -87,6 +91,76 @@ def _parse_file(text: str) -> tuple[dict, str]:
 
 
 # ---- paths & predicates -----------------------------------------------------
+
+#: A template outline declares its sections in one of two dialects, and both have to be read:
+#: `initial_updated` writes literal "## Subjective" lines, while `initial`/`followup` write
+#: "Label — instruction" and tell the model to make each its own "## " section.
+_SPEC_LITERAL_HEADING_RE = re.compile(r"^##\s+(.+)$", re.M)
+_SPEC_SEPARATOR_RE = re.compile(r"\s+[—–]\s+|:\s+")
+_MAX_SECTION_LABEL_WORDS = 7
+
+
+def _clean_spec_label(raw: str) -> str:
+    label = _SPEC_SEPARATOR_RE.split(raw.strip(), maxsplit=1)[0]
+    label = re.sub(r"\s*\[[^\]]*\]\s*$", "", label)      # "[carry forward]"
+    return label.strip()
+
+
+def spec_section_labels(form_id: str) -> list[str]:
+    """The section names this template asks the model to produce, in order.
+
+    ONE definition, used by the postprocess repairs and by scripts/audit_notes.py's conformance
+    metric — a second copy would let the app and the thing measuring the app disagree about what
+    the template even asked for.
+
+    Two filters keep spec PROSE out, and both were needed. A section name is at most a few words,
+    which drops the tail of an instruction line that happens to list several block names; and an
+    ALL-CAPS label is the document TITLE rather than a section ("FOLLOW-UP VISIT — skilled interim
+    visit"). Filtering on instruction WORDS instead was the first attempt and it silently dropped
+    two real sections whose guidance text contained "NEVER".
+    """
+    form = FORMS.get(form_id)
+    if form is None:
+        return []
+    spec = form.spec or ""
+
+    def keep(label: str) -> bool:
+        return bool(label) and len(label.split()) <= _MAX_SECTION_LABEL_WORDS and not label.isupper()
+
+    out: list[str] = []
+    literal = _SPEC_LITERAL_HEADING_RE.findall(spec)
+    if literal:
+        for line in literal:
+            # One line can name several blocks ("## Subjective, ## Objective, ## Assessment").
+            for piece in line.split(","):
+                label = _clean_spec_label(re.sub(r"^\s*##\s+", "", piece))
+                if keep(label) and label.lower() not in {o.lower() for o in out}:
+                    out.append(label)
+        return out
+
+    for line in spec.splitlines():
+        line = line.strip()
+        if not line or not _SPEC_SEPARATOR_RE.search(line):
+            continue                                    # framing prose carries no "Label —"
+        label = _clean_spec_label(line)
+        if keep(label) and label.lower() not in {o.lower() for o in out}:
+            out.append(label)
+    return out
+
+
+def spec_title(form_id: str) -> str:
+    """The template's own TITLE — the ALL-CAPS opening line, e.g. "FOLLOW-UP VISIT".
+
+    Needed because the model turns it into a `## ` heading (measured on 3 of 4 real Follow-Up
+    notes), which both invents a section and consumes the real first one.
+    """
+    form = FORMS.get(form_id)
+    if form is None:
+        return ""
+    first = (form.spec or "").strip().splitlines()[0] if (form.spec or "").strip() else ""
+    label = _clean_spec_label(first)
+    return label if label.isupper() else ""
+
 
 def _override_path(form_id: str) -> Path:
     return OVERRIDES_DIR / f"{form_id}.md"

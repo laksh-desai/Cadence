@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 
-from app.generate.forms import CARRY_SECTION_LABELS, FormSpec
+from app.generate.forms import CARRY_SECTION_LABELS, FormSpec, spec_section_labels
 from app.generate.rules import (
     MODE_RULE_OMIT,
     MODE_RULE_REQUIRE,
@@ -164,6 +164,56 @@ def _carry_labels_rule(form: FormSpec) -> str:
     )
 
 
+def _section_roster_rule(form: FormSpec) -> str:
+    """MEASURED HARMFUL — NOT USED. Kept so the negative result stays with the idea.
+
+    Enabling this (together with an extra template section, so the two are confounded and neither
+    is individually convicted) took Follow-Up section coverage from **93% to 47%** over the same 5
+    real records: three of five notes stopped after the treatment sections, with no Plan, no Goals
+    and no Functional Status. Value capture rose 57% -> 65% at the same time, which is the trap —
+    a note missing its Plan is not a better note for containing more measurements.
+
+    The plausible mechanism, untested: naming the required sections right after the outline gives
+    the model a short, concrete checklist to satisfy, and it satisfies the beginning of it and
+    stops. Telling a 4B "do not stop early" appears to do less than telling it, implicitly, that
+    there is a list it can finish.
+
+    Do not re-enable without re-measuring, and change ONE thing at a time when you do — running
+    this and a template edit together is why neither can be individually convicted here.
+
+    Original intent below, still accurate as a description of the problem it was aimed at.
+
+    Name the sections the template declares, and name the LAST one.
+
+    Two measured failures, one cause. The prompt says `NOTE STRUCTURE FOR "Follow-Up Visit":` and
+    the spec's own first line is `FOLLOW-UP VISIT — skilled interim visit…`, so the title appears
+    twice in a row and the model turns it into a section heading (3 of 4 real notes). That
+    consumes the real first section, and from there the whole note runs one section short — which
+    is why those same notes also STOP EARLY, before Plan and the goals.
+    That is worth stating plainly because it rules out the obvious explanation: the short notes
+    used 7-13% of `num_predict`, so nothing was truncated. The model finished, one section adrift.
+
+    The roster is DERIVED from the template via `spec_section_labels`, never hand-written, so it
+    cannot drift from the outline it describes. It says the two things the failures need said: do
+    not invent a section for the title, and here is the section you must not stop before.
+
+    Deterministic repairs (rule 32) still clean up afterwards regardless — per rule 19, a prompt
+    lowers the FREQUENCY of a failure class, never its risk.
+    """
+    labels = spec_section_labels(form.id)
+    if not labels:
+        return ""
+    return "\n".join([
+        'REQUIRED SECTIONS — every one of these must appear as its own "## " heading, in this '
+        f"order: {', '.join(labels)}.",
+        "- Do NOT create a section for the note's TITLE. The title is not a section.",
+        f'- The final section is "{labels[-1]}" — write the whole note through to it; do not '
+        "stop early.",
+        "- Where the outline calls for a section per treatment performed, insert those in the "
+        "place it indicates; that is the only addition allowed.",
+    ])
+
+
 def build_prompt(
     form: FormSpec,
     patient: PatientContext,
@@ -192,6 +242,9 @@ def build_prompt(
         f'therapist\'s spoken summary into a complete, professional "{form.name}".',
         f"PATIENT: {patient.name}. {patient.sub}.",
         f'NOTE STRUCTURE FOR "{form.name}":\n{form.spec}',
+        # `_section_roster_rule(form)` is deliberately NOT called here. It was measured and it made
+        # the problem worse — see that function's docstring. The function is kept, unused, so the
+        # negative result stays attached to the idea rather than being rediscovered.
         prior_block,
         f'THERAPIST\'S DICTATION OF TODAY\'S SESSION:\n"""{summary}"""{extra_block}',
         f"{WRITING_RULES_LEAD}\n- {mode_rule}\n{tail}",
@@ -200,10 +253,140 @@ def build_prompt(
     return "\n\n".join(p for p in parts if p)
 
 
+# --- "Ask for changes": choosing what to re-write ----------------------------------
+#
+# The whole-note rewrite below is the fallback, not the default, because asking a 4B model to
+# re-emit ~2,000 tokens in order to change one line has three costs the clinician feels: most of
+# the output budget goes on copying so the edit itself gets lost; untouched sections come back
+# subtly reworded; and it takes minutes. Scoping the rewrite to the section the clinician actually
+# named fixes all three at once, and makes collateral drift STRUCTURALLY impossible rather than
+# merely discouraged — the other sections are carried across byte-identical and never shown to the
+# model as something to reproduce.
+#
+# Selection is deterministic. A model deciding which section to edit would just move the guesswork
+# somewhere less visible.
+_REVISE_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "at", "for", "with", "by", "is", "are",
+    "was", "were", "be", "it", "this", "that", "these", "those", "section", "sections", "please",
+    "note", "make", "change", "should", "would", "could", "i", "we", "she", "he", "they",
+})
+
+#: Instructions that operate on the note's SHAPE rather than one section's content. Merging,
+#: reordering, or moving a section changes which sections exist and in what order, which a
+#: per-section splice cannot express — so these fall back to the whole-note rewrite.
+_STRUCTURAL_INSTRUCTION_CUES = (
+    "merge", "combine", "consolidate", "reorder", "re-order", "move ", "swap", "rearrange",
+    "sort ", "to the top", "to the bottom", "at the top", "at the end", "order of",
+    "split ", "separate into", "renumber",
+)
+
+
+def _significant_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if w not in _REVISE_STOPWORDS and len(w) > 1}
+
+
+def is_structural_instruction(instruction: str) -> bool:
+    low = (instruction or "").lower()
+    return any(cue in low for cue in _STRUCTURAL_INSTRUCTION_CUES)
+
+
+def select_revise_sections(sections: list[dict], instruction: str) -> list[str]:
+    """Headings the instruction is talking about, or [] when it is not clearly about specific ones.
+
+    An empty list means "fall back to the whole-note rewrite" — the safe direction. Guessing one
+    section wrong is worse than rewriting everything: the clinician's change silently lands in the
+    wrong place, or appears not to have happened at all.
+
+    Scored by how much of a HEADING the instruction contains, not the reverse, so a long
+    instruction cannot drag in unrelated sections. "Pain at rest should be 3 out of 10" covers all
+    of "Pain - At Rest" (pain, rest) but only half of "Pain - With Movement" (pain), and the
+    margin is what disambiguates them.
+    """
+    words = _significant_words(instruction)
+    if not words:
+        return []
+    scored: list[tuple[float, str]] = []
+    for s in sections:
+        heading = (s.get("heading") or "").strip()
+        tokens = _significant_words(heading)
+        if not tokens:
+            continue
+        scored.append((len(tokens & words) / len(tokens), heading))
+    if not scored:
+        return []
+    best = max(score for score, _ in scored)
+    # A partial match is a guess. Require the instruction to name the WHOLE heading.
+    if best < 1.0:
+        return []
+    winners = [h for score, h in scored if score >= 1.0]
+    # Several sections matching completely is either a real duplicate-heading case (a merge, which
+    # is structural and handled above) or an ambiguous single-word heading. Cap it so one request
+    # can never trigger a near-whole-note rewrite through the "scoped" path.
+    return winners if len(winners) <= 3 else []
+
+
+def build_scoped_revise_prompt(form: FormSpec, sections: list[dict], targets: list[str],
+                               instruction: str) -> str:
+    """Ask the model to re-write ONLY the named sections. Everything else is spliced back
+    untouched by the caller, so it never enters the prompt as something to copy."""
+    wanted = {t.strip().lower() for t in targets}
+    chosen = [s for s in sections if (s.get("heading") or "").strip().lower() in wanted]
+    others = [(s.get("heading") or "").strip() for s in sections
+              if (s.get("heading") or "").strip().lower() not in wanted]
+    block = "\n\n".join(f"## {s['heading']}\n{s.get('body', '')}" for s in chosen)
+    plural = "s" if len(chosen) != 1 else ""
+    # ORDER IS LOAD-BEARING, and the first version of this prompt got it wrong. It opened with the
+    # formatting rules and buried "apply the requested change" as a second bullet, and it offered
+    # an escape hatch ("if the change does not affect a section, output it as given"). Measured on
+    # the real model, the 4B took that path every time: it echoed the section back verbatim, so a
+    # revision that ran in six seconds changed nothing. The change now comes LAST, phrased as the
+    # imperative, with an explicit statement that the body must come back different — and the
+    # escape hatch is gone, because the caller only ever sends sections the change DOES affect.
+    # Two more things measured out of this prompt, both of which look like good ideas on paper:
+    #
+    #   * A LIST OF THE OTHER SECTION NAMES, given as "context only, do not output". The 4B echoed
+    #     it verbatim into its answer. It was there to stop the model duplicating other sections'
+    #     content into this one, which was a speculative worry; the echoing was real and measured.
+    #   * ENDING ON THE INSTRUCTION. A prompt that ends with prose gets continued like prose —
+    #     the model replayed the input section and carried on down the page. Ending on an explicit
+    #     "REVISED SECTION:" cue turns the task from "continue this document" into "fill this in",
+    #     which is the shape small instruct models actually follow.
+    #
+    # `others` is still accepted so the signature does not churn, and so the reason it is unused
+    # is recorded where the next person would otherwise re-add it.
+    _ = others
+    return "\n".join([
+        f'Revise one section of a physical therapist\'s "{form.name}".',
+        "",
+        f"CURRENT SECTION{plural.upper()}:",
+        block,
+        "",
+        f'CHANGE THE CLINICIAN ASKED FOR:\n"""{clean_dictation(instruction)}"""',
+        "",
+        "RULES:",
+        f"- Output the section{plural} with the SAME '## ' heading, then the new body. Nothing "
+        "else — no preamble, no explanation, no other sections, no rules.",
+        "- The new body MUST DIFFER from the current one. Returning the same text is not an answer.",
+        "- Change ONLY what was asked; every other fact stays exactly as it is.",
+        "- NEVER invent a clinical value (minutes, vitals, ROM, MMT, pain levels, measurements, "
+        "dates). If the change needs a value that was not given, write [[NEEDS: ...]] instead.",
+        "- To delete the section, output its heading and a body of exactly [[DELETE]].",
+        "- Keep any [[NEEDS: ...]] and [[CPT: ...]] markers unless the change is about them.",
+        "",
+        f"REVISED SECTION{plural.upper()}:",
+    ])
+
+
 def build_revise_prompt(form: FormSpec, note_text: str, instruction: str) -> str:
     """Prompt to apply a clinician's plain-language edit to an already-generated note, re-emitting the
     WHOLE note in the same structure. The clinician stays in control — apply only what's asked, and
-    never fabricate a value (same non-negotiable as first-pass generation)."""
+    never fabricate a value (same non-negotiable as first-pass generation).
+
+    The FALLBACK path — used when `select_revise_sections` cannot confidently name the target, or
+    when the instruction is structural (merge/reorder/move). See that function for why scoping is
+    preferred when it applies.
+    """
     return "\n\n".join([
         f'You are revising an already-written "{form.name}" for a physical therapist. Apply the '
         f"clinician's requested change and output the COMPLETE revised note — every section, not just "

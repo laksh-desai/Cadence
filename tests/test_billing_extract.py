@@ -468,6 +468,137 @@ class DedupeTests(unittest.TestCase):
         )
         self.assertEqual(_hit(draft, "97110").minutes, 20)
 
+    def test_an_explicit_negation_is_not_erased_by_a_later_performed_mention(self):
+        """Found by the hand-written long-form control (evals/data/longform_intake.txt).
+
+        "most billable wins" quietly threw away a detected negation: the therapist said "I did not
+        do any electrical stimulation" and then, a sentence later, "I considered functional
+        electrical stimulation" — and 97014 was BILLED. Two mentions that contradict each other
+        cannot be resolved automatically, so the code drops to `uncertain` and carries both
+        clauses. Per rule 12(b) a confirmation click is clinician work; a leaked negation is a
+        claim.
+        """
+        draft = billing.extract(
+            "Left knee. We did not do any manual therapy today. "
+            "The manual therapy table was free so we used it for fifteen minutes."
+        )
+        self.assertEqual(_status(draft, "97140"), UNCERTAIN)
+        self.assertNotIn("97140", {h.code for h in draft.billable})
+        self.assertIn("did not do any manual therapy", _hit(draft, "97140").clause)
+
+    def test_a_negation_alone_still_reads_as_negated(self):
+        draft = billing.extract("Left knee. We did not do any manual therapy today.")
+        self.assertEqual(_status(draft, "97140"), NEGATED)
+
+    def test_an_uncontradicted_treatment_is_untouched_by_the_contradiction_check(self):
+        draft = billing.extract("Left knee. Manual therapy for fifteen minutes.")
+        self.assertEqual(_status(draft, "97140"), PERFORMED)
+        self.assertNotIn("the dictation also said", _hit(draft, "97140").clause)
+
+
+class DeliberationCueTests(unittest.TestCase):
+    """Contemplating a treatment is not performing it. Found by the hand-written long-form
+    control: "I considered functional electrical stimulation for the left dorsiflexors but I want
+    to check with the surgeon first" billed 97014. The "planned for a future visit" that followed
+    sat in a later clause, so clause scoping — correctly — never saw it; the fix belongs on the
+    verb, not on a wider scope."""
+
+    def test_considered_is_not_performed(self):
+        draft = billing.extract(
+            "Left ankle. I considered electrical stimulation for the dorsiflexors."
+        )
+        self.assertEqual(_status(draft, "97014"), PLANNED)
+        self.assertNotIn("97014", {h.code for h in draft.billable})
+
+    def test_pending_clearance_is_not_performed(self):
+        draft = billing.extract("Left knee. Manual therapy pending surgeon clearance.")
+        self.assertEqual(_status(draft, "97140"), PLANNED)
+
+    def test_thinking_about_is_not_performed(self):
+        draft = billing.extract("Right hip. Thinking about adding gait training.")
+        self.assertEqual(_status(draft, "97116"), PLANNED)
+
+    def test_a_deliberation_cue_does_not_suppress_a_treatment_in_the_next_clause(self):
+        draft = billing.extract(
+            "Right hip. I considered electrical stimulation. "
+            "We did therapeutic exercise for twenty minutes."
+        )
+        self.assertEqual(_status(draft, "97110"), PERFORMED)
+        self.assertEqual(_hit(draft, "97110").minutes, 20)
+
+
+class EvalComplexityCaptureTests(unittest.TestCase):
+    """97161/2/3 is CAPTURED when the therapist states it, never inferred.
+
+    Rule 12 keeps complexity out of the auto-assigned set because choosing a level is a clinical
+    judgment — and it still is. What changed is that Cadence used to ask for the level on EVERY
+    evaluation even when the therapist had just dictated it, which is not caution: it discards a
+    stated fact and demands it back, and a gap list that always contains the same question is a
+    gap list the clinician stops reading.
+    """
+
+    def _codes(self, text, **kw):
+        draft = billing.extract(text, eval_form=kw.pop("eval_form", True), **kw)
+        return [h.code for h in draft.interventions if h.code in coding_tables.EVAL_CPT_CODES]
+
+    def test_spoken_level_is_captured(self):
+        for phrase, want in [("clinical decision making is low complexity", "97161"),
+                             ("this is a moderate complexity evaluation", "97162"),
+                             ("high complexity given the comorbidities", "97163")]:
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self._codes(f"Initial evaluation, left knee OA. {phrase}."), [want])
+
+    def test_a_dictated_code_is_captured(self):
+        self.assertEqual(self._codes("Initial evaluation, left knee OA. Bill 97163 for today."),
+                         ["97163"])
+
+    def test_nothing_stated_captures_nothing(self):
+        self.assertEqual(self._codes("Initial evaluation, left knee OA. Ther ex twenty minutes."), [])
+
+    def test_complex_regional_pain_syndrome_is_not_a_complexity_level(self):
+        """The reason every cue requires the noun "complexity" or a literal code: "complex" alone
+        appears inside a diagnosis, and matching it would staple an evaluation code to it."""
+        self.assertEqual(
+            self._codes("Initial evaluation, left ankle. Diagnosis is complex regional pain syndrome."),
+            [])
+
+    def test_two_different_levels_capture_nothing(self):
+        """An ambiguous dictation must still reach the clinician as a question — the same refusal
+        `body_part_for` makes on a tie."""
+        self.assertEqual(
+            self._codes("Initial eval. This is low complexity. Actually it is high complexity."), [])
+
+    def test_a_negated_level_is_not_captured(self):
+        self.assertEqual(self._codes("Initial eval, knee OA. This is not a high complexity evaluation."),
+                         [])
+
+    def test_a_follow_up_never_grows_an_evaluation_code(self):
+        """`eval_form` is the caller's answer, not something inferred from the words: a follow-up
+        that happens to say "high complexity" must not bill an evaluation."""
+        self.assertEqual(
+            self._codes("Follow up visit, knee. That was a high complexity session.", eval_form=False),
+            [])
+
+    def test_an_eval_code_never_enters_the_timed_unit_math(self):
+        draft = billing.extract(
+            "Initial evaluation, left knee OA. High complexity. Ther ex for twenty minutes.",
+            eval_form=True)
+        self.assertEqual(draft.total_timed_minutes, 20)
+        self.assertEqual(draft.units.total_units, 1)
+
+    def test_a_captured_eval_code_is_not_reported_as_dropped_from_the_note(self):
+        """`reconcile` compares dictation codes against the note's chips. An evaluation code is a
+        per-visit code and never a treatment section, so leaving it in that comparison made every
+        captured level report itself as a rule-15 omission."""
+        draft = billing.extract(
+            "Initial evaluation, left knee OA. High complexity. Ther ex for twenty minutes.",
+            eval_form=True)
+        reconciled = billing.reconcile(draft, [
+            {"heading": "Therapeutic Exercise", "body": "Minutes: 20 [[CPT: 97110 Therapeutic Exercise — confirm]]",
+             "carried_forward": False},
+        ])
+        self.assertEqual([c.code for c in reconciled.conflicts], [])
+
 
 class FullDraftTests(unittest.TestCase):
     TRANSCRIPT = (

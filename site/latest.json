@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "released": "2026-08-25",
+  "url": "https://github.com/laksh-desai/Cadence/releases/download/v1.0.0/cadence-1.0.0.zip",
+  "sha256": "REPLACE_WITH_THE_SHA256_PRINTED_BY_scripts/release.py",
+  "changes": [
+    "First release."
+  ],
+  "action_required": ""
+}

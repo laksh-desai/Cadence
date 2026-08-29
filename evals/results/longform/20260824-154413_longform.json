@@ -1,0 +1,239 @@
+{
+  "run_id": "20260824-154413",
+  "ledger_id": "L-701",
+  "form_id": "initial",
+  "model": "williamljx/medgemma-4b-it-Q4_K_M-GGUF",
+  "transcript": {
+    "words": 2363,
+    "chars": 14397,
+    "tokens": 3599
+  },
+  "budget": {
+    "num_ctx": 8192,
+    "num_predict": 3072,
+    "overhead": 2865,
+    "budget_tokens": 2255,
+    "overflow_ratio": 1.596
+  },
+  "billing": {
+    "billed": {
+      "97110": 22,
+      "97112": 18,
+      "97116": 15,
+      "97530": 12
+    },
+    "expected": {
+      "97110": 22,
+      "97112": 18,
+      "97116": 15,
+      "97530": 12
+    },
+    "missing_codes": [],
+    "false_codes": [],
+    "minutes_wrong": {},
+    "leaks": [],
+    "excluded_with_reason": [
+      {
+        "code": "97140",
+        "status": "negated",
+        "clause": "We did not do any manual therapy today and I did not do any electrical stimulation"
+      },
+      {
+        "code": "97014",
+        "status": "planned",
+        "clause": "I considered functional electrical stimulation for the left dorsiflexors"
+      }
+    ]
+  },
+  "arms": [
+    {
+      "name": "raw",
+      "seconds": 917.2,
+      "error": null,
+      "was_condensed": false,
+      "still_over": false,
+      "condensed_tokens": null,
+      "parse_failed": false,
+      "sections": 18,
+      "verification_flags": 5,
+      "missing_info": [
+        "Assign the PT evaluation CPT \u2014 97161 (low), 97162 (moderate), or 97163 (high) complexity \u2014 select the level for this visit."
+      ],
+      "note_recall": {
+        "found": 59,
+        "total": 78
+      },
+      "note_by_zone": {
+        "head": {
+          "total": 27,
+          "found": 19,
+          "missed": [
+            "fall_height",
+            "pmh_htn",
+            "pmh_hld",
+            "pmh_osa_cpap",
+            "pmh_bph",
+            "pmh_knee_oa",
+            "pmh_rcr",
+            "pmh_smoking"
+          ],
+          "recall": 0.704
+        },
+        "mid": {
+          "total": 23,
+          "found": 21,
+          "missed": [
+            "berg_baseline",
+            "tug"
+          ],
+          "recall": 0.913
+        },
+        "tail": {
+          "total": 28,
+          "found": 19,
+          "missed": [
+            "adl_pill_organizer",
+            "om_scim",
+            "om_quickdash",
+            "om_abc_baseline",
+            "om_psfs",
+            "tx_therex_min",
+            "tx_nmre_min",
+            "tx_gait_min",
+            "tx_theract_min"
+          ],
+          "recall": 0.679
+        }
+      },
+      "condense_by_zone": null
+    },
+    {
+      "name": "condensed",
+      "seconds": 1773.6,
+      "error": null,
+      "was_condensed": true,
+      "still_over": true,
+      "condensed_tokens": 2709,
+      "parse_failed": false,
+      "sections": 5,
+      "verification_flags": 0,
+      "missing_info": [
+        "Assign the PT evaluation CPT \u2014 97161 (low), 97162 (moderate), or 97163 (high) complexity \u2014 select the level for this visit."
+      ],
+      "note_recall": {
+        "found": 18,
+        "total": 78
+      },
+      "note_by_zone": {
+        "head": {
+          "total": 27,
+          "found": 15,
+          "missed": [
+            "surgery_acdf",
+            "fall_height",
+            "ir_length_of_stay",
+            "ir_dc_distance",
+            "pmh_diabetes",
+            "pmh_htn",
+            "pmh_hld",
+            "pmh_osa_cpap",
+            "pmh_bph",
+            "pmh_knee_oa",
+            "pmh_rcr",
+            "pmh_smoking"
+          ],
+          "recall": 0.556
+        },
+        "mid": {
+          "total": 23,
+          "found": 3,
+          "missed": [
+            "home_stairs_12",
+            "home_alone_daytime",
+            "precaution_lift_10",
+            "precaution_fusion",
+            "vitals_bp_rest",
+            "vitals_hr_rest",
+            "vitals_spo2_rest",
+            "vitals_bp_post",
+            "crom_flexion",
+            "mmt_left_finger_abd",
+            "mmt_right_knee_ext",
+            "monofilament",
+            "ashworth",
+            "hoffman",
+            "nine_hole_peg",
+            "grip_strength",
+            "berg_baseline",
+            "tug",
+            "gait_distance",
+            "gait_speed"
+          ],
+          "recall": 0.13
+        },
+        "tail": {
+          "total": 28,
+          "found": 0,
+          "missed": [
+            "adl_buttons",
+            "adl_pill_organizer",
+            "adl_lb_dressing",
+            "om_scim",
+            "om_quickdash",
+            "om_abc_baseline",
+            "om_psfs",
+            "fall_risk_screen",
+            "cognition_memory",
+            "complexity_high",
+            "stg_300_feet",
+            "stg_berg_45",
+            "stg_stairs_12",
+            "ltg_1000_feet",
+            "ltg_berg_50",
+            "ltg_gait_speed",
+            "ltg_abc_70",
+            "tx_therex_min",
+            "tx_nmre_min",
+            "tx_gait_min",
+            "tx_theract_min",
+            "plan_frequency",
+            "plan_duration",
+            "plan_intensity",
+            "cert_period",
+            "hep_issued",
+            "dc_plan_cane",
+            "coord_ot_referral"
+          ],
+          "recall": 0.0
+        }
+      },
+      "condense_by_zone": {
+        "head": {
+          "total": 27,
+          "found": 27,
+          "missed": [],
+          "recall": 1.0
+        },
+        "mid": {
+          "total": 23,
+          "found": 19,
+          "missed": [
+            "vitals_bp_rest",
+            "mmt_left_finger_abd",
+            "mmt_right_knee_ext",
+            "gait_distance"
+          ],
+          "recall": 0.826
+        },
+        "tail": {
+          "total": 28,
+          "found": 27,
+          "missed": [
+            "om_psfs"
+          ],
+          "recall": 0.964
+        }
+      }
+    }
+  ]
+}

@@ -668,8 +668,15 @@ def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = "
 # Assembly
 # ==================================================================================
 
-def extract(transcript: str, *, body_part: str | None = None) -> BillingDraft:
-    """Build the full billing draft from a raw dictation. Never fabricates a value."""
+def extract(transcript: str, *, body_part: str | None = None,
+            eval_form: bool = False) -> BillingDraft:
+    """Build the full billing draft from a raw dictation. Never fabricates a value.
+
+    `eval_form` says this visit is an EVALUATION, so a stated complexity level may be captured as
+    a 97161/2/3 line. It defaults False and the caller (`server._billing_draft`) is the only thing
+    that knows the form — a follow-up dictation that happens to contain the words "high
+    complexity" must never grow an evaluation code.
+    """
     text = transcript or ""
     clauses = split_clauses(text)
     # The diagnosis-framing clauses vote on the body part first (see body_part_for): incidental
@@ -681,6 +688,10 @@ def extract(transcript: str, *, body_part: str | None = None) -> BillingDraft:
     session_total = session_total_minutes(text)
 
     hits = _dedupe(detect_interventions(clauses, session_total=session_total))
+    if eval_form:
+        stated = detect_eval_complexity(clauses)
+        if stated is not None:
+            hits.append(stated)
     icd = detect_icd(clauses, part, transcript=text)
 
     billable = [h for h in hits if h.billable]
@@ -721,10 +732,22 @@ def _dedupe(hits: list[InterventionHit]) -> list[InterventionHit]:
     A therapist naming the same treatment twice ("ther ex twenty minutes ... more ther ex at the
     end") must not double-bill, and a `performed` mention must not be shadowed by a later
     `planned` one. Minutes are summed only across mentions that each stated their own duration.
+
+    An EXPLICIT negation is the one thing "most billable wins" must not silently discard. Found by
+    the hand-written long-form control: the therapist said "I did not do any electrical
+    stimulation" and, a sentence later, "I considered functional electrical stimulation…" — the
+    negation was detected correctly and then thrown away, and 97014 was billed. The two mentions
+    genuinely contradict each other, so neither answer is safe to pick automatically; the code is
+    downgraded to `uncertain`, carrying BOTH clauses so the clinician can see what they said and
+    decide. That keeps the failure on the safe side of CLAUDE.md rule 12(b) — a line the clinician
+    confirms with a click is clinician work, whereas a leaked negation is an overbill.
     """
     order = {PERFORMED: 0, UNCERTAIN: 1, HOME_PROGRAM: 2, PLANNED: 3, PRIOR_VISIT: 4, NEGATED: 5}
     by_code: dict[str, InterventionHit] = {}
+    negated_clause: dict[str, str] = {}
     for h in hits:
+        if h.status == NEGATED:
+            negated_clause.setdefault(h.code, h.clause)
         cur = by_code.get(h.code)
         if cur is None:
             by_code[h.code] = h
@@ -747,7 +770,44 @@ def _dedupe(hits: list[InterventionHit]) -> list[InterventionHit]:
             # ("ther ex twenty minutes ... more ther ex, ten minutes at the end").
             by_code[h.code] = (replace(cur, minutes=cur.minutes + h.minutes) if cur.minutes
                                else replace(cur, minutes=h.minutes, minutes_basis=h.minutes_basis))
-    return list(by_code.values())
+
+    out: list[InterventionHit] = []
+    for code, h in by_code.items():
+        neg = negated_clause.get(code)
+        if neg is not None and h.status == PERFORMED:
+            h = replace(h, status=UNCERTAIN,
+                        clause=f'{h.clause}  [the dictation also said: "{neg}"]')
+        out.append(h)
+    return out
+
+
+def detect_eval_complexity(clauses: list[str]) -> InterventionHit | None:
+    """The evaluation complexity the therapist STATED, or None if they did not state one.
+
+    This CAPTURES a judgment; it never makes one. Rule 12 keeps 97161/2/3 out of the auto-assigned
+    set because picking a level is clinical judgment, and that is unchanged — but Cadence was
+    asking for the level on every evaluation even when the therapist had already dictated it
+    ("clinical decision making is moderate complexity"). Throwing away a stated fact and then
+    demanding it back is a rule-15 failure wearing a safety costume.
+
+    Two mentions of DIFFERENT levels return None rather than a guess, the same way `body_part_for`
+    refuses a tie: an ambiguous dictation should still reach the clinician as a question.
+    """
+    found: dict[str, tuple[str, str]] = {}
+    for clause in clauses:
+        for phrase, code, _label in tables.EVAL_COMPLEXITY_CUES:
+            m = tables._phrase_re(phrase).search(clause)
+            if m is None or _negated_before(clause, m.start()):
+                continue
+            found.setdefault(code, (m.group(0), clause))
+    if len(found) != 1:
+        return None
+    code, (cue, clause) = next(iter(found.items()))
+    label = next(lbl for _p, c, lbl in tables.EVAL_COMPLEXITY_CUES if c == code)
+    return InterventionHit(
+        code=code, label=label, timed=False, cue=cue, cue_strength="strong",
+        clause=clause, status=PERFORMED,
+    )
 
 
 def _missing_for(part, hits, icd, session_total) -> tuple[str, ...]:
@@ -820,7 +880,11 @@ def reconcile(draft: BillingDraft, sections: list[dict]) -> BillingDraft:
             mm = _SECTION_MINUTES_RE.search(body)
             chip_codes[m.group(1)] = int(mm.group(1)) if mm else None
 
-    dictation_codes = {h.code: h for h in draft.billable}
+    # Evaluation codes are excluded from BOTH directions of this comparison. They are a per-visit
+    # code, never a treatment section, so they can never have a chip — leaving them in made every
+    # captured 97161/2/3 report itself as "dropped from the note (rule 15)".
+    dictation_codes = {h.code: h for h in draft.billable
+                       if h.code not in tables.EVAL_CPT_CODES}
     # Starts EMPTY, not from `draft.conflicts`: the conflict set is a pure function of (draft,
     # sections), so recomputing it makes reconcile idempotent. Appending instead would double
     # every finding in the review card the second time it ran.

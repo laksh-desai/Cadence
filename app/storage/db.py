@@ -14,10 +14,17 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
-STORAGE_DIR = Path(__file__).resolve().parent
+from app import paths
+
+#: Where the encrypted database and its key live. On an INSTALLED Cadence this resolves outside
+#: the version folder (see app/paths.py) so an update cannot strand or replace it; in a checkout
+#: it is exactly where it has always been.
+STORAGE_DIR = paths.storage_dir()
 KEYFILE = STORAGE_DIR / ".keyfile"
 ENC_PATH = STORAGE_DIR / "cadence.db.enc"
-SCHEMA_PATH = STORAGE_DIR / "schema.sql"
+#: The schema ships WITH THE CODE, not with the data — a new version's migrations are part of the
+#: new version. Always resolved against this module, never the data root.
+SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 #: Derived from ENC_PATH at call time, never a fixed constant: the lock guards a SPECIFIC
 #: database file, so redirecting ENC_PATH (as every temp-DB test does) must redirect the lock with
@@ -182,6 +189,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("fast_tier", "INTEGER"),
         ("template_spec_sha", "TEXT"),
         ("template_customized", "INTEGER"),
+        # Which Cadence version wrote the note. Nullable on purpose: a note saved before this
+        # column existed genuinely has an unknown version, and recording a guess would be worse
+        # than recording nothing.
+        ("app_version", "TEXT"),
         ("synthetic", "INTEGER NOT NULL DEFAULT 0"),
     ):
         if column not in note_cols:

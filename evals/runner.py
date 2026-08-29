@@ -224,6 +224,17 @@ def load_result(path: Path) -> scoring.RecordResult:
     )
 
 
+#: A generation that reports longer than this did not take that long — the machine slept through
+#: it. The slowest REAL note measured on any box here is ~10 minutes, so an hour is far above any
+#: plausible generation and far below the multi-hour figures a suspend produces.
+_MAX_PLAUSIBLE_SECONDS = 3600
+
+
+def _timed(results):
+    """Runs whose wall-clock is believable. See `mean_seconds` for why this is not paranoia."""
+    return [r for r in results if 0 < r.seconds <= _MAX_PLAUSIBLE_SECONDS]
+
+
 def aggregate(results: list[scoring.RecordResult]) -> dict:
     """Headline numbers for a set of results. Safety metrics first, deliberately."""
     if not results:
@@ -283,5 +294,16 @@ def aggregate(results: list[scoring.RecordResult]) -> dict:
         # How often the MODEL folded content into a heading, counted before the
         # deterministic repair. This is the number that shows the model regressing.
         "folded_headings_raw": sum(r.folded_headings_raw for r in results),
-        "mean_seconds": round(sum(r.seconds for r in results) / len(results), 1),
+        # SUSPEND-INFLATED runs are excluded from the mean rather than averaged in. On Windows
+        # both perf_counter and monotonic keep counting while the machine is ASLEEP, so a sweep
+        # left running overnight reported a single generation as having taken 23 HOURS and a mean
+        # of three. Those numbers are not slow generations, they are a closed laptop lid, and
+        # averaging them in makes the one metric that should say "this is too slow for a clinic"
+        # useless. Excluded and COUNTED, never silently dropped — see `timed_runs` below.
+        "mean_seconds": (round(sum(r.seconds for r in _timed(results)) / len(_timed(results)), 1)
+                         if _timed(results) else None),
+        "max_seconds": (round(max(r.seconds for r in _timed(results)), 1)
+                        if _timed(results) else None),
+        "timed_runs": len(_timed(results)),
+        "untimed_runs": len(results) - len(_timed(results)),
     }
