@@ -10,6 +10,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from app import version as app_version
 from app.storage import db
 
 # Sentinel distinguishing "field not provided" (leave unchanged) from an explicit
@@ -27,16 +28,20 @@ def _new_id(prefix: str) -> str:
 
 def create_patient(
     name: str, dob: str | None, mrn: str | None, condition: str | None,
-    scheduling_notes: str | None = None,
+    scheduling_notes: str | None = None, *, synthetic: bool = False,
 ) -> dict:
+    """`synthetic=True` marks a demo/seed row (scripts/seed_demo_data.py). Keyword-only with a
+    default so every existing call site keeps working and a human-entered patient can never be
+    accidentally flagged as disposable."""
     patient_id = _new_id("p")
     created_at = _now_iso()
     conn = db.get_connection()
     try:
         conn.execute(
             "INSERT INTO patients (id, name, dob, mrn, condition, created_at, "
-            "scheduling_notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (patient_id, name, dob, mrn, condition, created_at, scheduling_notes, created_at),
+            "scheduling_notes, updated_at, synthetic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (patient_id, name, dob, mrn, condition, created_at, scheduling_notes, created_at,
+             1 if synthetic else 0),
         )
         conn.commit()
     finally:
@@ -314,8 +319,9 @@ def create_note(
             "INSERT INTO notes (id, patient_id, form_id, form_name, created_at, "
             "sections_json, missing_json, dictation_raw, used_prior, "
             "original_sections_json, revise_instructions_json, edited_section_count, "
-            "model_id, fast_tier, template_spec_sha, template_customized, synthetic) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "model_id, fast_tier, template_spec_sha, template_customized, app_version, "
+            "synthetic) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 note_id, patient_id, form_id, form_name, created_at,
                 json.dumps(sections), json.dumps(missing_info), dictation_raw,
@@ -327,6 +333,10 @@ def create_note(
                 1 if fast else 0,
                 template_spec_sha,
                 1 if template_customized else 0,
+                # Stamped from the running build, never accepted from the client — the browser
+                # must not be the authority on which version wrote a clinical record, for the
+                # same reason model_id is stamped server-side.
+                app_version(),
                 1 if synthetic else 0,
             ),
         )

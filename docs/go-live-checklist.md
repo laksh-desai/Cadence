@@ -12,6 +12,28 @@ Legend: **[blocker]** must be done before real use · **[optional]** not require
 
 ---
 
+## 0. Install from a release, not a git clone — **[blocker]**
+
+As of v1.0.0 Cadence ships as a versioned release rather than a copied project folder, because an
+installed copy has to be able to take an update without losing the clinician's data. Install the
+layout described in [`releasing.md`](releasing.md):
+
+- [ ] Unzip the release to `C:\Cadence\versions\<version>\` — NOT to a bare folder. The
+      `versions\` parent is what tells Cadence where its data lives.
+- [ ] Run `setup.ps1` from inside that folder. It builds the shared venv at `C:\Cadence\.venv` and
+      points the desktop shortcut at `C:\Cadence\current`, so an update does not leave the
+      clinician launching the old build.
+- [ ] Confirm the Status page shows the version number you installed.
+
+**Why it matters:** in this layout the encrypted database, the clinician's own templates and the
+credentials live in `C:\Cadence\data\`, which an update never touches. Installed as a plain folder
+they would sit inside the version directory and be stranded by the first update.
+
+**Done when:** `python scripts\update.py --status` reports the installed version and the data
+directory.
+
+---
+
 ## 1. Provision the laptop — **[blocker]**
 
 The target ThinkPad had ~2 GB free at last check; the local models plus toolchain
@@ -77,7 +99,17 @@ model still needs validation and likely fine-tuning on the practice's own notes
 **Done when:** the clinician is comfortable that drafts are consistently a good
 starting point, and correction patterns have been captured as rules.
 
-## 4b. Sign off the billing code tables — **[blocker, before any code reaches a claim]**
+## 4b. Sign off the billing code tables — **[blocker before BILLING; no longer blocks launch]**
+
+> **This no longer blocks go-live.** v1.0.0 ships with code suggestions switched OFF:
+> `cpt.billing_enabled()` is computed from `TABLE_PROVENANCE`, so the CPT/ICD chips and the billing
+> card are hidden and the Status page states the reason. They turn on by themselves once the last
+> region is signed — no reinstall, nothing to remember. The clinician gets the note-writing half
+> now and the billing half once it has been checked.
+>
+> Produce the coder's worksheet with `python scripts/coding_signoff.py --out signoff.md`, and
+> record a completed region with
+> `python scripts/coding_signoff.py --sign <region> --by "<name, credential>" --on <date>`.
 
 Cadence now drafts CPT codes, ICD-10 codes, treatment minutes, and billing units from the
 dictation (`app/generate/billing.py`). It never lets the model author a code, but the tables it
@@ -109,6 +141,32 @@ chip is worse than no chip at all.
 **Done when:** both `VERIFIED_` fields are filled, the eight control records are clinician-
 verified, and a sweep reports zero wrong claims.
 
+## 4c. Clear the demo data before real use — **[blocker if the seed was ever run]**
+
+`scripts/seed_demo_data.py` can populate the app with synthetic patients for UX review. They are
+fictional, but a roster mixing demo and real patients is a clinical-safety hazard in its own right.
+
+- [ ] `.venv/Scripts/python.exe scripts/seed_demo_data.py --list` — confirm what is demo vs real.
+- [ ] `.venv/Scripts/python.exe scripts/seed_demo_data.py --clear` on the clinician's machine
+      before the first real visit. It deletes only `synthetic = 1` rows.
+
+**Done when:** `--list` shows zero demo patients on the production machine.
+
+## 4d. Rehearse an update and a rollback — **[blocker, before the SECOND release]**
+
+Not before the first install — there is nothing to update from — but before you ship a second
+version to a machine holding real notes.
+
+- [ ] `python scripts\update.py --check` from the installed copy. It should report the current
+      version and either reach the manifest or say plainly that it could not, which is harmless.
+- [ ] After cutting a second release: `--apply`, then confirm the roster and a few notes are still
+      there and Status shows the NEW version.
+- [ ] `--rollback`, confirm the app still opens and the notes are still there, then `--apply`
+      again. Rolling forward is always safe; this is to prove rollback works before you need it at
+      9am on a Tuesday.
+
+**Done when:** you have updated and rolled back once on a machine with data in it.
+
 ## 5. Set up a backup routine — **[blocker, once real notes exist]**
 
 Notes live only in the local encrypted DB — there is **no cross-device note sync**, so a
@@ -118,7 +176,10 @@ lost or dead laptop loses everything unless it's backed up. `scripts/backup.py` 
 - [ ] Back up to a **local encrypted external/USB drive kept on-site** — never a cloud-synced
       folder (`python scripts/backup.py backup --dest <drive>`; full detail in
       [`shipping.md`](shipping.md) section C).
-- [ ] **Test a restore once** so you know the routine works before relying on it.
+- [ ] **Test a restore once** so you know the routine works before relying on it. Use
+      `python scripts\backup.py restore <folder> --dry-run` — it verifies the backup decrypts and
+      reports what would change without writing anything, so testing a backup no longer means
+      overwriting the live database.
 
 **Done when:** a backup has been taken and a test restore succeeded.
 

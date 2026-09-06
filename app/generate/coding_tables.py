@@ -72,7 +72,14 @@ BODY_PART_CUES: dict[str, tuple[str, ...]] = {
     "shoulder": (
         "shoulder", "rotator cuff", "glenohumeral", "gleno-humeral", "scapula", "scapular",
         "supraspinatus", "infraspinatus", "subscapularis", "teres minor", "acromio",
-        "subacromial", "labrum", "labral", "deltoid",
+        "subacromial", "deltoid",
+        # SLAP = Superior Labrum Anterior-to-Posterior. Unambiguously shoulder, and it carries the
+        # region on its own - which is what lets "labral"/"labrum" be shared with hip below.
+        "slap repair", "slap lesion", "slap tear",
+        # SHARED with hip (see SHARED_BODY_PART_CUES): a labral tear happens at both joints, so the
+        # word alone does not name one. Listed under shoulder ONLY, it made every hip labral tear
+        # vote shoulder, which routed real hip records to the shoulder table.
+        "labrum", "labral",
     ),
     "knee": (
         "knee", "patella", "patellar", "patellofemoral", "meniscus", "meniscal", "acl", "mcl",
@@ -90,6 +97,7 @@ BODY_PART_CUES: dict[str, tuple[str, ...]] = {
     ),
     "hip": (
         "hip", "acetabul", "femoroacetabular", "fai", "trochanter", "trochanteric",
+        "labrum", "labral",   # shared with shoulder - see SHARED_BODY_PART_CUES
         "gluteus medius", "gluteal", "iliopsoas", "hip flexor", "tha", "greater trochanter",
         "iliotibial", "it band",
     ),
@@ -99,6 +107,17 @@ BODY_PART_CUES: dict[str, tuple[str, ...]] = {
         "atfl", "gastroc",
     ),
 }
+
+
+#: Cues that legitimately belong to more than one region, so the uniqueness invariant in
+#: `tests/test_billing_extract.py` must not fail them. Keep this set TINY and justified: every
+#: entry is a cue that stops discriminating, and the value of the invariant is that an ACCIDENTAL
+#: collision (a typo, a copy-paste between regions) still fails loudly.
+#:
+#: "labral"/"labrum" — a labral tear occurs at the shoulder (SLAP, M75.x/S43.43x) and at the hip
+#: (M24.15x). The word names a structure both joints have, so on its own it cannot name a joint.
+#: The disambiguating cues are the surrounding anatomy, plus "SLAP" for shoulder specifically.
+SHARED_BODY_PART_CUES: frozenset[str] = frozenset({"labrum", "labral"})
 
 
 def _phrase_re(phrase: str) -> re.Pattern:
@@ -289,6 +308,27 @@ TEMPORAL_FUTURE_CUES: tuple[str, ...] = (
     "future sessions", "moving forward we", "eventually", "would like to add",
     "planned", "interventions planned", "plan includes", "plan of care includes",
     "will include", "anticipated", "we recommend", "recommend starting",
+    # The PLAN-OF-TREATMENT family, found by the long-form initial-eval corpus: "Plan of treatment,
+    # treatment approaches include therapeutic exercise, neuromuscular re-education, manual
+    # therapy..." billed FOUR codes on an evaluation where nothing was performed. Same class as
+    # record 108's "Interventions planned include", different wording.
+    #
+    # Expanding THIS list is the safe direction. A future cue can only move a treatment OUT of the
+    # billable set, so a false positive here under-bills (the clinician adds it back from a visible
+    # flag) while a false negative over-bills. Precision on the billable set is what matters.
+    "plan of treatment", "treatment approaches", "approaches include", "treatment will include",
+    "interventions include", "plan of care", "treatment plan includes", "proposed treatment",
+    "anticipate", "goals include",
+    # The DELIBERATION family, found by the hand-written long-form control (evals/data/
+    # longform_intake.txt): "I considered functional electrical stimulation for the left
+    # dorsiflexors but I want to check with the surgeon first" billed 97014 as performed. The
+    # therapist had ALSO said "I did not do any electrical stimulation" one sentence earlier —
+    # the negation was detected and then discarded, because `_dedupe` keeps the most billable
+    # mention of a code. Contemplating a treatment is not performing it, and every phrase here
+    # says "not today" in the plainest possible terms.
+    "considered", "considering", "thinking about", "thought about", "may add", "might add",
+    "could add", "would consider", "pending", "awaiting", "on hold", "once cleared",
+    "if cleared", "when cleared", "discussed adding", "talked about adding",
 )
 
 # The patient does it at home — unsupervised, so not a billable treatment minute.
@@ -314,6 +354,38 @@ CORRECTION_CUES: tuple[str, ...] = (
 )
 
 
+# --- evaluation complexity (97161/97162/97163) --------------------------------------
+#
+# CAPTURE ONLY, never inference. Rule 12 keeps complexity out of the auto-assigned set because
+# choosing a level is a clinician judgment -- and that stays true. What was wrong is that Cadence
+# asked for the level on EVERY evaluation even when the therapist had already said it out loud
+# ("clinical decision making is moderate complexity"), which is not caution, it is discarding a
+# stated fact and then demanding it back. Rule 12(b) already settled the principle for CPT:
+# scanning the DICTATION for a stated billing fact is permitted where scanning the NOTE is not.
+# Recording the clinician's own judgment is not making one for them.
+#
+# Every phrase requires the noun "complexity" or a literal code. "complex" alone is deliberately
+# absent -- it appears inside "complex regional pain syndrome", and matching that would attach an
+# evaluation code to a diagnosis.
+EVAL_COMPLEXITY_CUES: tuple[tuple[str, str, str], ...] = (
+    # A code the therapist dictated is the most explicit form there is; capturing it is required
+    # (the model still never authors one).
+    ("97161", "97161", "PT evaluation, low complexity"),
+    ("97162", "97162", "PT evaluation, moderate complexity"),
+    ("97163", "97163", "PT evaluation, high complexity"),
+    ("low complexity", "97161", "PT evaluation, low complexity"),
+    ("complexity is low", "97161", "PT evaluation, low complexity"),
+    ("moderate complexity", "97162", "PT evaluation, moderate complexity"),
+    ("complexity is moderate", "97162", "PT evaluation, moderate complexity"),
+    ("high complexity", "97163", "PT evaluation, high complexity"),
+    ("complexity is high", "97163", "PT evaluation, high complexity"),
+    ("highly complex evaluation", "97163", "PT evaluation, high complexity"),
+)
+
+#: The evaluation codes, so callers can recognise one without hard-coding the numbers.
+EVAL_CPT_CODES: frozenset[str] = frozenset({"97161", "97162", "97163"})
+
+
 # --- ICD-10 ------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -334,6 +406,24 @@ class IcdRule:
     unspecified: str
     bilateral: str | None = None
     caution: str = ""
+    #: Rules sharing a non-empty family are MUTUALLY EXCLUSIVE variants of one condition — they
+    #: describe the same thing at different specificity, so at most one can be true and billing
+    #: two is a duplicate claim line. `billing.detect_icd` keeps only the first match within a
+    #: family, and rules are ordered specific-before-generic, so the more specific one wins.
+    #:
+    #: The per-clause `break` alone does not cover this: a long dictation states the diagnosis
+    #: more than once at different precision ("lumbar spinal stenosis with neurogenic
+    #: claudication" in the referral, plain "spinal stenosis" in the assessment), which is two
+    #: clauses and so two codes — here M48.062 AND M48.061, "with" and "without" claudication
+    #: simultaneously.
+    family: str = ""
+    #: True for a rule that codes a SYMPTOM (pain, stiffness) rather than a definitive diagnosis.
+    #: ICD-10-CM guidance is to code the established diagnosis and NOT its symptoms; billing
+    #: "M25.511 pain in right shoulder" alongside "M75.41 impingement" is a duplicate claim line.
+    #: `billing.detect_icd` therefore suppresses these whenever a specific diagnosis was also
+    #: found for the same region — but keeps them when the symptom is all the therapist said,
+    #: because then it is the only honest code available.
+    symptom_only: bool = False
 
     @property
     def lateralized(self) -> bool:
@@ -448,12 +538,12 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         IcdRule(
             cues=("shoulder stiffness", "stiffness of the shoulder", "loss of shoulder motion"),
             label="Stiffness of shoulder, not elsewhere classified",
-            right="M25.611", left="M25.612", unspecified="M25.619",
+            right="M25.611", left="M25.612", unspecified="M25.619", symptom_only=True,
         ),
         IcdRule(
             cues=("shoulder pain", "pain in the shoulder", "painful shoulder", "shoulder pain syndrome"),
             label="Pain in shoulder",
-            right="M25.511", left="M25.512", unspecified="M25.519",
+            right="M25.511", left="M25.512", unspecified="M25.519", symptom_only=True,
         ),
     ),
 
@@ -527,12 +617,12 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             cues=("knee stiffness", "stiffness of the knee", "loss of knee motion",
                   "arthrofibrosis of the knee"),
             label="Stiffness of knee, not elsewhere classified",
-            right="M25.661", left="M25.662", unspecified="M25.669",
+            right="M25.661", left="M25.662", unspecified="M25.669", symptom_only=True,
         ),
         IcdRule(
             cues=("knee pain", "pain in the knee", "painful knee"),
             label="Pain in knee",
-            right="M25.561", left="M25.562", unspecified="M25.569",
+            right="M25.561", left="M25.562", unspecified="M25.569", symptom_only=True,
         ),
     ),
 
@@ -545,13 +635,13 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             cues=("lumbar spinal stenosis with neurogenic claudication",
                   "stenosis with neurogenic claudication"),
             label="Spinal stenosis, lumbar region, with neurogenic claudication",
-            right="M48.062", left="M48.062", unspecified="M48.062",
+            right="M48.062", left="M48.062", unspecified="M48.062", family="lumbar_stenosis",
         ),
         IcdRule(
             cues=("lumbar spinal stenosis", "spinal stenosis", "lumbar stenosis",
                   "canal stenosis", "central stenosis", "narrowing of the canal"),
             label="Spinal stenosis, lumbar region, without neurogenic claudication",
-            right="M48.061", left="M48.061", unspecified="M48.061",
+            right="M48.061", left="M48.061", unspecified="M48.061", family="lumbar_stenosis",
         ),
         IcdRule(
             cues=("lumbar radiculopathy", "disc disorder with radiculopathy",
@@ -563,13 +653,13 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             cues=("lumbago with sciatica", "low back pain with sciatica",
                   "back pain with sciatica"),
             label="Lumbago with sciatica",
-            right="M54.41", left="M54.42", unspecified="M54.40",
+            right="M54.41", left="M54.42", unspecified="M54.40", family="sciatica",
         ),
         IcdRule(
             cues=("sciatica",
                   "sciatic pain"),
             label="Sciatica",
-            right="M54.31", left="M54.32", unspecified="M54.30",
+            right="M54.31", left="M54.32", unspecified="M54.30", family="sciatica",
         ),
         IcdRule(
             cues=("herniated disc", "disc herniation", "disc displacement",
@@ -606,7 +696,7 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
                   "pain in the low back",
                   "lbp", "back pain", "mechanical back pain"),
             label="Low back pain, unspecified",
-            right="M54.50", left="M54.50", unspecified="M54.50",
+            right="M54.50", left="M54.50", unspecified="M54.50", symptom_only=True,
             caution="M54.51 (vertebrogenic) and M54.59 (other) are more specific if the "
                     "presentation supports them — confirm",
         ),
@@ -666,7 +756,7 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
             cues=("cervicalgia", "neck pain", "pain in the neck",
                   "neck ache"),
             label="Cervicalgia",
-            right="M54.2", left="M54.2", unspecified="M54.2",
+            right="M54.2", left="M54.2", unspecified="M54.2", symptom_only=True,
         ),
     ),
 
@@ -713,12 +803,12 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         IcdRule(
             cues=("hip stiffness", "stiffness of the hip"),
             label="Stiffness of hip, not elsewhere classified",
-            right="M25.651", left="M25.652", unspecified="M25.659",
+            right="M25.651", left="M25.652", unspecified="M25.659", symptom_only=True,
         ),
         IcdRule(
             cues=("hip pain", "pain in the hip", "painful hip"),
             label="Pain in hip",
-            right="M25.551", left="M25.552", unspecified="M25.559",
+            right="M25.551", left="M25.552", unspecified="M25.559", symptom_only=True,
         ),
     ),
 
@@ -773,12 +863,12 @@ ICD_BY_BODY_PART: dict[str, tuple[IcdRule, ...]] = {
         IcdRule(
             cues=("ankle stiffness", "stiffness of the ankle", "loss of ankle motion"),
             label="Stiffness of ankle, not elsewhere classified",
-            right="M25.671", left="M25.672", unspecified="M25.679",
+            right="M25.671", left="M25.672", unspecified="M25.679", symptom_only=True,
         ),
         IcdRule(
             cues=("ankle pain", "pain in the ankle", "foot pain", "painful ankle"),
             label="Pain in ankle and joints of foot",
-            right="M25.571", left="M25.572", unspecified="M25.579",
+            right="M25.571", left="M25.572", unspecified="M25.579", symptom_only=True,
         ),
     ),
 }
@@ -828,21 +918,49 @@ LATERALITY_CUES: tuple[tuple[str, str], ...] = (
 )
 
 
-def body_part_for(text: str) -> str | None:
-    """Best-effort body region for a transcript, or None if it is absent or ambiguous.
-
-    Returns None on a tie rather than picking the higher-scoring region: a wrong table yields a
-    confidently-wrong ICD chip, which is worse than no chip at all.
-    """
+def _score_parts(text: str) -> dict[str, int]:
     scores: dict[str, int] = {}
     lowered = (text or "").lower()
     for part, cues in BODY_PART_CUES.items():
         n = sum(len(_phrase_re(c).findall(lowered)) for c in cues)
         if n:
             scores[part] = n
+    return scores
+
+
+def _winner(scores: dict[str, int]) -> str | None:
     if not scores:
         return None
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
     if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
         return None
     return ranked[0][0]
+
+
+def body_part_for(text: str, diagnosis_text: str = "") -> str | None:
+    """Best-effort body region for a transcript, or None if it is absent or ambiguous.
+
+    Returns None on a tie rather than picking the higher-scoring region: a wrong table yields a
+    confidently-wrong ICD chip, which is worse than no chip at all. That safety rule is unchanged;
+    what changed is WHERE the vote is counted.
+
+    Counting every mention in the whole transcript lets incidental anatomy outvote the diagnosis.
+    A lumbar patient's note names "hip flexor stretch" and "hamstring" in the exercise list and
+    "knee" in an exam finding, none of which say anything about which region is being DIAGNOSED —
+    and those mentions tied the real region often enough to return None and suppress the ICD table
+    entirely. Measured on the corpus: three lumbar records with a perfectly good cue in a
+    diagnosis-framing clause ("Assessment is mechanical back pain", "Treating diagnosis is
+    sciatica", "referred with a diagnosis of lumbar stenosis") extracted NOTHING, because
+    hip 2 / lumbar 2 is a tie.
+
+    So the diagnosis clauses break the TIE, and never overrule a clear transcript-wide result.
+    That ordering is load-bearing, and the first version had it backwards. Letting the diagnosis
+    clause decide outright routed three hip records to the SHOULDER table: "labral tear" is a cue
+    for both regions, and read alone it is genuinely ambiguous, where the full transcript said hip
+    unmistakably. It traded 3 confidently-wrong ICD claims for the recall — the exact trade this
+    function's None-on-tie rule exists to refuse.
+
+    As a tiebreaker it is strictly additive: every case that already resolved still resolves the
+    same way, and the only behaviour that changes is a tie, which previously yielded nothing at all.
+    """
+    return _winner(_score_parts(text)) or _winner(_score_parts(diagnosis_text))

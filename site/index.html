@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- PRIVATE BY DEFAULT. This page is written for the one practice Cadence is installed at. It is
+     safe to publish as-is (it contains no patient data and no secrets), but publishing it is a
+     product decision, not a deployment step: a public download makes Cadence a tool that strangers
+     run on real patients, which brings a support burden and — until the ICD tables are signed off
+     — a liability the gate in cpt.billing_enabled() only partly covers.
+     To go public: make the repo's Pages site public and add the download link. Nothing here
+     changes. -->
+<title>Cadence — download</title>
+<style>
+  :root{
+    --paper:#f6f8f7; --surface:#fff; --ink:#17211e; --muted:#5d6f69; --line:#e2e8e5;
+    --teal:#15514e; --teal-soft:#e7f0ee; --amber:#b5701f; --amber-soft:#fbf1e3; --amber-line:#eccfa3;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);line-height:1.6;
+       font-family:"Hanken Grotesk",system-ui,-apple-system,sans-serif;padding:40px 20px 80px}
+  .wrap{max-width:760px;margin:0 auto}
+  header{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+  .mark{font-size:30px;font-weight:700;letter-spacing:-.02em;color:var(--teal)}
+  .mark .dot{color:var(--amber)}
+  .tag{font-size:14px;color:var(--muted)}
+  .pill{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+        color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber-line);
+        padding:4px 10px;border-radius:999px;margin-bottom:22px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px 24px;
+        margin-bottom:18px;box-shadow:0 1px 2px rgba(23,33,30,.04),0 8px 28px rgba(23,33,30,.06)}
+  h2{font-size:17px;margin:0 0 10px}
+  h3{font-size:14px;margin:18px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  p{margin:0 0 12px}
+  ul{margin:0 0 12px;padding-left:20px}
+  li{margin-bottom:5px}
+  code,pre{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:13px}
+  pre{background:#f0f4f2;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow-x:auto}
+  .dl{display:inline-block;background:var(--teal);color:#fff;text-decoration:none;font-weight:600;
+      padding:13px 26px;border-radius:10px;font-size:15px}
+  .dl:hover{background:#0f3f3d}
+  .meta{font-size:12.5px;color:var(--muted);margin-top:10px}
+  .sha{word-break:break-all;font-size:11.5px}
+  .note{background:var(--amber-soft);border:1px solid var(--amber-line);border-radius:10px;
+        padding:14px 16px;font-size:14px}
+  .note strong{color:var(--amber)}
+  footer{font-size:12.5px;color:var(--muted);text-align:center;margin-top:30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header><span class="mark">Cadence<span class="dot">.</span></span>
+    <span class="tag">Physical therapy notes, dictated.</span></header>
+  <span class="pill">Runs entirely on your computer</span>
+
+  <div class="card">
+    <h2>Download</h2>
+    <p>Cadence turns a spoken summary of a session into a completed clinical note, on your own
+      machine. No patient information is ever sent anywhere.</p>
+    <p><a class="dl" id="dl" href="#">Download Cadence</a></p>
+    <div class="meta">
+      Version <b id="ver">—</b> · released <span id="rel">—</span><br>
+      SHA-256 <span class="sha" id="sha">—</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Before you install</h2>
+    <p>Cadence needs two free things installed first. It will tell you if either is missing.</p>
+    <ul>
+      <li><b>Python 3.12</b> — <a href="https://www.python.org/downloads/">python.org</a>.
+        Tick <i>“Add python.exe to PATH”</i> during setup.</li>
+      <li><b>Ollama</b> — <a href="https://ollama.com/download">ollama.com</a>. This runs the
+        language model locally.</li>
+    </ul>
+    <p>You'll also want roughly <b>30&nbsp;GB free</b> and a machine with 16&nbsp;GB of memory.
+      Generating a note takes several minutes — Cadence writes it in the background so you can
+      carry on.</p>
+  </div>
+
+  <div class="card">
+    <h2>Installing</h2>
+    <p>Unzip the download, then in that folder run:</p>
+    <pre>powershell -ExecutionPolicy Bypass -File .\setup.ps1</pre>
+    <p>It installs everything else, downloads the models, and puts a shortcut on your desktop.
+      Re-running it is safe — it never touches notes or keys that already exist.</p>
+    <h3>Updating later</h3>
+    <pre>python scripts\update.py --check</pre>
+    <p>Shows what a new version would change before anything is downloaded. Nothing updates by
+      itself, your notes are backed up first, and the previous version stays on disk so an update
+      can be undone immediately.</p>
+  </div>
+
+  <div class="card">
+    <h2>What's in this version</h2>
+    <div id="changes"></div>
+  </div>
+
+  <div class="card">
+    <h2>Please read</h2>
+    <div class="note">
+      <p><strong>Cadence drafts; you sign.</strong> Every note is a draft to review and correct.
+        The model can be wrong, and it is not certified for clinical use.</p>
+      <p><strong>Your notes live only on this computer,</strong> in one encrypted file. If the
+        laptop dies without a backup, they are gone. Back up to an encrypted USB drive, and test a
+        restore occasionally — <code>scripts\backup.py</code> does both.</p>
+      <p style="margin-bottom:0"><strong>Billing codes are switched off</strong> until the code
+        tables have been reviewed by a certified coder. A confidently-wrong code is worse than no
+        code. Cadence's Status page says so plainly, and they switch on by themselves once the
+        review is done.</p>
+    </div>
+  </div>
+
+  <footer>Cadence is a local, offline tool. It has no accounts, no telemetry, and no server.<br>
+    The only thing it ever fetches is the update file that populates this page.</footer>
+</div>
+
+<script>
+// The page reads the SAME manifest the in-app updater reads, so the download link and the version
+// shown here can never drift from what `scripts/update.py --check` reports.
+fetch("latest.json", {cache: "no-store"}).then(r => r.json()).then(m => {
+  document.getElementById("ver").textContent = m.version;
+  document.getElementById("rel").textContent = m.released || "—";
+  document.getElementById("sha").textContent = m.sha256;
+  const a = document.getElementById("dl");
+  a.href = m.url;
+  a.textContent = "Download Cadence " + m.version;
+  const box = document.getElementById("changes");
+  const list = document.createElement("ul");
+  (m.changes || []).forEach(c => {
+    const li = document.createElement("li");
+    li.textContent = c;                       // textContent, never innerHTML — the manifest is data
+    list.appendChild(li);
+  });
+  box.appendChild(list);
+  if (m.action_required) {
+    const p = document.createElement("p");
+    p.className = "note";
+    p.textContent = m.action_required;
+    box.appendChild(p);
+  }
+}).catch(() => {
+  document.getElementById("changes").textContent = "Could not load release details.";
+});
+</script>
+</body>
+</html>

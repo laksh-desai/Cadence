@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -173,9 +174,22 @@ def report(results: list[scoring.RecordResult]) -> None:
     if condensed:
         print(f"\n[*] Condense path (rule 16) exercised on records: {sorted(set(condensed))}")
 
-    secs = [r.seconds for r in results]
-    print(f"\n[*] Generation time: mean {sum(secs) / len(secs):.0f}s, max {max(secs):.0f}s "
-          f"(this machine — does NOT transfer to the target i5-8365U)")
+    # Only believable wall-clocks. perf_counter keeps counting while the machine SLEEPS, so a
+    # sweep left running overnight once reported a 23-hour generation and a 3-hour mean — numbers
+    # that describe a closed lid, not the model. Excluded and COUNTED, never silently dropped.
+    secs = [r.seconds for r in results if 0 < r.seconds <= runner._MAX_PLAUSIBLE_SECONDS]
+    # Zero and "implausible" are different things and must not be reported as the same thing. A
+    # --no-generate sweep legitimately has no timings; calling that "the machine slept" would be
+    # the harness stating something false about itself.
+    inflated = sum(1 for r in results if r.seconds > runner._MAX_PLAUSIBLE_SECONDS)
+    if secs:
+        print(f"\n[*] Generation time: mean {sum(secs) / len(secs):.0f}s, max {max(secs):.0f}s "
+              f"(this machine — does NOT transfer to the target i5-8365U)")
+    else:
+        print("\n[*] Generation time: not measured (no model call in this sweep)")
+    if inflated:
+        print(f"      {inflated} run(s) excluded from the mean — implausible wall-clock, i.e. the "
+              f"machine slept mid-sweep rather than the model being slow")
     print("=" * 78)
 
 
@@ -187,6 +201,11 @@ def main() -> int:
     ap.add_argument("--only", default=None, help="filter to records whose derived form is this")
     ap.add_argument("--form", default=None, help="OVERRIDE: generate every record against this form")
     ap.add_argument("--fast", action="store_true", help="use the fast-draft model instead of MedGemma")
+    ap.add_argument("--no-generate", action="store_true",
+                    help="score ONLY the billing extraction (no model call, seconds not minutes). "
+                         "The extractor reads the dictation, never the note, so its accuracy needs "
+                         "no generation - and the result still lands in evals/results/ and the "
+                         "Evals tab like any other sweep.")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="directory for per-run JSON")
     ap.add_argument("--resume", action="store_true", help="skip runs whose JSON already exists")
     ap.add_argument("--data", type=Path, default=None, help="corpus directory (default evals/data)")
@@ -216,7 +235,25 @@ def main() -> int:
         print(f"ERROR: unknown form {args.form!r}. Known: {forms_store.ordered_form_ids()}")
         return 2
 
-    if not asyncio.run(ollama_client.is_reachable()):
+    # --form is an OVERRIDE, and overriding it onto a record whose visit type disagrees produces a
+    # measurement that looks like a model failure and is not one. Learned the hard way: running the
+    # 8 hand-written shoulder records with `--form followup` put THREE Initial Evaluations through
+    # the Follow-Up template, which has no Range-of-Motion or Strength section at all — so every
+    # ROM and MMT value in those dictations had nowhere to go, and "stated-value capture" read 41%.
+    # The values were not dropped by the model; they were dropped by the wrong template.
+    if args.form:
+        mismatched = [r.id for r in records
+                      if getattr(r, "form_id", None) and r.form_id != args.form]
+        if mismatched:
+            print(f"\n  !! --form {args.form} OVERRIDES the derived form for record(s) "
+                  f"{mismatched}.")
+            print("     Those records were written as a different visit type, so any 'dropped "
+                  "value' this")
+            print("     sweep reports for them may just be a value the chosen template has no "
+                  "section for.")
+            print("     Read the per-record detail before treating it as a generation defect.\n")
+
+    if not args.no_generate and not asyncio.run(ollama_client.is_reachable()):
         print("ERROR: Ollama isn't reachable on localhost:11434. Start it and pull MedGemma 4B.")
         return 2
 
@@ -225,6 +262,24 @@ def main() -> int:
     total = len(records) * args.runs
     print(f"Running {len(records)} records x {args.runs} run(s) = {total} generations "
           f"(~{total * 1.5:.0f} min at 1.5 min each)\n")
+
+    if args.no_generate:
+        from app.generate import billing as billing_mod
+
+        t0 = time.perf_counter()
+        billing_results = [
+            runner.score_billing_only(r, billing_mod.extract(r.transcript))
+            for r in records
+        ]
+        print(f"Scored {len(billing_results)} records' billing extraction in "
+              f"{time.perf_counter() - t0:.1f}s (no model calls).\n")
+        report(billing_results)
+        cfg = {"mode": "billing-only", "records": len(records), "runs": 1,
+               "corpus_dir": str(args.data or "evals/data"),
+               "body_part": args.body_part or "corpus", "note_type": "all"}
+        path = results_store.write_run(billing_results, config=cfg, started_at=started_at)
+        print(f"\nSaved -> {path}")
+        return 0
 
     results: list[scoring.RecordResult] = []
     done = 0

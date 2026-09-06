@@ -13,6 +13,11 @@ external / USB drive kept on-site (see docs/device-safeguards-checklist.md).
 Usage:
   python scripts/backup.py backup  --dest "E:\\CadenceBackups"
   python scripts/backup.py list    --dest "E:\\CadenceBackups"
+  python scripts/backup.py restore "E:\\CadenceBackups\\cadence-backup-..." --dry-run
+      Rehearse a restore: verifies the backup's keyfile+DB decrypt as a pair and prints exactly
+      what would change. Writes NOTHING. Do this periodically — an untested backup is not a
+      backup, and before --dry-run existed the only way to test one was to overwrite the live
+      patient database with it.
   python scripts/backup.py restore "E:\\CadenceBackups\\cadence-backup-20260727-101500"
       Add --force to overwrite existing storage files; the current files are first copied
       aside to a *.pre-restore-<timestamp> backup. Only restore while Cadence is CLOSED.
@@ -105,7 +110,18 @@ def do_backup(dest: Path, storage_dir: Path = DEFAULT_STORAGE) -> Path:
     return out
 
 
-def do_restore(backup_dir: Path, storage_dir: Path = DEFAULT_STORAGE, force: bool = False) -> None:
+def do_restore(backup_dir: Path, storage_dir: Path = DEFAULT_STORAGE, force: bool = False,
+               dry_run: bool = False) -> None:
+    """Restore a backup into the live store, or (with dry_run) rehearse it without writing.
+
+    The dry run exists because a backup you have never restored is not a backup. Before it, the
+    only way to find out whether a backup was good was to overwrite the live patient database with
+    it — so the honest advice was "don't test your backups", which is the opposite of the advice a
+    backup tool should give. The rehearsal does everything the real restore does except copy:
+    it decrypts the backup's keyfile+database AS A PAIR (the failure that actually happens — a
+    keyfile from one machine beside a database from another) and prints exactly what would be
+    overwritten and where the safety copies would land.
+    """
     backup_dir = Path(backup_dir)
     src_key, src_enc = _paths(backup_dir)
     if not src_key.exists():
@@ -116,6 +132,21 @@ def do_restore(backup_dir: Path, storage_dir: Path = DEFAULT_STORAGE, force: boo
     print(f"backup verified: {msg}")
 
     keyfile, enc = _paths(storage_dir)
+    if dry_run:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        print(f"DRY RUN — nothing was written. Restoring {backup_dir} would:")
+        for src, dst in ((src_key, keyfile), (src_enc, enc)):
+            if not src.exists():
+                continue
+            if dst.exists():
+                print(f"  copy {dst.name} -> {dst.name}.pre-restore-{stamp}  (safety copy)")
+                print(f"  overwrite {dst}  ({dst.stat().st_size:,} bytes -> {src.stat().st_size:,})")
+            else:
+                print(f"  create {dst}  ({src.stat().st_size:,} bytes)")
+        if (keyfile.exists() or enc.exists()):
+            print("  ...and would REQUIRE --force, because the target already holds data.")
+        print("This backup is restorable. Close Cadence first when you do it for real.")
+        return
     Path(storage_dir).mkdir(parents=True, exist_ok=True)
     targets_exist = keyfile.exists() or enc.exists()
     if targets_exist and not force:
@@ -165,6 +196,8 @@ def main(argv=None) -> int:
     r = sub.add_parser("restore", help="restore a backup folder into app/storage")
     r.add_argument("backup_dir")
     r.add_argument("--force", action="store_true")
+    r.add_argument("--dry-run", action="store_true",
+                   help="rehearse: verify the backup and report what WOULD change, writing nothing")
     sub.add_parser("verify", help="check the live keyfile + DB decrypt as a pair")
 
     args = ap.parse_args(argv)
@@ -173,7 +206,7 @@ def main(argv=None) -> int:
     elif args.cmd == "list":
         do_list(Path(args.dest))
     elif args.cmd == "restore":
-        do_restore(Path(args.backup_dir), force=args.force)
+        do_restore(Path(args.backup_dir), force=args.force, dry_run=args.dry_run)
     elif args.cmd == "verify":
         keyfile, enc = _paths(DEFAULT_STORAGE)
         ok, msg = verify_pair(keyfile, enc)

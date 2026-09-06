@@ -22,6 +22,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -275,3 +276,125 @@ class PhiBoundaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DemoSeedBoundaryTests(unittest.TestCase):
+    """`scripts/seed_demo_data.py` writes synthetic patients into the real encrypted DB — the exact
+    thing `tests/test_eval_isolation.py` forbids the EVAL path from doing.
+
+    Both are correct. The eval guarantee is that a scored SWEEP has no side effects on the record
+    store; seeding demo data is a deliberate, explicitly-invoked action whose whole purpose is to
+    write rows so the browser UI can be looked at. What keeps them from collapsing into each other
+    is that the seed script lives OUTSIDE evals/ and never calls evals.runner — so the eval package
+    still has no route to app.storage.
+    """
+
+    def test_the_seed_script_lives_outside_the_evals_package(self):
+        script = REPO_ROOT / "scripts" / "seed_demo_data.py"
+        self.assertTrue(script.exists())
+        src = script.read_text(encoding="utf-8")
+        self.assertIn("from app.storage import", src, "it is meant to write to the DB")
+        # Parse the IMPORTS rather than grepping the text — the docstring legitimately mentions
+        # `evals.runner` while explaining why it is not used, and a substring check flags that.
+        import ast
+        imported = set()
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Import):
+                imported.update(a.name for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+                imported.update(f"{node.module}.{a.name}" for a in node.names)
+        self.assertNotIn("evals.runner", imported,
+                         "the seed path must not route through the eval runner, or the eval "
+                         "package gains an indirect route to app.storage")
+        self.assertIn("evals.synth", {i.rsplit(".", 1)[0] if "." in i else i for i in imported}
+                      | imported, "it does legitimately reuse the dictation generator")
+
+    def test_every_row_the_seed_writes_is_marked_synthetic(self):
+        """`--clear` must be able to remove exactly what the script created and nothing else."""
+        src = (REPO_ROOT / "scripts" / "seed_demo_data.py").read_text(encoding="utf-8")
+        self.assertIn("synthetic=True", src)
+        self.assertEqual(src.count("synthetic=True"), 2,
+                         "both the patient row and the note row must be marked")
+        self.assertIn("WHERE synthetic=1", src, "--clear must filter at the SQL level")
+
+    def test_clear_can_never_touch_a_human_entered_patient(self):
+        """The column is NOT NULL DEFAULT 0, so a pre-existing row reads as real. A bulk delete
+        keyed on it therefore cannot reach a patient a clinician typed in."""
+        tmp = Path(tempfile.mkdtemp(prefix="cadence_test_"))
+        try:
+            conn = sqlite3.connect(tmp / "legacy.db")
+            conn.executescript(LEGACY_NOTES_DDL)
+            conn.execute("INSERT INTO patients (id,name,created_at) VALUES ('p1','Real Person','x')")
+            db._migrate(conn)
+            conn.commit()
+            row = conn.execute("SELECT synthetic FROM patients WHERE id='p1'").fetchone()
+            self.assertEqual(row[0], 0, "a pre-existing patient must default to real, not demo")
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM patients WHERE synthetic=1").fetchone()[0], 0)
+            conn.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class ConcurrentWriteGuardTests(unittest.TestCase):
+    """Two processes must not have the database open for writing at once.
+
+    This is a DATA-LOSS guard, not tidiness. Every process decrypts `cadence.db.enc` into its own
+    temp working copy, and `persist()` writes that whole copy back — so two writers are
+    last-writer-wins over the ENTIRE database, not a merge. The concrete near-miss: with the app
+    server open in a browser, `scripts/seed_demo_data.py` added patients, and saving a single note
+    in the UI would have re-encrypted the server's stale copy over the file and destroyed all of
+    them silently.
+    """
+
+    def setUp(self):
+        self._tmp = Path(tempfile.mkdtemp(prefix="cadence_test_"))
+        self._orig = (db.ENC_PATH, db.KEYFILE)
+        db.ENC_PATH = self._tmp / "cadence.db.enc"
+        db.KEYFILE = self._tmp / ".keyfile"
+
+    def tearDown(self):
+        try:
+            db.shutdown()
+        except Exception:
+            pass
+        db.ENC_PATH, db.KEYFILE = self._orig
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_the_lock_follows_the_database_it_guards(self):
+        """Regression: LOCKFILE was a module constant, so a temp-DB test still locked the REAL
+        app/storage/.dblock — colliding with a running app server and failing the whole suite."""
+        self.assertEqual(db._lock_path(), self._tmp / ".dblock")
+
+    def test_a_live_foreign_pid_blocks_init(self):
+        import os
+        # PID 4 is the Windows System process / always-present on POSIX-ish checks; any live PID
+        # that is not ours exercises the guard. Use our parent-ish sentinel: write a PID we know
+        # is alive but not us by using the current PID + a patched liveness check.
+        db._lock_path().write_text("999999", encoding="utf-8")
+        with unittest.mock.patch.object(db, "_pid_alive", return_value=True):
+            with self.assertRaises(db.DatabaseInUseError) as ctx:
+                db.init()
+        self.assertIn("already open", str(ctx.exception))
+        self.assertIn("999999", str(ctx.exception))
+
+    def test_a_stale_lock_from_a_dead_process_is_reclaimed(self):
+        """A crash must not leave the clinician unable to open their own records."""
+        db._lock_path().write_text("999999", encoding="utf-8")
+        with unittest.mock.patch.object(db, "_pid_alive", return_value=False):
+            db.init()   # must not raise
+        self.assertTrue(db._lock_path().exists())
+
+    def test_same_process_reentry_is_allowed(self):
+        """init -> shutdown -> init within one process is normal (the test suite does it)."""
+        db.init()
+        db.shutdown()
+        db.init()
+        db.shutdown()
+
+    def test_shutdown_releases_the_lock(self):
+        db.init()
+        self.assertTrue(db._lock_path().exists())
+        db.shutdown()
+        self.assertFalse(db._lock_path().exists())

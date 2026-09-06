@@ -1,0 +1,87 @@
+{
+  "strategy": "whole",
+  "model": "williamljx/medgemma-4b-it-Q4_K_M-GGUF",
+  "fixture": "record1001_followup_run1.note.md",
+  "results": [
+    {
+      "id": 1,
+      "instruction": "In Response to Treatment, say she tolerated the session well with no increase in pain.",
+      "target": "Response to Treatment",
+      "seconds": 212.6,
+      "parse_failed": false,
+      "applied": true,
+      "identical": false,
+      "changed_sections": [
+        "neuromuscular reeducation",
+        "response to treatment"
+      ],
+      "collateral": [
+        "neuromuscular reeducation",
+        "pain - at rest",
+        "pain - with movement",
+        "vitals"
+      ],
+      "sections_before": 14,
+      "sections_after": 10,
+      "raw_chars": 2571
+    },
+    {
+      "id": 2,
+      "instruction": "Pain at rest should be 3 out of 10, I misspoke.",
+      "target": "Pain - At Rest",
+      "seconds": 259.6,
+      "parse_failed": false,
+      "applied": true,
+      "identical": false,
+      "changed_sections": [
+        "pain - at rest"
+      ],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 14,
+      "raw_chars": 3213
+    },
+    {
+      "id": 3,
+      "instruction": "Delete the Vitals section, I did not take vitals today.",
+      "target": "Vitals",
+      "seconds": 82783.2,
+      "parse_failed": false,
+      "applied": true,
+      "identical": false,
+      "changed_sections": [],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 13,
+      "raw_chars": 2999
+    },
+    {
+      "id": 4,
+      "instruction": "Write the Precautions section as a bulleted list.",
+      "target": "Precautions",
+      "seconds": 713.3,
+      "parse_failed": false,
+      "applied": false,
+      "identical": true,
+      "changed_sections": [],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 14,
+      "raw_chars": 16425
+    },
+    {
+      "id": 5,
+      "instruction": "There are two Neuromuscular Reeducation sections. Merge them into one.",
+      "target": null,
+      "seconds": 221.2,
+      "parse_failed": false,
+      "applied": false,
+      "identical": true,
+      "changed_sections": [],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 14,
+      "raw_chars": 3213
+    }
+  ]
+}

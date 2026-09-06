@@ -370,6 +370,9 @@ class IcdCandidate:
     #: cervical codes, plantar fasciitis, …). Asking the clinician to confirm a side the code set
     #: doesn't distinguish is noise, so the laterality gap is suppressed for these.
     lateralized: bool = True
+    #: True for a SYMPTOM code (pain, stiffness) rather than a definitive diagnosis. Suppressed by
+    #: detect_icd when a specific diagnosis was also found for the region.
+    symptom_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -558,6 +561,12 @@ def _laterality_in(text: str) -> tuple[str | None, bool]:
     return (best[1], True) if best else (None, False)
 
 
+#: A neighbouring clause may only donate a laterality if it is this short — long enough for
+#: "Left knee" or "Right shoulder, follow up", short enough to exclude a real sentence with its
+#: own subject.
+_LATERALITY_FRAGMENT_WORDS = 5
+
+
 def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = ""
                ) -> list[IcdCandidate]:
     """Diagnosis candidates from clauses that FRAME something as the diagnosis.
@@ -573,21 +582,61 @@ def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = "
 
     # A side stated once anywhere in the transcript, used only when the diagnosis clause itself
     # doesn't state one AND the transcript is unambiguous about which side it is.
+    #
+    # "bilateral" is deliberately EXCLUDED from this fallback. `_phrase_re` matches "bilaterally",
+    # which is ubiquitous as a FINDINGS qualifier ("grip five out of five bilaterally", "Spurling
+    # negative bilaterally") and almost never describes the diagnosis. Reading it as the
+    # diagnosis's side was doubly wrong: most families have no bilateral code, so `code_for`
+    # returned BOTH sides and emitted two false codes for a condition the therapist never
+    # lateralised. A genuinely bilateral diagnosis is stated in the diagnosis clause itself
+    # ("bilateral adhesive capsulitis"), which `_laterality_in` still picks up.
+    dx_idx = [i for i, c in enumerate(clauses)
+              if _find_any(c, tables.ICD_CONTEXT_CUES) and not _find_any(c, tables.ICD_HEDGE_CUES)]
+    dx_clauses = [clauses[i] for i in dx_idx]
+
+    # The fallback scans ONLY the diagnosis-framing clauses, never the whole transcript. Scanning
+    # everything was defensible when a dictation was 35-120 words, where a single side mention
+    # almost certainly was the diagnosis. A ~1,000-word intake states a side constantly in places
+    # that say nothing about which side the DIAGNOSIS is ("right straight leg raise negative",
+    # "left hip replacement in 2019"), and the fallback promoted the first of them — turning an
+    # unspecified sciatica (M54.30) into a confident right-sided claim (M54.31).
+    #
+    # This is the same failure as the "bilaterally" one below, one level up: a side that appears
+    # in the transcript is not thereby the diagnosis's side. Rule 12 is explicit that laterality
+    # comes only from what was said and an unstated side yields the unspecified code plus a gap
+    # flag, never a guess — so when the diagnosis clauses are silent, staying silent IS the rule.
+    # ...plus the clause on either side of each. A side is very often stated in a bare fragment
+    # next to the diagnosis rather than inside it ("Left knee. Diagnosis is degenerative knee."),
+    # and that fragment carries no diagnosis context of its own, so diagnosis clauses alone lose
+    # it. Adjacency keeps that while still excluding an exam finding four hundred words away.
+    # A neighbour contributes a side only if it is a BARE FRAGMENT — a short label like "Left
+    # knee." that exists to name the side and nothing else. A full adjacent sentence is about its
+    # own subject, and borrowing from it re-creates the bug one clause over: "Referring diagnosis
+    # sciatica. Past medical history includes a right total hip replacement in 2019." must not
+    # yield right-sided sciatica.
+    def _bare(text: str) -> bool:
+        return len(text.split()) <= _LATERALITY_FRAGMENT_WORDS
+
+    scope_idx = set(dx_idx)
+    for i in dx_idx:
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(clauses) and _bare(clauses[j]):
+                scope_idx.add(j)
+    scope = " ".join(clauses[j] for j in sorted(scope_idx))
     sides = {side for phrase, side in tables.LATERALITY_CUES
-             if tables._phrase_re(phrase).search(transcript or "")}
+             if side != "bilateral" and tables._phrase_re(phrase).search(scope)}
     fallback_side = next(iter(sides)) if len(sides) == 1 else None
 
     out: list[IcdCandidate] = []
     seen: set[str] = set()
-    for clause in clauses:
-        if not _find_any(clause, tables.ICD_CONTEXT_CUES):
-            continue
-        if _find_any(clause, tables.ICD_HEDGE_CUES):
-            continue
+    seen_families: set[str] = set()
+    for clause in dx_clauses:
         for rule in rules:
             hit = _find_any(clause, rule.cues)
             if not hit:
                 continue
+            if rule.family and rule.family in seen_families:
+                break   # a more specific variant of this condition already matched
             side, stated = _laterality_in(clause)
             if not stated and fallback_side:
                 side, stated = fallback_side, True
@@ -598,9 +647,20 @@ def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = "
                 out.append(IcdCandidate(
                     code=code, label=rule.label, cue=hit.group(0), clause=clause,
                     laterality=side, laterality_stated=stated, caution=rule.caution,
-                    lateralized=rule.lateralized,
+                    lateralized=rule.lateralized, symptom_only=rule.symptom_only,
                 ))
+            if rule.family:
+                seen_families.add(rule.family)
             break  # one diagnosis per clause; specific rules are ordered before generic ones
+
+    # ICD-10-CM: code the established diagnosis, not its symptoms. A long-form dictation names the
+    # symptom repeatedly ("Chief complaint, ... knee pain", "Assessment summary, patient presents
+    # with knee pain and decreased range of motion") while the DIAGNOSIS is stated once, so without
+    # this a generic pain code rode along on nearly every eval — 152 false positives across a
+    # 288-case sweep, ICD precision 64%. The symptom code is kept only when it is all the therapist
+    # gave, because then it is the one honest code available.
+    if any(not c.symptom_only for c in out):
+        out = [c for c in out if not c.symptom_only]
     return out
 
 
@@ -608,14 +668,30 @@ def detect_icd(clauses: list[str], body_part: str | None, *, transcript: str = "
 # Assembly
 # ==================================================================================
 
-def extract(transcript: str, *, body_part: str | None = None) -> BillingDraft:
-    """Build the full billing draft from a raw dictation. Never fabricates a value."""
+def extract(transcript: str, *, body_part: str | None = None,
+            eval_form: bool = False) -> BillingDraft:
+    """Build the full billing draft from a raw dictation. Never fabricates a value.
+
+    `eval_form` says this visit is an EVALUATION, so a stated complexity level may be captured as
+    a 97161/2/3 line. It defaults False and the caller (`server._billing_draft`) is the only thing
+    that knows the form — a follow-up dictation that happens to contain the words "high
+    complexity" must never grow an evaluation code.
+    """
     text = transcript or ""
-    part = body_part or tables.body_part_for(text)
     clauses = split_clauses(text)
+    # The diagnosis-framing clauses vote on the body part first (see body_part_for): incidental
+    # anatomy in the exercise list must not outvote the region actually being diagnosed.
+    dx_text = " ".join(c for c in clauses
+                       if _find_any(c, tables.ICD_CONTEXT_CUES)
+                       and not _find_any(c, tables.ICD_HEDGE_CUES))
+    part = body_part or tables.body_part_for(text, dx_text)
     session_total = session_total_minutes(text)
 
     hits = _dedupe(detect_interventions(clauses, session_total=session_total))
+    if eval_form:
+        stated = detect_eval_complexity(clauses)
+        if stated is not None:
+            hits.append(stated)
     icd = detect_icd(clauses, part, transcript=text)
 
     billable = [h for h in hits if h.billable]
@@ -656,10 +732,22 @@ def _dedupe(hits: list[InterventionHit]) -> list[InterventionHit]:
     A therapist naming the same treatment twice ("ther ex twenty minutes ... more ther ex at the
     end") must not double-bill, and a `performed` mention must not be shadowed by a later
     `planned` one. Minutes are summed only across mentions that each stated their own duration.
+
+    An EXPLICIT negation is the one thing "most billable wins" must not silently discard. Found by
+    the hand-written long-form control: the therapist said "I did not do any electrical
+    stimulation" and, a sentence later, "I considered functional electrical stimulation…" — the
+    negation was detected correctly and then thrown away, and 97014 was billed. The two mentions
+    genuinely contradict each other, so neither answer is safe to pick automatically; the code is
+    downgraded to `uncertain`, carrying BOTH clauses so the clinician can see what they said and
+    decide. That keeps the failure on the safe side of CLAUDE.md rule 12(b) — a line the clinician
+    confirms with a click is clinician work, whereas a leaked negation is an overbill.
     """
     order = {PERFORMED: 0, UNCERTAIN: 1, HOME_PROGRAM: 2, PLANNED: 3, PRIOR_VISIT: 4, NEGATED: 5}
     by_code: dict[str, InterventionHit] = {}
+    negated_clause: dict[str, str] = {}
     for h in hits:
+        if h.status == NEGATED:
+            negated_clause.setdefault(h.code, h.clause)
         cur = by_code.get(h.code)
         if cur is None:
             by_code[h.code] = h
@@ -682,7 +770,44 @@ def _dedupe(hits: list[InterventionHit]) -> list[InterventionHit]:
             # ("ther ex twenty minutes ... more ther ex, ten minutes at the end").
             by_code[h.code] = (replace(cur, minutes=cur.minutes + h.minutes) if cur.minutes
                                else replace(cur, minutes=h.minutes, minutes_basis=h.minutes_basis))
-    return list(by_code.values())
+
+    out: list[InterventionHit] = []
+    for code, h in by_code.items():
+        neg = negated_clause.get(code)
+        if neg is not None and h.status == PERFORMED:
+            h = replace(h, status=UNCERTAIN,
+                        clause=f'{h.clause}  [the dictation also said: "{neg}"]')
+        out.append(h)
+    return out
+
+
+def detect_eval_complexity(clauses: list[str]) -> InterventionHit | None:
+    """The evaluation complexity the therapist STATED, or None if they did not state one.
+
+    This CAPTURES a judgment; it never makes one. Rule 12 keeps 97161/2/3 out of the auto-assigned
+    set because picking a level is clinical judgment, and that is unchanged — but Cadence was
+    asking for the level on every evaluation even when the therapist had already dictated it
+    ("clinical decision making is moderate complexity"). Throwing away a stated fact and then
+    demanding it back is a rule-15 failure wearing a safety costume.
+
+    Two mentions of DIFFERENT levels return None rather than a guess, the same way `body_part_for`
+    refuses a tie: an ambiguous dictation should still reach the clinician as a question.
+    """
+    found: dict[str, tuple[str, str]] = {}
+    for clause in clauses:
+        for phrase, code, _label in tables.EVAL_COMPLEXITY_CUES:
+            m = tables._phrase_re(phrase).search(clause)
+            if m is None or _negated_before(clause, m.start()):
+                continue
+            found.setdefault(code, (m.group(0), clause))
+    if len(found) != 1:
+        return None
+    code, (cue, clause) = next(iter(found.items()))
+    label = next(lbl for _p, c, lbl in tables.EVAL_COMPLEXITY_CUES if c == code)
+    return InterventionHit(
+        code=code, label=label, timed=False, cue=cue, cue_strength="strong",
+        clause=clause, status=PERFORMED,
+    )
 
 
 def _missing_for(part, hits, icd, session_total) -> tuple[str, ...]:
@@ -755,7 +880,11 @@ def reconcile(draft: BillingDraft, sections: list[dict]) -> BillingDraft:
             mm = _SECTION_MINUTES_RE.search(body)
             chip_codes[m.group(1)] = int(mm.group(1)) if mm else None
 
-    dictation_codes = {h.code: h for h in draft.billable}
+    # Evaluation codes are excluded from BOTH directions of this comparison. They are a per-visit
+    # code, never a treatment section, so they can never have a chip — leaving them in made every
+    # captured 97161/2/3 report itself as "dropped from the note (rule 15)".
+    dictation_codes = {h.code: h for h in draft.billable
+                       if h.code not in tables.EVAL_CPT_CODES}
     # Starts EMPTY, not from `draft.conflicts`: the conflict set is a pure function of (draft,
     # sections), so recomputing it makes reconcile idempotent. Appending instead would double
     # every finding in the review card the second time it ran.

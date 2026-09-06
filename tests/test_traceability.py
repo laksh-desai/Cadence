@@ -89,6 +89,101 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(normalize_for_matching(None), "")
 
 
+class SpokenThousandsTests(unittest.TestCase):
+    """A community-distance goal is dictated "one thousand feet". Before `thousand` was a scale
+    word the run parser stopped at "one", the transcript read "1 thousand feet", and the note's
+    honest "1000 feet" drew a fabrication flag — a false amber marker on a correct value, which
+    is worse than a miss because it trains the clinician to skim past the real ones."""
+
+    def test_one_thousand(self):
+        self.assertEqual(normalize_for_matching("one thousand feet"), "1000 feet")
+
+    def test_thousands_with_hundreds(self):
+        self.assertEqual(normalize_for_matching("one thousand five hundred feet"), "1500 feet")
+
+    def test_year_form_still_parses(self):
+        self.assertEqual(normalize_for_matching("two thousand eight"), "2008")
+
+    def test_goal_distance_anchors_end_to_end(self):
+        self.assertEqual(
+            unanchored_values("Goal: ambulate 1000 feet with a straight cane.",
+                              "patient will ambulate community distances of one thousand feet"),
+            [],
+        )
+
+
+class SpokenDecimalTests(unittest.TestCase):
+    """Spoken decimals are read digit by digit: "point six eight" is 0.68, not 0.14. Summing the
+    words was the old behaviour and it INVENTED a value, so a real dictated gait speed had nothing
+    to anchor to."""
+
+    def test_leading_point(self):
+        self.assertEqual(normalize_for_matching("point six eight meters per second"),
+                         "0.68 meters per second")
+
+    def test_decimal_after_whole(self):
+        self.assertEqual(normalize_for_matching("eighteen point four seconds"), "18.4 seconds")
+
+    def test_compound_whole_with_decimal(self):
+        self.assertEqual(normalize_for_matching("sixty one point four"), "61.4")
+
+    def test_sub_milligram_dose(self):
+        self.assertEqual(normalize_for_matching("point four milligrams daily"), "0.4 milligrams daily")
+
+    def test_non_digit_tail_falls_back(self):
+        self.assertEqual(normalize_for_matching("point twenty five"), "0.25")
+
+    def test_point_as_a_clinical_word_is_left_alone(self):
+        # "point" only ever acts as a connector when a number word follows it, so the ordinary
+        # clinical uses must survive untouched.
+        for phrase in ("trigger point release", "point tenderness over the joint line",
+                       "a five point scale"):
+            with self.subTest(phrase=phrase):
+                self.assertIn("point", normalize_for_matching(phrase))
+
+    def test_gait_speed_anchors_end_to_end(self):
+        self.assertEqual(
+            unanchored_values("Gait speed 0.68 meters per second with the walker.",
+                              "gait speed measured over ten meters was point six eight meters per second"),
+            [],
+        )
+
+
+class SpokenBloodPressureTests(unittest.TestCase):
+    """A spoken BP uses the colloquial hundreds form. "one thirty eight over eighty two" summed to
+    39, i.e. the normalizer produced a number nobody said. The rewrite is scoped to the
+    "<value> over <value>" idiom because that is the only place the reading is unambiguous —
+    "one thirty" on its own is a clock time as often as a pressure."""
+
+    def test_colloquial_systolic(self):
+        self.assertEqual(normalize_for_matching("one thirty eight over eighty two"), "138/82")
+
+    def test_round_systolic(self):
+        self.assertEqual(normalize_for_matching("one forty over ninety"), "140/90")
+
+    def test_oh_form(self):
+        self.assertEqual(normalize_for_matching("one oh five over seventy"), "105/70")
+
+    def test_teens_second_component(self):
+        self.assertEqual(normalize_for_matching("one ten over seventy"), "110/70")
+
+    def test_two_hundreds(self):
+        self.assertEqual(normalize_for_matching("two twenty over one ten"), "220/110")
+
+    def test_explicit_hundred_form_unchanged(self):
+        self.assertEqual(normalize_for_matching("one hundred thirty eight over eighty two"), "138/82")
+
+    def test_two_digit_bp_unaffected(self):
+        self.assertEqual(normalize_for_matching("ninety over sixty"), "90/60")
+
+    def test_written_bp_unaffected(self):
+        self.assertEqual(normalize_for_matching("blood pressure 138 over 82"), "blood pressure 138/82")
+
+    def test_over_without_a_following_number_is_not_a_pressure(self):
+        # The lookahead requires a number after "over", so a preposition never triggers the rewrite.
+        self.assertNotIn("130", normalize_for_matching("one thirty over the course of the week"))
+
+
 class AnchoredTests(unittest.TestCase):
     def _anchored_values(self, note, transcript):
         return {a.value for a in anchor_note_to_transcript(note, transcript) if a.anchored}

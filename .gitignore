@@ -44,3 +44,7 @@ app/transcribe/hf_config.yaml
 .pytest_cache/
 .DS_Store
 Thumbs.db
+app/storage/.dblock
+
+# Release artifacts (rebuildable from a tag; the zip itself is attached to a GitHub Release).
+dist/

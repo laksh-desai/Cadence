@@ -14,7 +14,10 @@ Matching is on the section HEADING (the intervention's own section), never prose
 mention of an intervention in some other section can't misfire.
 """
 
+import os
 import re
+
+from app.generate import coding_tables
 
 # A PT CPT/G code the MODEL may have written (the followup/progress specs literally ask for "cpt",
 # so the 4B model sometimes emits one — in the heading or body — and sometimes the WRONG one). We
@@ -76,6 +79,37 @@ def is_timed(code: str) -> bool:
 
 # Evaluation forms bill a per-visit evaluation CPT whose complexity level is a clinician judgment
 # (not a treatment-section lookup), so it is surfaced for selection rather than auto-assigned.
+# --- the billing gate ---------------------------------------------------------------
+#
+# Cadence ships with code suggestions OFF until a certified coder or the clinician has signed off
+# the ICD-10 tables (`scripts/coding_signoff.py`). This is the runtime half of the gate whose
+# other half is a deliberately-failing test — a test protects the developer, and this protects the
+# clinician, which is the one that matters once the app leaves this machine.
+#
+# The default is COMPUTED, not configured, so it cannot be forgotten: billing turns itself on the
+# moment every region is verified. `CADENCE_BILLING=on|off` overrides it for development and for
+# the eval harness, which needs the extractor regardless of sign-off state.
+def billing_enabled() -> bool:
+    override = os.environ.get("CADENCE_BILLING", "").strip().lower()
+    if override in ("on", "1", "true", "yes"):
+        return True
+    if override in ("off", "0", "false", "no"):
+        return False
+    return not coding_tables.unverified_body_parts()
+
+
+def billing_gate_reason() -> str:
+    """Why billing is off, in words the clinician can act on. Empty when it is on."""
+    if billing_enabled():
+        return ""
+    unverified = coding_tables.unverified_body_parts()
+    if unverified:
+        return ("Code suggestions are off until the ICD-10 tables are reviewed by a coder "
+                f"({len(unverified)} region(s) pending: {', '.join(unverified)}). "
+                "Run scripts/coding_signoff.py to produce the worksheet.")
+    return "Code suggestions are switched off (CADENCE_BILLING=off)."
+
+
 _EVAL_FORMS = {"initial", "initial_updated"}
 
 # Patient-facing and auxiliary notes are NOT billing documents — a treatment CPT code must never
@@ -94,7 +128,13 @@ def code_for_heading(heading: str) -> tuple[str, str] | None:
     return None
 
 
-def suggest_codes(sections: list[dict], form_id: str) -> tuple[list[dict], list[str]]:
+def is_eval_form(form_id: str) -> bool:
+    """True for a form that bills a per-visit evaluation CPT (97161/2/3)."""
+    return form_id in _EVAL_FORMS
+
+
+def suggest_codes(sections: list[dict], form_id: str,
+                  *, eval_complexity_stated: bool = False) -> tuple[list[dict], list[str]]:
     """Attach a confirmable ``[[CPT: ...]]`` suggestion to each treatment section whose heading names
     a mappable intervention, and return the codes that require clinician JUDGMENT (the evaluation
     complexity level) as review flags. Never auto-assigns eval complexity, units, or modifiers.
@@ -114,7 +154,13 @@ def suggest_codes(sections: list[dict], form_id: str) -> tuple[list[dict], list[
         body = _MODEL_CODE_RE.sub("", s["body"]).rstrip()
         out.append({**s, "heading": heading, "body": f"{body} [[CPT: {code} {label} — confirm]]"})
     extra: list[str] = []
-    if form_id in _EVAL_FORMS:
+    # Ask only when the therapist did NOT already say it. `eval_complexity_stated` comes from
+    # `billing.detect_eval_complexity`, which captures a level the clinician dictated ("clinical
+    # decision making is moderate complexity") and surfaces it as a normal confirmable code line.
+    # Asking anyway was the bug: it discarded a stated fact and then demanded it back on every
+    # single evaluation, which trains the clinician to dismiss the gap list without reading it.
+    # The level is still never INFERRED — no statement, no capture, and the question returns.
+    if form_id in _EVAL_FORMS and not eval_complexity_stated:
         extra.append(
             "Assign the PT evaluation CPT — 97161 (low), 97162 (moderate), or 97163 (high) "
             "complexity — select the level for this visit."

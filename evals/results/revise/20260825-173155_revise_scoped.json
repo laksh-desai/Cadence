@@ -1,0 +1,35 @@
+{
+  "strategy": "scoped",
+  "model": "williamljx/medgemma-4b-it-Q4_K_M-GGUF",
+  "fixture": "record1001_followup_run1.note.md",
+  "results": [
+    {
+      "id": 1,
+      "instruction": "In Response to Treatment, say she tolerated the session well with no increase in pain.",
+      "target": "Response to Treatment",
+      "seconds": 3.0,
+      "parse_failed": false,
+      "applied": false,
+      "identical": true,
+      "changed_sections": [],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 14,
+      "raw_chars": 30
+    },
+    {
+      "id": 3,
+      "instruction": "Delete the Vitals section, I did not take vitals today.",
+      "target": "Vitals",
+      "seconds": 10.7,
+      "parse_failed": false,
+      "applied": false,
+      "identical": true,
+      "changed_sections": [],
+      "collateral": [],
+      "sections_before": 14,
+      "sections_after": 14,
+      "raw_chars": 213
+    }
+  ]
+}

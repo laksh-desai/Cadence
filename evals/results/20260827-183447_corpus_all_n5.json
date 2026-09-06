@@ -1,0 +1,583 @@
+{
+  "schema_version": 1,
+  "run_id": "20260827-183447",
+  "started_at": "2026-08-28T01:34:47.677093+00:00",
+  "finished_at": "2026-08-28T01:34:48.040221+00:00",
+  "config": {
+    "mode": "billing-only",
+    "records": 5,
+    "runs": 1,
+    "corpus_dir": "evals/data",
+    "body_part": "corpus",
+    "note_type": "all",
+    "cadence_git_sha": "ef517ac",
+    "generator_version": 3
+  },
+  "aggregate": {
+    "all": {
+      "records": 5,
+      "distractor_leaks": 0,
+      "untimed_leaks": 0,
+      "laterality_errors": 0,
+      "minutes_fabricated": 0,
+      "units_overstated": 0,
+      "units_understated": 0,
+      "cpt_detection_recall": 1.0,
+      "cpt_detection_precision": 1.0,
+      "cpt_surfaced_recall": 1.0,
+      "icd_recall": 0.5,
+      "icd_precision": 1.0,
+      "minutes_exact": 1.0,
+      "minutes_within_2": 1.0,
+      "minutes_not_extracted": 0,
+      "minutes_mae": 0.0,
+      "units_exact": 1.0,
+      "units_exact_if_confirmed": 1.0,
+      "timed_minutes_exact": 1.0,
+      "method_disagreements": 1,
+      "invariants_passed": 0,
+      "invariants_total": 0,
+      "flags_raised": 0,
+      "folded_headings_raw": 0,
+      "mean_seconds": null,
+      "max_seconds": null,
+      "timed_runs": 0,
+      "untimed_runs": 5
+    },
+    "synthetic": {},
+    "handwritten": {
+      "records": 5,
+      "distractor_leaks": 0,
+      "untimed_leaks": 0,
+      "laterality_errors": 0,
+      "minutes_fabricated": 0,
+      "units_overstated": 0,
+      "units_understated": 0,
+      "cpt_detection_recall": 1.0,
+      "cpt_detection_precision": 1.0,
+      "cpt_surfaced_recall": 1.0,
+      "icd_recall": 0.5,
+      "icd_precision": 1.0,
+      "minutes_exact": 1.0,
+      "minutes_within_2": 1.0,
+      "minutes_not_extracted": 0,
+      "minutes_mae": 0.0,
+      "units_exact": 1.0,
+      "units_exact_if_confirmed": 1.0,
+      "timed_minutes_exact": 1.0,
+      "method_disagreements": 1,
+      "invariants_passed": 0,
+      "invariants_total": 0,
+      "flags_raised": 0,
+      "folded_headings_raw": 0,
+      "mean_seconds": null,
+      "max_seconds": null,
+      "timed_runs": 0,
+      "untimed_runs": 5
+    }
+  },
+  "records": [
+    {
+      "record_id": 102,
+      "form_id": "(billing-only)",
+      "run": 1,
+      "seconds": 0.0,
+      "was_condensed": false,
+      "note_chars": 0,
+      "invariants": {
+        "passed": 0,
+        "total": 0,
+        "failures": []
+      },
+      "section_coverage": {
+        "present": 0,
+        "expected": 0,
+        "missing": []
+      },
+      "cpt": null,
+      "omissions": null,
+      "flags": [],
+      "is_synthetic": false,
+      "body_part": "shoulder",
+      "folded_headings_raw": 0,
+      "icd": null,
+      "billing_detection": {
+        "gold": [
+          "97110",
+          "97140"
+        ],
+        "detected": [
+          "97110",
+          "97140"
+        ],
+        "hits": [
+          "97110",
+          "97140"
+        ],
+        "missed": [],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97110",
+          "97140"
+        ],
+        "precision": 1.0,
+        "recall": 1.0,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97110",
+            "gold": 20,
+            "extracted": 20,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97140",
+            "gold": 15,
+            "extracted": 15,
+            "basis": "explicit",
+            "delta": 0
+          }
+        ],
+        "exact": 2,
+        "within_2": 2,
+        "not_extracted": 0,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 2,
+        "computed_units": 2,
+        "gold_timed_minutes": 35,
+        "computed_timed_minutes": 35,
+        "gold_units_ama": 2,
+        "computed_units_ama": 2,
+        "untimed_leak": [],
+        "method_disagreement": false,
+        "computed_units_if_confirmed": null,
+        "exact": true,
+        "minutes_exact": true,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": null
+    },
+    {
+      "record_id": 104,
+      "form_id": "(billing-only)",
+      "run": 1,
+      "seconds": 0.0,
+      "was_condensed": false,
+      "note_chars": 0,
+      "invariants": {
+        "passed": 0,
+        "total": 0,
+        "failures": []
+      },
+      "section_coverage": {
+        "present": 0,
+        "expected": 0,
+        "missing": []
+      },
+      "cpt": null,
+      "omissions": null,
+      "flags": [],
+      "is_synthetic": false,
+      "body_part": "shoulder",
+      "folded_headings_raw": 0,
+      "icd": null,
+      "billing_detection": {
+        "gold": [
+          "97140",
+          "97110",
+          "97112"
+        ],
+        "detected": [
+          "97110",
+          "97140",
+          "97112"
+        ],
+        "hits": [
+          "97140",
+          "97110",
+          "97112"
+        ],
+        "missed": [],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97110",
+          "97140",
+          "97112"
+        ],
+        "precision": 1.0,
+        "recall": 1.0,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97110",
+            "gold": 15,
+            "extracted": 15,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97112",
+            "gold": 10,
+            "extracted": 10,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97140",
+            "gold": 20,
+            "extracted": 20,
+            "basis": "explicit",
+            "delta": 0
+          }
+        ],
+        "exact": 3,
+        "within_2": 3,
+        "not_extracted": 0,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 3,
+        "computed_units": 3,
+        "gold_timed_minutes": 45,
+        "computed_timed_minutes": 45,
+        "gold_units_ama": 3,
+        "computed_units_ama": 3,
+        "untimed_leak": [],
+        "method_disagreement": false,
+        "computed_units_if_confirmed": null,
+        "exact": true,
+        "minutes_exact": true,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": null
+    },
+    {
+      "record_id": 105,
+      "form_id": "(billing-only)",
+      "run": 1,
+      "seconds": 0.0,
+      "was_condensed": false,
+      "note_chars": 0,
+      "invariants": {
+        "passed": 0,
+        "total": 0,
+        "failures": []
+      },
+      "section_coverage": {
+        "present": 0,
+        "expected": 0,
+        "missing": []
+      },
+      "cpt": null,
+      "omissions": null,
+      "flags": [],
+      "is_synthetic": false,
+      "body_part": "shoulder",
+      "folded_headings_raw": 0,
+      "icd": null,
+      "billing_detection": {
+        "gold": [
+          "97110",
+          "97140",
+          "97035"
+        ],
+        "detected": [
+          "97110",
+          "97140",
+          "97035"
+        ],
+        "hits": [
+          "97110",
+          "97140",
+          "97035"
+        ],
+        "missed": [],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97110",
+          "97140",
+          "97035"
+        ],
+        "precision": 1.0,
+        "recall": 1.0,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97035",
+            "gold": 8,
+            "extracted": 8,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97110",
+            "gold": 25,
+            "extracted": 25,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97140",
+            "gold": 15,
+            "extracted": 15,
+            "basis": "explicit",
+            "delta": 0
+          }
+        ],
+        "exact": 3,
+        "within_2": 3,
+        "not_extracted": 0,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 3,
+        "computed_units": 3,
+        "gold_timed_minutes": 48,
+        "computed_timed_minutes": 48,
+        "gold_units_ama": 4,
+        "computed_units_ama": 4,
+        "untimed_leak": [],
+        "method_disagreement": true,
+        "computed_units_if_confirmed": null,
+        "exact": true,
+        "minutes_exact": true,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": null
+    },
+    {
+      "record_id": 106,
+      "form_id": "(billing-only)",
+      "run": 1,
+      "seconds": 0.0,
+      "was_condensed": false,
+      "note_chars": 0,
+      "invariants": {
+        "passed": 0,
+        "total": 0,
+        "failures": []
+      },
+      "section_coverage": {
+        "present": 0,
+        "expected": 0,
+        "missing": []
+      },
+      "cpt": null,
+      "omissions": null,
+      "flags": [],
+      "is_synthetic": false,
+      "body_part": "shoulder",
+      "folded_headings_raw": 0,
+      "icd": {
+        "gold": [
+          "M75.42"
+        ],
+        "suggested": [],
+        "hits": [],
+        "missed": [
+          "M75.42"
+        ],
+        "extra": [],
+        "laterality_errors": [],
+        "precision": null,
+        "recall": 0.0
+      },
+      "billing_detection": {
+        "gold": [
+          "97110",
+          "97530",
+          "97014"
+        ],
+        "detected": [
+          "97110",
+          "97530",
+          "97014"
+        ],
+        "hits": [
+          "97110",
+          "97530",
+          "97014"
+        ],
+        "missed": [],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97110",
+          "97530",
+          "97014"
+        ],
+        "precision": 1.0,
+        "recall": 1.0,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97014",
+            "gold": 12,
+            "extracted": 12,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97110",
+            "gold": 18,
+            "extracted": 18,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97530",
+            "gold": 15,
+            "extracted": 15,
+            "basis": "explicit",
+            "delta": 0
+          }
+        ],
+        "exact": 3,
+        "within_2": 3,
+        "not_extracted": 0,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 2,
+        "computed_units": 2,
+        "gold_timed_minutes": 33,
+        "computed_timed_minutes": 33,
+        "gold_units_ama": 2,
+        "computed_units_ama": 2,
+        "untimed_leak": [],
+        "method_disagreement": false,
+        "computed_units_if_confirmed": null,
+        "exact": true,
+        "minutes_exact": true,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": null
+    },
+    {
+      "record_id": 107,
+      "form_id": "(billing-only)",
+      "run": 1,
+      "seconds": 0.0,
+      "was_condensed": false,
+      "note_chars": 0,
+      "invariants": {
+        "passed": 0,
+        "total": 0,
+        "failures": []
+      },
+      "section_coverage": {
+        "present": 0,
+        "expected": 0,
+        "missing": []
+      },
+      "cpt": null,
+      "omissions": null,
+      "flags": [],
+      "is_synthetic": false,
+      "body_part": "shoulder",
+      "folded_headings_raw": 0,
+      "icd": {
+        "gold": [
+          "S43.432"
+        ],
+        "suggested": [
+          "S43.432"
+        ],
+        "hits": [
+          "S43.432"
+        ],
+        "missed": [],
+        "extra": [],
+        "laterality_errors": [],
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "billing_detection": {
+        "gold": [
+          "97110",
+          "97112"
+        ],
+        "detected": [
+          "97110",
+          "97112"
+        ],
+        "hits": [
+          "97110",
+          "97112"
+        ],
+        "missed": [],
+        "false_positives": [],
+        "distractor_leaks": [],
+        "surfaced": [
+          "97110",
+          "97112"
+        ],
+        "precision": 1.0,
+        "recall": 1.0,
+        "surfaced_recall": 1.0
+      },
+      "minutes": {
+        "cells": [
+          {
+            "code": "97110",
+            "gold": 22,
+            "extracted": 22,
+            "basis": "explicit",
+            "delta": 0
+          },
+          {
+            "code": "97112",
+            "gold": 15,
+            "extracted": 15,
+            "basis": "explicit",
+            "delta": 0
+          }
+        ],
+        "exact": 2,
+        "within_2": 2,
+        "not_extracted": 0,
+        "fabricated": 0,
+        "mae": 0.0
+      },
+      "units": {
+        "gold_units": 2,
+        "computed_units": 2,
+        "gold_timed_minutes": 37,
+        "computed_timed_minutes": 37,
+        "gold_units_ama": 2,
+        "computed_units_ama": 2,
+        "untimed_leak": [],
+        "method_disagreement": false,
+        "computed_units_if_confirmed": null,
+        "exact": true,
+        "minutes_exact": true,
+        "exact_if_confirmed": true,
+        "overstated": false
+      },
+      "agreement": null
+    }
+  ],
+  "contains_real_dictation": false
+}

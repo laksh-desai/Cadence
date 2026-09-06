@@ -37,17 +37,29 @@ _ONES = {
     "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
 }
 _TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
-_NUM_WORDS = sorted([*_ONES, *_TENS, "hundred"], key=len, reverse=True)  # longest-first: "fourteen" before "four"
-# A maximal run of number-words joined by spaces/hyphens/"and" (e.g. "one hundred and twenty").
+# "thousand" is here because PT goals routinely name community distances that way ("ambulate one
+# thousand feet"). Without it the run parser stopped at "one", so the transcript normalized to
+# "1 thousand feet" while the note wrote "1000 feet", and the `distance` pattern below false-flagged
+# a correctly-transcribed goal as fabricated. A false amber flag on a real value is worse than a
+# miss — it teaches the clinician to skim past the flags that matter.
+_SCALES = {"hundred": 100, "thousand": 1000}
+_NUM_WORDS = sorted([*_ONES, *_TENS, *_SCALES], key=len, reverse=True)  # longest-first: "fourteen" before "four"
+_NUM_ALT = "|".join(_NUM_WORDS)
+# A maximal run of number-words joined by spaces/hyphens/"and" (e.g. "one hundred and twenty"),
+# optionally carrying a spoken decimal point ("eighteen point four", "point six eight"). "point" is
+# only ever accepted as a CONNECTOR followed by another number word, so the ordinary clinical uses
+# of the word — "point tenderness", "trigger point", "at this point" — are left alone.
 _NUM_RUN_RE = re.compile(
-    r"\b(?:" + "|".join(_NUM_WORDS) + r")(?:[ -]+(?:and[ -]+)?(?:" + "|".join(_NUM_WORDS) + r"))*\b",
+    r"\b(?:point[ -]+)?(?:" + _NUM_ALT + r")"
+    r"(?:[ -]+(?:and[ -]+|point[ -]+)?(?:" + _NUM_ALT + r"))*\b",
     re.IGNORECASE,
 )
 
 
 def _parse_number_run(run: str) -> int | None:
-    """Parse a spoken number run to an int: 'one hundred twenty' -> 120, 'forty five' -> 45.
-    Returns None if the run holds no actual number word (so a bare 'and' is left untouched)."""
+    """Parse a spoken WHOLE-number run to an int: 'one hundred twenty' -> 120, 'forty five' -> 45,
+    'one thousand' -> 1000. Returns None if the run holds no actual number word (so a bare 'and' is
+    left untouched)."""
     total, current, saw = 0, 0, False
     for w in re.split(r"[ -]+", run.lower()):
         if w in ("", "and"):
@@ -58,10 +70,86 @@ def _parse_number_run(run: str) -> int | None:
             current += _TENS[w]
         elif w == "hundred":
             current = (current or 1) * 100
+        elif w == "thousand":
+            total += (current or 1) * 1000
+            current = 0
         else:
             return None
         saw = True
     return (total + current) if saw else None
+
+
+def _parse_number_phrase(run: str) -> str | None:
+    """Parse a spoken number run INCLUDING a spoken decimal, returning digit text.
+
+    'one hundred twenty' -> '120';  'eighteen point four' -> '18.4';  'point six eight' -> '0.68'.
+
+    The decimal half is read DIGIT BY DIGIT when every word after "point" is a single digit, which
+    is how decimals are actually spoken ("point six eight" is 0.68, not 0.14). Summing them was the
+    old behaviour and it invented a value: a dictated gait speed of "point six eight meters per
+    second" normalized to "point 14 meters per second", so the note's honest "0.68 meters" had
+    nothing to anchor to and drew a fabrication flag. A non-digit tail ("point twenty five") falls
+    back to the whole-number parser, which reads it as 25 -> "0.25".
+    """
+    words = re.split(r"[ -]+", run.lower().strip())
+    if "point" not in words:
+        n = _parse_number_run(run)
+        return None if n is None else str(n)
+    i = words.index("point")
+    head, tail = words[:i], [w for w in words[i + 1:] if w and w != "and"]
+    whole = _parse_number_run(" ".join(head)) if head else 0
+    if whole is None or not tail:
+        return None
+    if all(_ONES.get(w, 99) <= 9 for w in tail):
+        frac = "".join(str(_ONES[w]) for w in tail)
+    else:
+        n = _parse_number_run(" ".join(tail))
+        if n is None:
+            return None
+        frac = str(n)
+    return f"{whole}.{frac}"
+
+
+# Spoken blood pressures use the colloquial hundreds form — "one thirty eight over eighty two"
+# means 138/82. The generic run parser SUMS the words and produced 39, i.e. it invented a number
+# nobody said. Reading it correctly is only unambiguous inside the "<value> over <value>" idiom
+# ("one thirty" on its own is a clock time as often as a pressure), so the rewrite is scoped to
+# exactly that shape and runs BEFORE the general pass, while the words are still words.
+_SUB_HUNDRED_ALT = "|".join(sorted(
+    [w for w, v in {**_ONES, **_TENS}.items() if v >= 10], key=len, reverse=True))
+_ONES_DIGIT_ALT = "|".join(sorted(
+    [w for w, v in _ONES.items() if v <= 9], key=len, reverse=True))
+_COLLOQ_BP = (
+    r"(?P<lead>one|two)[ -]+"
+    r"(?:(?:oh|o)[ -]+(?P<oh>" + _ONES_DIGIT_ALT + r")"
+    r"|(?P<tens>" + _SUB_HUNDRED_ALT + r")(?:[ -]+(?P<ones>" + _ONES_DIGIT_ALT + r"))?)"
+)
+# The systolic side is recognised by the "over <number>" that follows it; the diastolic by the
+# "over" that precedes it. Both halves are spoken colloquially ("two twenty over one ten" is
+# 220/110), so covering only the systolic left the diastolic summing to 11.
+_SPOKEN_BP_SYSTOLIC_RE = re.compile(
+    r"\b" + _COLLOQ_BP + r"(?=[ -]+over[ -]+(?:\d|" + _NUM_ALT + r"))", re.IGNORECASE)
+_SPOKEN_BP_DIASTOLIC_RE = re.compile(
+    r"(?<=over)(?P<gap>[ -]+)" + _COLLOQ_BP + r"\b", re.IGNORECASE)
+
+
+def _colloquial_bp_value(m: re.Match) -> int:
+    hundreds = _ONES[m.group("lead").lower()] * 100
+    if m.group("oh"):                                  # "one oh five" -> 105
+        return hundreds + _ONES[m.group("oh").lower()]
+    rest = m.group("tens").lower()
+    value = _TENS.get(rest) or _ONES.get(rest, 0)      # teens live in _ONES, tens in _TENS
+    if m.group("ones"):                                # "one thirty eight" -> 138
+        value += _ONES[m.group("ones").lower()]
+    return hundreds + value
+
+
+def _expand_spoken_bp(m: re.Match) -> str:
+    return str(_colloquial_bp_value(m))
+
+
+def _expand_spoken_bp_diastolic(m: re.Match) -> str:
+    return m.group("gap") + str(_colloquial_bp_value(m))
 
 
 def normalize_for_matching(text: str) -> str:
@@ -71,10 +159,13 @@ def normalize_for_matching(text: str) -> str:
     the transcript so they can be compared.
     """
     def _sub(m: re.Match) -> str:
-        n = _parse_number_run(m.group(0))
-        return str(n) if n is not None else m.group(0)
+        v = _parse_number_phrase(m.group(0))
+        return v if v is not None else m.group(0)
 
     s = (text or "").lower().replace("a hundred", "one hundred")
+    # Systolic first: its lookahead reads the words after "over", which the diastolic pass rewrites.
+    s = _SPOKEN_BP_SYSTOLIC_RE.sub(_expand_spoken_bp, s)
+    s = _SPOKEN_BP_DIASTOLIC_RE.sub(_expand_spoken_bp_diastolic, s)
     s = _NUM_RUN_RE.sub(_sub, s)
     # grade modifiers spoken as words, adjacent to a digit: "3 plus" -> "3+"
     s = re.sub(r"\b(\d)\s+plus\b", r"\1+", s)

@@ -7,7 +7,12 @@ CREATE TABLE IF NOT EXISTS patients (
   created_at        TEXT NOT NULL,
   scheduling_notes  TEXT,
   updated_at        TEXT NOT NULL DEFAULT '1970-01-01T00:00:00+00:00',
-  sheet_synced_at   TEXT
+  sheet_synced_at   TEXT,
+  -- Demo/seed patients created by scripts/seed_demo_data.py. NOT NULL DEFAULT 0 for the same
+  -- reason as notes.synthetic: "unknown" must never read as "safe to delete in bulk", and a
+  -- pre-existing patient is definitionally real. Lets the seed script clean up exactly what it
+  -- created without ever touching a row a human entered.
+  synthetic         INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS notes (
@@ -41,6 +46,10 @@ CREATE TABLE IF NOT EXISTS notes (
   fast_tier                INTEGER,  -- NULL = unknown (legacy rows)
   template_spec_sha        TEXT,     -- forms.spec_sha() at generation time
   template_customized      INTEGER,
+  -- Which Cadence version wrote this note. Cadence's generation rules change what notes SAY, so
+  -- "which version produced this?" is a clinical question: it is how you answer "did that fix
+  -- reach the notes I already signed?". NULL = written before this column existed.
+  app_version              TEXT,
   -- The one NOT NULL DEFAULT, because "unknown" must never read as "safe to export".
   synthetic                INTEGER NOT NULL DEFAULT 0
 );

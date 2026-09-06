@@ -9,13 +9,17 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from app import version as app_version
 from app.generate import (
-    billing, chunked, cpt, forms as forms_store, ollama_client, postprocess, traceability,
+    billing, chunked, cpt, forms as forms_store, jobs, ollama_client, postprocess, traceability,
 )
 from app.generate.forms import FORMS, VALID_MODES
 from app.generate.ollama_client import OllamaUnavailableError, generate_note
 from app.generate.parser import parse_plain
-from app.generate.prompt import PatientContext, build_prompt, build_revise_prompt, render_prior_block
+from app.generate.prompt import (
+    PatientContext, build_prompt, build_revise_prompt, build_scoped_revise_prompt,
+    is_structural_instruction, render_prior_block, select_revise_sections,
+)
 from app.integrations import sheets_sync
 from app.integrations.sheets_client import SheetsClient, load_sheets_config
 from app.storage import carry_forward, db, repository
@@ -30,6 +34,8 @@ from app.ui.schemas import (
     GenerateResponse,
     IcdCandidateModel,
     IntegrationStatus,
+    JobDetail,
+    JobSummary,
     NoteListItem,
     NoteOut,
     PatientCreate,
@@ -102,6 +108,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await _job_queue.stop()
         if sync_task is not None:
             sync_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -149,7 +156,7 @@ except Exception:  # noqa: BLE001
 async def get_status():
     sheets_configured = load_sheets_config() is not None
     ollama_ok = await ollama_client.is_reachable()
-    return StatusResponse(integrations=[
+    return StatusResponse(version=app_version(), integrations=[
         IntegrationStatus(
             name="Local note generation (Ollama / MedGemma)",
             ready=ollama_ok,
@@ -159,6 +166,12 @@ async def get_status():
             name="Local transcription (MedASR)",
             ready=app.state.medasr_ready,
             detail="Loaded and ready" if app.state.medasr_ready else (app.state.medasr_error or "Not configured"),
+        ),
+        IntegrationStatus(
+            name="Billing code suggestions",
+            ready=cpt.billing_enabled(),
+            detail=cpt.billing_gate_reason() or
+                   "On — every code still requires clinician confirmation before it is billed.",
         ),
         IntegrationStatus(
             name="Google Sheets roster sync",
@@ -386,9 +399,9 @@ def _billing_draft(form, bill_from: str | None, sections: list[dict] | None):
     for exactly this reason: its "transcript" is the note's own prose, and scanning model-written
     prose for interventions is the misfire CLAUDE.md rule 12 forbids.
     """
-    if not bill_from or form.id in cpt._NON_BILLING_FORMS:
+    if not bill_from or form.id in cpt._NON_BILLING_FORMS or not cpt.billing_enabled():
         return None
-    draft = billing.extract(bill_from)
+    draft = billing.extract(bill_from, eval_form=cpt.is_eval_form(form.id))
     if sections:
         draft = billing.reconcile(draft, sections)
     return BillingModel(
@@ -441,7 +454,19 @@ def _finalize_note(form, text, was_condensed, still_over, transcript, used_prior
         )
     sections = postprocess.apply(form.id, parsed["sections"])
     sections = traceability.add_verification_flags(sections, transcript)
-    sections, code_flags = cpt.suggest_codes(sections, form.id)
+    # Whether the therapist STATED the evaluation complexity, asked directly rather than by
+    # building the whole draft first. Reordering `_billing_draft` above `suggest_codes` would
+    # break `reconcile`, which compares the draft against the note's [[CPT: ...]] chips — and
+    # those chips do not exist until `suggest_codes` has run.
+    stated_eval = bool(
+        bill_from and cpt.is_eval_form(form.id)
+        and billing.detect_eval_complexity(billing.split_clauses(bill_from)) is not None
+    )
+    if cpt.billing_enabled():
+        sections, code_flags = cpt.suggest_codes(sections, form.id,
+                                                 eval_complexity_stated=stated_eval)
+    else:
+        code_flags = []
     missing = list(parsed["missing_info"]) + code_flags
     if was_condensed:
         missing.append(
@@ -450,6 +475,15 @@ def _finalize_note(form, text, was_condensed, still_over, transcript, used_prior
             if still_over else
             "This dictation was long and was automatically condensed to fit the model — verify the "
             "note captured the whole session."
+        )
+    elif still_over:
+        # Over budget with condensing off (the default — see chunked.CONDENSE_ENABLED). The model
+        # did NOT see all of this dictation. Silent truncation is what rule 16 was written about,
+        # so the one thing that must not happen is saying nothing.
+        missing.append(
+            "This dictation was too long for the model to read in one pass, so part of it was not "
+            "seen — check every section against what you said, especially the beginning and end, "
+            "or split the visit into two shorter dictations."
         )
     return GenerateResponse(
         sections=[SectionModel(**s) for s in sections],
@@ -518,6 +552,111 @@ async def generate_stream(body: GenerateRequest):
     )
 
 
+# ---------------------------------------------------------------------------------
+# Background generation queue
+#
+# Measured on the dev box: median 7.0 min per note, 21 of 21 over the stated 1-2 min budget, with
+# the floor set by a 91-word follow-up — so the cost is output length, not input length, and no
+# amount of prompt trimming reaches the budget on CPU-only hardware. The fix is to stop making the
+# wait blocking. /api/generate/stream above still exists and is unchanged for tooling and for a
+# clinician who wants to watch one note write; the queue is what lets them start a note and walk
+# to the next patient. See app/generate/jobs.py for why one serialized worker rather than N.
+# ---------------------------------------------------------------------------------
+
+async def _run_generation_job(job: jobs.Job, emit) -> dict:
+    """The queue's unit of work — the same pipeline /api/generate/stream runs, with `emit` in place
+    of the HTTP yield. Deliberately reuses `_generation_setup`/`_finalize_note` so the queued path
+    can never drift from the direct one."""
+    body = GenerateRequest(**job.payload)
+    form, prior_block, used_prior, patient_ctx = _generation_setup(body)
+    transcript = " ".join(filter(None, [body.summary, body.extra_info]))
+    model = ollama_client.model_for(body.fast)
+    overhead = chunked.estimate_tokens(build_prompt(form, patient_ctx, "", prior_block, body.extra_info))
+    job.detail = "Checking the dictation length…"
+    summary, was_condensed, still_over = await chunked.fit_dictation(body.summary, overhead, generate_note)
+    if was_condensed:
+        job.detail = "Condensed a very long dictation; writing the note…"
+    else:
+        job.detail = "Writing the note…"
+    prompt = build_prompt(form, patient_ctx, summary, prior_block, body.extra_info)
+    parts: list[str] = []
+    async for chunk in ollama_client.stream_note(prompt, model=model):
+        parts.append(chunk)
+        emit(chunk)
+    result = _finalize_note(form, "".join(parts), was_condensed, still_over, transcript,
+                            used_prior, bill_from=transcript, model_id=model)
+    return result.model_dump()
+
+
+_job_queue = jobs.JobQueue(_run_generation_job)
+
+
+@app.post("/api/generate/jobs", response_model=JobSummary, status_code=202)
+async def enqueue_generation(body: GenerateRequest):
+    """Queue a note and return immediately. Validation still runs up front, so an unknown form or
+    a missing patient is a real 400/404 rather than a job that fails minutes later."""
+    _generation_setup(body)
+    patient = repository.get_patient(body.patient_id)
+    form = FORMS[body.form_id]
+    job = _job_queue.submit(
+        patient_id=body.patient_id, patient_name=(patient or {}).get("name", "—"),
+        form_id=form.id, form_name=form.name, fast=body.fast,
+        payload=body.model_dump(),
+    )
+    return JobSummary(**job.summary(_job_queue.position(job.id)))
+
+
+@app.get("/api/generate/jobs", response_model=list[JobSummary])
+async def list_generation_jobs():
+    return [JobSummary(**s) for s in _job_queue.list()]
+
+
+@app.get("/api/generate/jobs/{job_id}", response_model=JobDetail)
+async def get_generation_job(job_id: str, cursor: int = 0):
+    """Status plus the text written since `cursor`. Polling with the cursor the previous call
+    returned reattaches to a running note after a reload — the buffer is append-only and owned by
+    the server, so nothing is lost when the browser goes away."""
+    tail = _job_queue.tail(job_id, cursor)
+    if tail is None:
+        raise HTTPException(404, "job not found")
+    return JobDetail(**tail)
+
+
+@app.delete("/api/generate/jobs/{job_id}", status_code=204)
+async def cancel_generation_job(job_id: str):
+    """Cancel a queued or running note, or dismiss a finished one from the tray."""
+    if not _job_queue.cancel(job_id):
+        raise HTTPException(404, "job not found")
+    return None
+
+
+def _splice_scoped(before: list[dict], model_output: str) -> str:
+    """Put the model's re-written section(s) back into the full note, as plain text.
+
+    Sections the clinician did not ask about are carried across EXACTLY as they were — this is the
+    mechanism, not a nicety. The model never saw them, so it cannot have reworded them. A body of
+    [[DELETE]] removes a section, which is how a scoped prompt expresses "delete the Vitals
+    section" without needing the whole note.
+    """
+    parsed = parse_plain(model_output)
+    new_by = {(s.get("heading") or "").strip().lower(): s
+              for s in (parsed["sections"] if parsed else [])}
+    out: list[dict] = []
+    for s in before:
+        head = (s.get("heading") or "").strip().lower()
+        replacement = new_by.pop(head, None)
+        if replacement is None:
+            out.append(s)
+            continue
+        if replacement.get("body", "").strip().upper().strip("[]") == "DELETE":
+            continue
+        out.append({**s, "body": replacement.get("body", "")})
+    # A section the model invented rather than revised. Kept (never silently dropped) so the
+    # clinician sees it, but appended at the end rather than guessing where it belongs.
+    out.extend(new_by.values())
+    return "\n\n".join(f"## {s['heading']}\n{s.get('body', '')}" for s in out)
+
+
 @app.post("/api/revise/stream")
 async def revise_stream(body: ReviseRequest):
     """Apply a clinician's plain-language edit to an already-generated note and stream the revised note
@@ -531,7 +670,21 @@ async def revise_stream(body: ReviseRequest):
         raise HTTPException(400, "no change was requested")
     if not body.note_text.strip():
         raise HTTPException(400, "no note to revise")
-    prompt = build_revise_prompt(form, body.note_text, body.instruction)
+    # SCOPED vs WHOLE-NOTE. Measured on a real 14-section note, a whole-note rewrite asked to change
+    # ONE section deleted four others and reworded four more — because the model is spending its
+    # output budget copying 2,000 tokens it was never meant to touch. When the instruction names a
+    # section we can identify deterministically, only that section is sent and only that section
+    # comes back; the rest is spliced through byte-identical, so collateral drift is impossible
+    # rather than discouraged. Anything structural (merge/reorder/move) or unidentifiable still
+    # takes the whole-note path, because a splice cannot express a change in the note's shape.
+    parsed_before = parse_plain(body.note_text)
+    sections_before = parsed_before["sections"] if parsed_before else []
+    targets = ([] if (not sections_before or is_structural_instruction(body.instruction))
+               else select_revise_sections(sections_before, body.instruction))
+    if targets:
+        prompt = build_scoped_revise_prompt(form, sections_before, targets, body.instruction)
+    else:
+        prompt = build_revise_prompt(form, body.note_text, body.instruction)
     # Anchor the verification flags against the existing note + the instruction, so values already in
     # the note (and ones the clinician just asked to add) aren't false-flagged as fabricated.
     transcript = " ".join(filter(None, [body.note_text, body.instruction]))
@@ -551,7 +704,9 @@ async def revise_stream(body: ReviseRequest):
             # billable interventions is precisely the misfire rule 12 forbids. The client keeps
             # showing the billing card from the original generate, which was derived from the
             # real dictation and is still the correct draft for this visit.
-            result = _finalize_note(form, "".join(parts), False, False, transcript, False,
+            written = "".join(parts)
+            note_text = (_splice_scoped(sections_before, written) if targets else written)
+            result = _finalize_note(form, note_text, False, False, transcript, False,
                                     bill_from=None, model_id=model)
             yield _event({"type": "done", "result": result.model_dump()})
         except OllamaUnavailableError as e:
