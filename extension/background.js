@@ -16,7 +16,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ["lib/mapping.js", "content.js"],
+      files: ["lib/mapping.js", "lib/oaroute.js", "content.js"],
     });
     // content.js toggles itself on (re-)injection; this message is a no-op safety net.
     chrome.tabs.sendMessage(tab.id, { type: "cadence-panel", action: "toggle" }, () => void chrome.runtime.lastError);

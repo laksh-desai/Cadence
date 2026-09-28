@@ -8,7 +8,8 @@
 (function () {
   "use strict";
   const M = window.CadenceMap;
-  if (!M) { console.error("Cadence: mapping lib not loaded"); return; }
+  const R = window.CadenceRoute;
+  if (!M || !R) { console.error("Cadence: extension libs not loaded"); return; }
 
   // Re-injection (icon clicked again) → just toggle the existing panel.
   if (window.__cadenceOA) { window.__cadenceOA.toggle(); return; }
@@ -22,7 +23,54 @@
     note: null,
     sources: [],
     picking: null,
+    page: readPage(),
+    plan: null,
+    gapsAcknowledged: false,
   };
+
+  // ---------- what Office Ally page is this? ----------
+  // Patient ID and layout come from the page itself, so the fill can refuse the wrong chart.
+  function readPage() {
+    let pid = "";
+    try { pid = new URL(location.href).searchParams.get("PID") || ""; } catch (_) { /* not a URL we can parse */ }
+    const lbl = document.getElementById("ctl00_phFolderContent_myPatientHeader_lblPatientID");
+    if (!pid && lbl) pid = lbl.textContent.trim();
+    const layoutSel = document.getElementById(R.FIELD_PREFIX + "ddlSoapLayout");
+    const opt = layoutSel && layoutSel.options[layoutSel.selectedIndex];
+    return { pid: pid, layoutName: opt ? opt.textContent.trim() : "", layoutId: opt ? opt.value : "" };
+  }
+
+  // Every Office Ally SOAP text box on the page: its key, the label the practice gave it, and its
+  // character limit (read from Office Ally's own CheckMaxLength handler, default 2,000).
+  function discoverFields() {
+    const out = [];
+    document.querySelectorAll('textarea[id^="' + R.FIELD_PREFIX + '"]').forEach((el) => {
+      const key = R.keyFromId(el.id);
+      if (!key || el.disabled || el.readOnly) return;
+      const m = /CheckMaxLength\(this,\s*(\d+)/.exec(el.getAttribute("onkeyup") || "");
+      out.push({ key: key, label: fieldLabel(el, key), maxLen: m ? parseInt(m[1], 10) : 0, el: el });
+    });
+    return out;
+  }
+  function fieldLabel(el, key) {
+    const hidden = document.getElementById(R.FIELD_PREFIX + key + "_Label");
+    if (hidden && hidden.value && hidden.value.trim()) return hidden.value.trim();
+    // A built-in box means what its key says (on the real page the Functional Status box's own
+    // header just reads "Comments"), so the known name beats the nearest header text.
+    if (R.DEFAULT_LABELS[key]) return R.DEFAULT_LABELS[key];
+    // Otherwise the nearest header label above the box (Office Ally puts it in a table just before).
+    let node = el;
+    for (let depth = 0; node && depth < 5; depth++, node = node.parentElement) {
+      for (let sib = node.previousElementSibling, n = 0; sib && n < 4; sib = sib.previousElementSibling, n++) {
+        const lab = sib.matches(".soapTextAreaHeaderLabel") ? sib : sib.querySelector(".soapTextAreaHeaderLabel");
+        if (lab) {
+          const first = Array.prototype.find.call(lab.childNodes, (c) => c.nodeType === 3 && c.textContent.trim()) ;
+          return (first ? first.textContent : lab.textContent).replace(/:\s*$/, "").trim();
+        }
+      }
+    }
+    return key;
+  }
 
   // ---------- background messaging + storage ----------
   function bg(action, payload) {
@@ -88,6 +136,19 @@
       border-radius: 8px; padding: 7px 9px; margin-top: 10px; }
     .co-hint:empty { display: none; }
     .co-empty { color: #9aa8a3; font-size: 12px; padding: 8px 0; }
+    .co-page { font-size: 11.5px; color: #1f3835; margin: -4px 0 10px; }
+    .co-h { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+      color: #5d6f69; margin: 14px 0 6px; }
+    .co-plan { border: 1px solid #e0ece8; border-radius: 8px; padding: 4px 10px; background: #fcfdfd; }
+    .co-plan:empty { display: none; }
+    .co-box { padding: 6px 0; border-bottom: 1px solid #eef2f0; }
+    .co-box:last-child { border-bottom: none; }
+    .co-box-h { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+    .co-box-n { font-weight: 400; color: #5d6f69; font-size: 11px; white-space: nowrap; }
+    .co-box-s { font-size: 11px; color: #5d6f69; }
+    .co-box.bad .co-box-h { color: #7a2a1e; }
+    .co-warn { font-size: 11.5px; color: #7a2a1e; background: #fdecea; border: 1px solid #f0c8c1;
+      border-radius: 8px; padding: 7px 9px; margin-top: 8px; }
   </style>`;
 
   const PANEL_HTML = `<div class="co" id="coPanel">
@@ -98,11 +159,15 @@
     <div class="co-body">
       <p class="co-note">Local only — reads Cadence on this machine, fills this page. No data leaves the device.</p>
       <div class="co-status" id="coStatus">…</div>
+      <div class="co-page" id="coPage"></div>
       <div class="co-row"><label>Patient</label><select id="coPatient"></select></div>
       <div class="co-row"><label>Saved note</label><select id="coNote"></select></div>
-      <div id="coSources"></div>
+      <div class="co-h">Automatic fill — where each section will go</div>
+      <div class="co-plan" id="coPlan"></div>
       <div class="co-fillbar"><button class="co-btn primary" id="coFill">Fill Office Ally</button></div>
       <div class="co-hint" id="coHint"></div>
+      <div class="co-h">Manual overrides (optional)</div>
+      <div id="coSources"></div>
     </div>
   </div>`;
 
@@ -157,13 +222,24 @@
     sel.addEventListener("change", onPatientChange);
     $("#coNote").addEventListener("change", onNoteChange);
     $("#coFill").addEventListener("click", fill);
+    renderPage();
+    // On an Office Ally chart, pick the Cadence patient linked to this chart's Patient ID for them.
+    const linked = state.page.pid && state.patients.find((p) => digitsOnly(p.mrn) && digitsOnly(p.mrn) === digitsOnly(state.page.pid));
+    if (linked) { sel.value = linked.id; await onPatientChange(); return; }
     setStatus(state.patients.length ? "Pick a patient and a saved note." : "No patients in Cadence yet.");
+  }
+
+  function renderPage() {
+    const p = state.page;
+    $("#coPage").textContent = p.pid
+      ? "Office Ally Patient ID " + p.pid + (p.layoutName ? " · layout \"" + p.layoutName + "\"" : "")
+      : "Not an Office Ally chart page — the patient-ID check is skipped.";
   }
 
   async function onPatientChange() {
     const pid = $("#coPatient").value;
     const noteSel = $("#coNote");
-    state.note = null; state.sources = []; renderSources();
+    state.note = null; state.sources = []; state.plan = null; renderSources();
     if (!pid) { noteSel.innerHTML = ""; return; }
     setStatus("Loading notes…");
     const r = await bg("notes", { patientId: pid });
@@ -183,12 +259,65 @@
     state.note = nr.data;
     state.patient = pr.ok ? pr.data : null;
     state.sources = M.noteSources(state.note, state.patient);
+    state.gapsAcknowledged = false;
     renderSources();
-    setStatus('Loaded "' + (state.note.form_name || "note") + '". Map each field once, then Fill.');
+    const check = R.checkPatient(state.page.pid, state.patient);
+    if (!check.ok) setStatus(check.reason, true);
+    else setStatus('Loaded "' + (state.note.form_name || "note") + '". Check where each section will go below, then Fill.');
+  }
+
+  // ---------- automatic routing ----------
+  // Sections the clinician mapped by hand, and the boxes those mappings occupy, are left out.
+  function manualExclusions() {
+    const rules = (state.mapping && state.mapping.rules) || [];
+    const skip = [], reserved = [];
+    const soapMapped = rules.filter((r) => r.sourceId.indexOf("soap:") === 0).map((r) => r.sourceId.slice(5));
+    rules.forEach((r) => {
+      if (r.sourceId.indexOf("section:") === 0) skip.push(r.sourceId.slice(8));
+      const idm = /^#(.+)$/.exec(r.selector || "");
+      const key = idm && R.keyFromId(idm[1]);
+      if (key) reserved.push(key);
+    });
+    ((state.note && state.note.sections) || []).forEach((s) => {
+      if (soapMapped.indexOf(M.soapBlockFor(s.heading)) !== -1) skip.push(M.normalizeHeading(s.heading));
+    });
+    return { skipHeadings: skip, reservedKeys: reserved };
+  }
+
+  function computePlan() {
+    if (!state.note) return null;
+    const sections = (state.note.sections || []).map((s) => ({ heading: s.heading, text: M.markerToText(s.body).trim() }));
+    const fields = discoverFields();
+    const plan = R.planRouting(sections, fields.map((f) => ({ key: f.key, label: f.label, maxLen: f.maxLen })), manualExclusions());
+    plan.fieldCount = fields.length;
+    return plan;
+  }
+
+  function renderPlan() {
+    const mount = $("#coPlan");
+    state.plan = computePlan();
+    const plan = state.plan;
+    if (!plan) { mount.innerHTML = ""; return; }
+    if (!plan.fieldCount) {
+      mount.innerHTML = '<div class="co-empty">No Office Ally note boxes found on this page. Open the patient\'s note form (Add Note / Encounter), then reopen this panel.</div>';
+      return;
+    }
+    const warn = R.layoutWarning(state.note.form_id, state.page.layoutName);
+    mount.innerHTML =
+      plan.boxes.map((b) => `<div class="co-box">
+        <div class="co-box-h"><span>${esc(b.label)}</span><span class="co-box-n">${b.length.toLocaleString()} / ${b.maxLen.toLocaleString()}</span></div>
+        <div class="co-box-s">${b.sections.map(esc).join(" · ")}</div>
+      </div>`).join("") +
+      plan.unplaced.map((u) => `<div class="co-box bad">
+        <div class="co-box-h"><span>Not placed: ${esc(u.heading)}</span></div>
+        <div class="co-box-s">${esc(u.reason)} — copy it in by hand.</div>
+      </div>`).join("") +
+      (warn ? `<div class="co-warn">${esc(warn)}</div>` : "");
   }
 
   function renderSources() {
     const mount = $("#coSources");
+    renderPlan(); // a manual mapping changes what is left to route automatically
     if (!state.sources.length) { mount.innerHTML = '<div class="co-empty">Choose a note to see its fields.</div>'; return; }
     mount.innerHTML = state.sources.map((s) => {
       const rule = M.ruleFor(state.mapping, s.id);
@@ -262,22 +391,69 @@
   }
 
   // ---------- fill ----------
+  // Fills text boxes only. It never clicks Update, Apply, or anything that saves or signs — the
+  // clinician reviews every box in Office Ally and saves and signs it themselves.
   function fill() {
     if (!state.note) { setStatus("Load a note first."); return; }
-    const rules = (state.mapping && state.mapping.rules) || [];
-    if (!rules.length) { setStatus("Nothing mapped yet — click Map on a field, then click it on the page."); return; }
-    let filled = 0, skipped = 0, notFound = 0;
-    rules.forEach((rule) => {
+
+    // 1. Right chart? Refuse outright on a mismatch — a note in the wrong chart is the worst outcome.
+    const check = R.checkPatient(state.page.pid, state.patient);
+    if (!check.ok) { setStatus(check.reason, true); return; }
+
+    // 2. Unresolved gaps would go into the chart as "[! …]". Make that a deliberate second click.
+    const gaps = R.countGaps(state.note.sections);
+    if (gaps && !state.gapsAcknowledged) {
+      state.gapsAcknowledged = true;
+      setStatus("This note still has " + gaps + " unresolved gap" + (gaps > 1 ? "s" : "") +
+        " marked [! …]. Resolve them in Cadence, or click Fill again to fill with them visible.", true);
+      return;
+    }
+
+    let filled = 0, skipped = 0, notFound = 0, occupied = [];
+    const touched = [];
+
+    // 3. Manual overrides first (the clinician's explicit choice).
+    ((state.mapping && state.mapping.rules) || []).forEach((rule) => {
       const text = M.resolveSource(rule.sourceId, state.note, state.patient);
       if (text == null) { skipped++; return; }
       let el = null;
       try { el = document.querySelector(rule.selector); } catch (_) { el = null; }
       if (!el) { notFound++; return; }
-      try { setFieldValue(el, text); filled++; } catch (_) { notFound++; }
+      try { setFieldValue(el, text); filled++; touched.push(el); } catch (_) { notFound++; }
     });
-    setStatus("Filled " + filled +
-      (skipped ? " · " + skipped + " not in this note" : "") +
-      (notFound ? " · " + notFound + " field(s) not found on page" : "") + ".", notFound > 0);
+
+    // 4. Automatic routing for everything else. A box that already holds different text is left
+    //    alone — overwriting what the clinician typed in Office Ally is never a silent side effect.
+    const plan = computePlan();
+    const byKey = {};
+    discoverFields().forEach((f) => { byKey[f.key] = f; });
+    ((plan && plan.boxes) || []).forEach((b) => {
+      const f = byKey[b.key];
+      if (!f) { notFound++; return; }
+      const current = (f.el.value || "").trim();
+      if (current && current !== b.text.trim()) { occupied.push(b.label); return; }
+      setFieldValue(f.el, b.text); filled++; touched.push(f.el);
+    });
+
+    revealFilled(touched);
+    const unplaced = (plan && plan.unplaced) || [];
+    const problems = unplaced.length + occupied.length + notFound;
+    setStatus("Filled " + filled + " Office Ally box" + (filled === 1 ? "" : "es") + "." +
+      (occupied.length ? " Not overwritten (already has text — clear it first): " + occupied.join(", ") + "." : "") +
+      (unplaced.length ? " Copy in by hand: " + unplaced.map((u) => u.heading).join(", ") + "." : "") +
+      (notFound ? " " + notFound + " field(s) not found on page." : "") +
+      (skipped ? " " + skipped + " manual mapping(s) not in this note." : "") +
+      " Review every box before saving and signing.", problems > 0);
+  }
+
+  // Office Ally keeps some boxes (e.g. Physical Examination) in collapsed sections. A filled box
+  // the clinician cannot see is a box they will not review, so open anything that hides one.
+  function revealFilled(elements) {
+    elements.forEach((el) => {
+      for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+        if (n.style && n.style.display === "none") n.style.display = "";
+      }
+    });
   }
 
   function setFieldValue(el, text) {
@@ -298,7 +474,10 @@
       const setter = Object.getOwnPropertyDescriptor(proto, "value").set; // native setter so React registers it
       setter.call(el, text);
       el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true })); // Office Ally marks the note unsaved
+      // Office Ally resizes the box and updates its "chars left" counter on keyup. Its keyup also
+      // truncates at the limit, which is why routing never produces a box over the limit.
+      if (tag === "textarea") el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
       return;
     }
     el.textContent = text;
@@ -324,6 +503,7 @@
   // ---------- small utils ----------
   function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
   function truncate(s, n) { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+  function digitsOnly(s) { return String(s || "").replace(/\D/g, ""); }
   function fmtDate(d) { const x = d ? new Date(d) : null; return x && !isNaN(x) ? x.toLocaleDateString() : ""; }
 
   init();
