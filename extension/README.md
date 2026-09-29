@@ -36,14 +36,14 @@ Before touching a real chart, validate the mechanics against the included mock f
    (each section, plus patient name/DOB/MRN, plus optional SOAP blocks).
 5. For a source, click **Map**, then click the matching field on the page. The extension records a
    selector for that field. Repeat for the fields you care about.
-6. Click **Fill Office Ally** — the mapped fields populate. Reload the page and Fill again to confirm
+6. Click **Fill & save draft** — the mapped fields populate. Reload the page and Fill again to confirm
    the mapping persisted.
 
 ## Everyday use with Office Ally
 
 1. In Cadence: generate a note, review, and **Save** it to the patient's file.
 2. In Office Ally: open the patient's note form.
-3. Click the extension icon → pick the patient + the saved note → **Fill Office Ally**.
+3. Click the extension icon → pick the patient + the saved note → **Fill & save draft**.
    - First time on a given form, do the **Map** step once (click each field). After that it's
      just pick-note → Fill.
 4. **Review every field in Office Ally before signing** — the clinician is always the final check.
@@ -133,6 +133,8 @@ Office Ally form — never first on a real patient.
 - `background.js` — injects the panel on icon click; proxies read-only fetches to Cadence.
 - `content.js` — the in-page panel (shadow-DOM isolated), patient/note picker, click-to-pick, fill.
 - `lib/mapping.js` — pure, testable helpers shared by the content script and the node tests.
+- `bridge.js` — runs only on the local Cadence page: tells Cadence the extension is installed and
+  receives the note chosen with Cadence's **Send to Office Ally** button (ids only).
 - `lib/oaroute.js` — automatic routing of note sections into Office Ally boxes, plus the
   patient-ID, layout, and gap checks. Pure and tested.
 - `test-form.html` — local mock EHR form for validating without Office Ally.

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class FormStep(BaseModel):
@@ -93,6 +93,7 @@ class NoteListItem(BaseModel):
     form_id: str
     form_name: str
     created_at: str
+    visit_date: str | None = None
     missing_count: int
     snippet: str
 
@@ -102,6 +103,7 @@ class NoteOut(BaseModel):
     form_id: str
     form_name: str
     created_at: str
+    visit_date: str | None = None
     sections: list[SectionModel]
     missing_info: list[str]
 
@@ -231,12 +233,15 @@ class SaveNoteRequest(BaseModel):
     fast: bool = False
     template_spec_sha: str | None = None
     template_customized: bool = False
+    # The visit day (YYYY-MM-DD). Omitted -> today on the Cadence computer.
+    visit_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     synthetic: bool = False
 
 
 class SaveNoteResponse(BaseModel):
     id: str
     created_at: str
+    visit_date: str | None = None
 
 
 class JobSummary(BaseModel):

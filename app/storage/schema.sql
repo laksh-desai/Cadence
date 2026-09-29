@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS notes (
   -- "which version produced this?" is a clinical question: it is how you answer "did that fix
   -- reach the notes I already signed?". NULL = written before this column existed.
   app_version              TEXT,
+  -- The day of the visit this note documents (YYYY-MM-DD, the clinician's local date). It is the
+  -- date matched against the Office Ally encounter date (docs/OfficeAlly_Integration_Rules.md,
+  -- rule 3.2). Defaults to the day the note is saved; the clinician can change it before saving.
+  -- NULL = saved before this column existed (then created_at's local date is used).
+  visit_date               TEXT,
   -- The one NOT NULL DEFAULT, because "unknown" must never read as "safe to export".
   synthetic                INTEGER NOT NULL DEFAULT 0
 );

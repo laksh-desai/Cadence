@@ -79,8 +79,14 @@ class ExclusionTests(unittest.TestCase):
         """The inverse failure — an exclusion so broad the release contains no application."""
         collected = {p.relative_to(ROOT).as_posix() for p in release.collect()}
         for required in ("app/ui/server.py", "app/ui/static/app.js", "app/generate/prompt.py",
-                         "templates/followup.md"):
+                         "templates/followup.md",
+                         # The Office Ally extension ships with Cadence: the clinician loads it
+                         # from the installed folder (the "Send to Office Ally" setup pop-up
+                         # points there). Its tests stay out, via the "tests" exclusion.
+                         "extension/manifest.json", "extension/content.js",
+                         "extension/lib/oaroute.js"):
             self.assertIn(required, collected)
+        self.assertFalse(any(p.startswith("extension/tests/") for p in collected))
 
 
 class VersionTests(unittest.TestCase):

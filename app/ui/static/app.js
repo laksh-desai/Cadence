@@ -414,21 +414,165 @@
   }
   function officeAllyHTML(sections){
     const g=soapGroups(sections);
-    let h='<div class="oa"><h3>Copy for Office Ally <span class="oa-hint">— one block per SOAP field</span></h3><div class="oa-row">';
+    let h='<div class="oa"><div class="oa-send-row"><button class="btn btn-save oa-send">Send to Office Ally</button>'
+      +'<span class="oa-send-hint">Fills this note into the patient\'s Office Ally chart for you to review and sign.</span></div>'
+      +'<h3>Or copy by hand <span class="oa-hint">— one block per SOAP field</span></h3><div class="oa-row">';
     ["S","O","A","P"].forEach(k=>{
       const n=g[k].length, dis=n?"":" disabled";
       h+='<button class="btn btn-ghost btn-sm oa-copy" data-soap="'+k+'"'+dis+'>Copy '+SOAP_LABELS[k]+' <span class="oa-n">'+n+'</span></button>';
     });
     return h+'</div></div>';
   }
-  function wireOfficeAlly(container, sections){
+  // getCtx() -> { patientId, noteId, formId, createdAt }; noteId is null until the note is saved.
+  function wireOfficeAlly(container, sections, getCtx){
     const g=soapGroups(sections);
+    const send=container.querySelector(".oa-send");
+    if(send) send.addEventListener("click", ()=>{
+      const ctx=getCtx?getCtx():null;
+      if(!ctx || !ctx.noteId){ toast("Save the note first, then Send to Office Ally."); return; }
+      sendToOfficeAlly(ctx);
+    });
     Array.prototype.forEach.call(container.querySelectorAll(".oa-copy"), b=>{
       if(b.disabled) return;
       b.addEventListener("click", async ()=>{
         try{ await navigator.clipboard.writeText(soapBlockText(g[b.dataset.soap])); toast(SOAP_LABELS[b.dataset.soap]+" copied for Office Ally."); }
         catch(_){ toast("Couldn't copy — select the note text manually."); }
       });
+    });
+  }
+
+  // ---------- Send to Office Ally ----------
+  // One button that walks the clinician through the whole hand-off, in the order things go wrong:
+  // (1) the Chrome extension isn't installed → one-time setup steps; (2) the patient isn't linked
+  // to their Office Ally chart → ask for the Office Ally Patient ID once; (3) otherwise tell the
+  // extension which note to fill (ids only — the note text never leaves Cadence here), open the
+  // patient's chart in Office Ally, and show the few steps left. The extension itself refuses to
+  // fill the wrong patient, layout, date, or a second encounter on the same day
+  // (docs/OfficeAlly_Integration_Rules.md) — this flow only makes the right path the easy one.
+  // Note type -> the one Office Ally layout it must go into, from Manage Office
+  // (/api/office-ally/settings). The extension reads the same settings, so the button that opens
+  // the layout and the check that refuses any other layout can never disagree.
+  async function oaLayouts(){
+    try{ const r=await fetch("/api/office-ally/settings"); if(r.ok) return (await r.json()).layouts||{}; }catch(_){}
+    return {};
+  }
+  const OA_HOME_URL="https://pm.officeally.com/emr/Default.aspx";
+  const OA_BASE="https://pm.officeally.com/emr/PatientCharts/";
+  const OA_LIST_URL=pid=>OA_BASE+"PatientChart_ProgressNotes.aspx?PageAction=ProgressNotes,PatientCharts_ProgressNotes_Add&Tab=C&PID="+encodeURIComponent(pid)+"&Scope=&Date1=&Date2=";
+  const OA_ADD_URL=(pid, layoutId)=>OA_BASE+"PatientChart_EditNote.aspx?PageAction=AddNote&SoapLayoutID="+encodeURIComponent(layoutId)+"&Tab=C&PID="+encodeURIComponent(pid)+"&Scope=&Date1=&Date2=";
+  function extensionVersion(){ return document.documentElement.getAttribute("data-cadence-extension"); }
+  function digitsOf(s){ return String(s||"").replace(/\D/g,""); }
+  // The visit day as MM/DD/YYYY: the saved visit date, else the local date the note was saved.
+  function noteDay(createdAt, visitDate){
+    const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(visitDate||"");
+    if(m) return m[2]+"/"+m[3]+"/"+m[1];
+    const d=createdAt?new Date(createdAt):null; return d&&!isNaN(d)?d.toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"numeric"}):"";
+  }
+  function copyChip(text, label){ return '<span class="copychip"><code>'+esc(text)+'</code><button class="btn btn-ghost btn-sm" data-copy="'+esc(text)+'">'+esc(label||"Copy")+'</button></span>'; }
+  function wireCopyChips(root){
+    Array.prototype.forEach.call(root.querySelectorAll("[data-copy]"), b=>b.addEventListener("click", async ()=>{
+      try{ await navigator.clipboard.writeText(b.getAttribute("data-copy")); toast("Copied"); }catch(_){ toast("Couldn't copy — select it and press Ctrl+C."); }
+    }));
+  }
+
+  async function sendToOfficeAlly(ctx){
+    if(!extensionVersion()){ showExtensionSetup(ctx); return; }
+    const p=await getPatient(ctx.patientId);
+    if(!digitsOf(p.mrn)){ showLinkPatient(ctx, p); return; }
+    // Tell the extension which note, and wait for it to confirm (it answers in milliseconds).
+    const acked=await new Promise(resolve=>{
+      const t=setTimeout(()=>{ window.removeEventListener("message", on); resolve(false); }, 1500);
+      function on(e){ if(e.source===window && e.data && e.data.type==="cadence-handoff-ack" && e.data.noteId===ctx.noteId){ clearTimeout(t); window.removeEventListener("message", on); resolve(!!e.data.ok); } }
+      window.addEventListener("message", on);
+      window.postMessage({type:"cadence-handoff", patientId:ctx.patientId, noteId:ctx.noteId}, location.origin);
+    });
+    if(!acked){ showExtensionSetup(ctx, true); return; }
+    // Go straight to this patient's note on the layout this note type needs. If the note already has
+    // an Office Ally encounter, open the patient's Progress Notes list instead — opening Add Note
+    // again would make another (blank) encounter. If Office Ally asks for a login first, the Send
+    // window's "Open the note" button gets back here after logging in.
+    const pid=digitsOf(p.mrn);
+    const row=(await oaLayouts())[ctx.formId];
+    window.open(row && row.id ? OA_ADD_URL(pid, row.id) : OA_HOME_URL, "cadence_officeally");
+    showSendSteps(ctx, p);
+  }
+
+  // Has the extension already opened an Office Ally encounter for this note? Office Ally creates an
+  // encounter the moment its Add Note page opens, so opening it twice leaves a blank one behind.
+  function noteEncounter(noteId){
+    return new Promise(resolve=>{
+      const t=setTimeout(()=>{ window.removeEventListener("message", on); resolve(null); }, 1500);
+      function on(e){ if(e.source===window && e.data && e.data.type==="cadence-note-encounter" && e.data.noteId===noteId){ clearTimeout(t); window.removeEventListener("message", on); resolve(e.data.eid?e.data:null); } }
+      window.addEventListener("message", on);
+      window.postMessage({type:"cadence-note-encounter-query", noteId:noteId}, location.origin);
+    });
+  }
+
+  // The practice's path (docs/OfficeAlly_Integration_Rules.md): log in, create ONE encounter on the
+  // note type's layout, fill it with the extension (which saves a draft and checks it), then review
+  // and sign.
+  async function showSendSteps(ctx, p){
+    const pid=digitsOf(p.mrn);
+    const row=(await oaLayouts())[ctx.formId];
+    const layout=row&&row.id?{label:row.name||("layout "+row.id), id:row.id}:null;
+    const day=noteDay(ctx.createdAt, ctx.visitDate);
+    openOverlay("Send to Office Ally — "+firstName(p.name)+", "+day);
+    const btn=(id, text)=>'<button class="btn btn-save btn-sm" id="'+id+'" style="width:auto;margin:6px 0 0">'+text+'</button>';
+    modalBody.innerHTML=
+      '<p class="setup-lede">Office Ally opened in the other tab'+(layout?' on a new <b>'+esc(layout.label)+'</b> note for <b>'+esc(p.name)+'</b> (Patient ID '+esc(pid)+').':'. No Office Ally layout is set for this note type — add one in <b>Manage Office</b>.')+'</p>'
+      +'<ol class="setup-steps">'
+      +(layout?'<li><b>Log in</b> if Office Ally asks, then click this to open the note page:<br>'+btn("oaAdd","Open the "+esc(layout.label)+" note")+'</li>':'')
+      +'<li>On the Office Ally tab, click the <b>Cadence icon</b> (top-right of Chrome). This note is already selected. Click <b>Fill &amp; save draft</b>.</li>'
+      +'<li><b>Review every box, then sign</b> in Office Ally.</li>'
+      +'</ol>'
+      +'<div class="modal-actions"><button class="btn btn-primary" style="width:auto;margin:0" id="oaDone">Done</button></div>';
+    const go=url=>window.open(url, "cadence_officeally");
+    if(layout) $("oaAdd").addEventListener("click", ()=>go(OA_ADD_URL(pid, layout.id)));
+    $("oaDone").addEventListener("click", closeOverlay);
+  }
+
+  function showLinkPatient(ctx, p){
+    openOverlay("Link "+firstName(p.name)+" to Office Ally");
+    modalBody.innerHTML=
+      '<p class="setup-lede">One time per patient: enter <b>'+esc(p.name)+'</b>\'s Office Ally Patient ID. Cadence uses it to open the right chart, and the extension refuses to fill any other patient\'s chart.</p>'
+      +'<p class="setup-lede">Where to find it: open the patient in Office Ally — it\'s <b>Patient ID</b> at the top of the chart (a number like 155793457).</p>'
+      +'<div class="mfield"><label>Office Ally Patient ID</label><input id="oaPid" inputmode="numeric" autocomplete="off" placeholder="e.g. 155793457"></div>'
+      +'<div class="modal-actions"><button class="btn btn-ghost" id="oaPidCancel">Cancel</button><button class="btn btn-primary" style="width:auto;margin:0" id="oaPidSave">Save and continue</button></div>';
+    $("oaPid").focus();
+    $("oaPidCancel").addEventListener("click", closeOverlay);
+    $("oaPidSave").addEventListener("click", async ()=>{
+      const pid=digitsOf($("oaPid").value);
+      if(pid.length<5){ $("oaPid").style.borderColor="#cf4631"; toast("Enter the number shown as Patient ID in Office Ally."); return; }
+      try{ await updatePatient(ctx.patientId, {mrn: pid}); await loadPatients(); }
+      catch(_){ toast("Couldn't save — try again."); return; }
+      closeOverlay();
+      sendToOfficeAlly(ctx);
+    });
+  }
+
+  async function showExtensionSetup(ctx, installedButSilent){
+    let info={path:"", exists:false};
+    try{ info=await (await fetch("/api/extension/info")).json(); }catch(_){}
+    openOverlay("Set up Office Ally sending (one time)", true);
+    modalBody.innerHTML=
+      (installedButSilent
+        ? '<p class="setup-lede"><b>The Cadence extension didn\'t answer.</b> Open the extensions page (step 1), click <b>Reload</b> on "Cadence → Office Ally", then press <b>F5</b> on this Cadence page and try again. If it isn\'t listed there, follow all the steps below.</p>'
+        : '<p class="setup-lede">Cadence uses a small Chrome add-on to type the note into Office Ally for you. You set it up once, in about 2 minutes. It only talks to Cadence on this computer and to the Office Ally page you have open.</p>')
+      +'<ol class="setup-steps">'
+      +'<li>Copy this, paste it into Chrome\'s address bar, and press Enter:<br>'+copyChip("chrome://extensions")+'<br><span class="setup-note">(Chrome doesn\'t let websites open this page themselves.)</span></li>'
+      +'<li>Turn on <b>Developer mode</b> — the switch at the top-right of that page.</li>'
+      +'<li>Click <b>Load unpacked</b> (top-left). In the folder window, paste this into the address bar at the top, press Enter, then click <b>Select Folder</b>:<br>'
+      +(info.path?copyChip(info.path, "Copy folder"):'<span class="setup-note">The extension folder is "extension" inside the Cadence folder.</span>')+'</li>'
+      +'<li>Click the <b>puzzle-piece</b> icon at the top-right of Chrome and <b>pin</b> "Cadence → Office Ally".</li>'
+      +'<li>Come back here and click <b>Check again</b>.</li>'
+      +'</ol>'
+      +'<p class="setup-note">If Chrome later shows a notice about "developer mode extensions", that\'s expected for this private add-on — keep it enabled.</p>'
+      +'<div class="modal-actions"><button class="btn btn-ghost" id="setupClose">Close</button><button class="btn btn-primary" style="width:auto;margin:0" id="setupCheck">Check again</button></div>';
+    wireCopyChips(modalBody);
+    $("setupClose").addEventListener("click", closeOverlay);
+    $("setupCheck").addEventListener("click", ()=>{
+      if(extensionVersion()){ closeOverlay(); toast("Extension found."); if(ctx) sendToOfficeAlly(ctx); }
+      else toast("Not found yet. Finish the steps, or press F5 on this page and try again.");
     });
   }
 
@@ -1359,7 +1503,10 @@
     const missing=Array.isArray(r.missingInfo)?r.missingInfo.filter(Boolean):[];
     const reviewCount=missing.length+countGapFlags(r.sections);
     const savehint=reviewCount?(reviewCount+(reviewCount===1?" item":" items")+" to review before signing"):"Looks complete";
-    let html='<div class="savebar"><button class="btn btn-save" id="saveBtn">Save to '+esc(firstName(p.name))+"'s file</button><button class=\"btn btn-ghost\" id=\"editBtn\">Edit</button><button class=\"btn btn-ghost\" id=\"copyBtn\">Copy note</button><button class=\"btn btn-ghost\" id=\"printBtn\">Print</button><span class=\"savehint\">"+esc(savehint)+'</span></div>';
+    // The visit day this note documents — matched against the Office Ally encounter date.
+    const todayIso=(()=>{ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })();
+    if(!r.visitDate) r.visitDate=todayIso;
+    let html='<div class="savebar"><label class="visitdate">Visit date <input type="date" id="visitDate" max="'+todayIso+'"></label><button class="btn btn-save" id="saveBtn">Save to '+esc(firstName(p.name))+"'s file</button><button class=\"btn btn-ghost\" id=\"editBtn\">Edit</button><button class=\"btn btn-ghost\" id=\"copyBtn\">Copy note</button><button class=\"btn btn-ghost\" id=\"printBtn\">Print</button><span class=\"savehint\">"+esc(savehint)+'</span></div>';
     if(missing.length){
       html+='<div class="needs"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Before finalizing, please provide</h3><ul>';
       missing.forEach(x=> html+="<li>"+esc(x)+"</li>");
@@ -1374,8 +1521,10 @@
       +'<textarea id="reviseBox" placeholder="Describe the change you want — type or dictate."></textarea>'
       +'<div class="resolve-actions"><button class="btn btn-mic" id="reviseMic"><span class="pulse"></span><span id="reviseMicLabel">Dictate</span></button><button class="btn btn-save" id="reviseBtn">Apply changes</button></div><p class="mic-help-sm" id="reviseMicHelp"></p></div>';
     output.innerHTML=html;
-    wireOfficeAlly(output, r.sections);
+    wireOfficeAlly(output, r.sections, ()=>({patientId:r.patientId, noteId:r.savedNoteId||null, formId:r.formId, createdAt:r.savedAt, visitDate:r.savedVisitDate}));
 
+    $("visitDate").value=r.visitDate;
+    $("visitDate").addEventListener("change", e=>{ r.visitDate=e.target.value||todayIso; });
     $("saveBtn").addEventListener("click", ()=>saveCurrent(r));
     $("editBtn").addEventListener("click", ()=>renderResult(r, true));
     $("copyBtn").addEventListener("click", async ()=>{
@@ -1456,8 +1605,11 @@
       fast: !!r.fastTier,
       template_spec_sha: r.templateSpecSha || null,
       template_customized: !!r.templateCustomized,
+      visit_date: r.visitDate || undefined,
     });
     if(!res.ok){ toast("Couldn't save — try again."); return; }
+    // Remember which saved note this is, so "Send to Office Ally" can hand it over.
+    try{ const saved=await res.json(); r.savedNoteId=saved.id; r.savedAt=saved.created_at; r.savedVisitDate=saved.visit_date; }catch(_){}
     await refreshCurrentPatient();
     updateFilesButton();
     renderPriorFlag();
@@ -1485,7 +1637,7 @@
     openOverlay("New patient");
     modalBody.innerHTML=
       '<div class="mfield"><label>Full name</label><input id="npName" placeholder="e.g. Alex Rivera" autocomplete="off"></div>'+
-      '<div class="mrow"><div class="mfield"><label>Date of birth</label><input id="npDob" placeholder="MM/DD/YYYY" autocomplete="off"></div><div class="mfield"><label>MRN</label><input id="npMrn" placeholder="e.g. 01023-557" autocomplete="off"></div></div>'+
+      '<div class="mrow"><div class="mfield"><label>Date of birth</label><input id="npDob" placeholder="MM/DD/YYYY" autocomplete="off"></div><div class="mfield"><label>Office Ally Patient ID (MRN)</label><input id="npMrn" placeholder="e.g. 155793457" autocomplete="off"></div></div>'+
       '<div class="mfield"><label>Condition / clinical summary</label><textarea id="npCond" rows="3" placeholder="e.g. L ankle sprain, 2 weeks post-injury — type or dictate"></textarea><div class="resolve-actions"><button class="btn btn-mic" id="npMic"><span class="pulse"></span><span id="npMicLabel">Dictate</span></button></div><p class="mic-help-sm" id="npMicHelp"></p></div>'+
       '<div class="mfield"><label>Scheduling notes <span class="mfield-opt">(optional)</span></label><input id="npSched" placeholder="e.g. Tue/Thu mornings; prefers early slots" autocomplete="off"></div>'+
       '<div class="modal-actions"><button class="btn btn-ghost" id="npCancel">Cancel</button><button class="btn btn-primary" style="width:auto;margin:0" id="npSave">Add patient</button></div>';
@@ -1520,7 +1672,7 @@
     openOverlay("Edit patient");
     modalBody.innerHTML=
       '<div class="mfield"><label>Full name</label><input id="epName" autocomplete="off"></div>'+
-      '<div class="mrow"><div class="mfield"><label>Date of birth</label><input id="epDob" placeholder="MM/DD/YYYY" autocomplete="off"></div><div class="mfield"><label>MRN</label><input id="epMrn" placeholder="e.g. 01023-557" autocomplete="off"></div></div>'+
+      '<div class="mrow"><div class="mfield"><label>Date of birth</label><input id="epDob" placeholder="MM/DD/YYYY" autocomplete="off"></div><div class="mfield"><label>Office Ally Patient ID (MRN)</label><input id="epMrn" placeholder="e.g. 155793457" autocomplete="off"></div></div>'+
       '<div class="mfield"><label>Condition / clinical summary</label><textarea id="epCond" rows="3" placeholder="e.g. L ankle sprain, 2 weeks post-injury — type or dictate"></textarea><div class="resolve-actions"><button class="btn btn-mic" id="epMic"><span class="pulse"></span><span id="epMicLabel">Dictate</span></button></div><p class="mic-help-sm" id="epMicHelp"></p></div>'+
       '<div class="mfield"><label>Scheduling notes <span class="mfield-opt">(optional)</span></label><input id="epSched" placeholder="e.g. Tue/Thu mornings; prefers early slots" autocomplete="off"></div>'+
       '<div class="modal-actions"><button class="btn btn-ghost" id="epCancel">Cancel</button><button class="btn btn-primary" style="width:auto;margin:0" id="epSave">Save changes</button></div>';
@@ -1598,7 +1750,7 @@
       h += '<div class="files-empty">No notes saved yet.<br>Generate a note and choose “Save to file”.</div>';
     } else {
       notes.forEach(f=>{
-        h+='<div class="fileitem" data-id="'+esc(f.id)+'"><div class="ft">'+esc(f.form_name)+'</div><div class="fd">'+esc(fmtDateTime(f.created_at))+'</div><div class="fsnip">'+esc(f.snippet)+'</div></div>';
+        h+='<div class="fileitem" data-id="'+esc(f.id)+'"><div class="ft">'+esc(f.form_name)+'</div><div class="fd">'+(f.visit_date?'Visit '+esc(noteDay(null,f.visit_date))+' · saved ':'')+esc(fmtDateTime(f.created_at))+'</div><div class="fsnip">'+esc(f.snippet)+'</div></div>';
       });
     }
     mount.innerHTML=h;
@@ -1620,7 +1772,7 @@
     const savedFlags=(note.missing_info?note.missing_info.length:0)+countGapFlags(sections);
     if(savedFlags){ h+='<p class="savehint" style="margin-top:10px">'+esc(savedFlags+(savedFlags===1?" item was":" items were")+" flagged when this was saved.")+'</p>'; }
     mount.innerHTML=h;
-    wireOfficeAlly(mount, sections);
+    wireOfficeAlly(mount, sections, ()=>({patientId, noteId, formId:note.form_id, createdAt:note.created_at, visitDate:note.visit_date}));
     mount.querySelector("#fileBack").addEventListener("click", ()=>openPatientNotes(mount, patientId, onBack));
 
     const delWrap=mount.querySelector("#noteDelWrap");
@@ -2074,8 +2226,68 @@
     if(j.status!=="running"){ clearInterval(evalPoll); evalPoll=null; }
   }
 
+  // ---------- Manage Office ----------
+  // Practice settings for Office Ally: which SOAP layout (SoapLayoutID + name) each Cadence note
+  // type goes into, and the Chrome extension's status. Layout ids are fixed per Office Ally
+  // account, so new layouts (Re-evaluation, Discharge) are added here, not in code.
+  async function renderOffice(){
+    const mount=$("officeMount");
+    mount.innerHTML='<div class="loadwrap"><span class="spin"></span></div>';
+    let data;
+    try{ data=await (await fetch("/api/office-ally/settings")).json(); }
+    catch(_){ mount.innerHTML='<p class="savehint">Couldn\'t load the settings — is Cadence running?</p>'; return; }
+    const ext=extensionVersion();
+    let h='<div class="card office-card"><h2>Office Ally note layouts</h2>'
+      +'<p class="setup-lede">Each Cadence note type goes into exactly one Office Ally layout. Cadence\'s <b>Send to Office Ally</b> opens that layout, and the Chrome extension refuses to fill any other.</p>'
+      +'<details class="office-help"><summary>How to find a SoapLayoutID</summary><ol class="setup-steps">'
+      +'<li>In Office Ally, open any patient\'s chart → <b>Progress Notes</b> → <b>Add Custom Progress Note / Encounter</b>, and pick the layout.</li>'
+      +'<li>Look at the address bar. It contains <code>SoapLayoutID=374261</code> — that number is the SoapLayoutID.</li>'
+      +'<li>The layout name is exactly as Office Ally shows it in the <b>SOAP Note Layout</b> dropdown (e.g. <i>Cadence Init Eval</i>).</li>'
+      +'</ol><p class="setup-note">Leave a row empty if that note type isn\'t sent to Office Ally.</p></details>'
+      +'<div class="office-table-wrap"><table class="office-table"><thead><tr><th>Cadence note type</th><th>SoapLayoutID</th><th>Office Ally layout name</th></tr></thead><tbody>';
+    (data.forms||[]).forEach(f=>{
+      const row=(data.layouts||{})[f.id]||{};
+      h+='<tr><td>'+esc(f.name)+'</td>'
+        +'<td><input class="office-id" data-form="'+esc(f.id)+'" inputmode="numeric" placeholder="e.g. 374261" autocomplete="off"></td>'
+        +'<td><input class="office-name" data-form="'+esc(f.id)+'" placeholder="e.g. Cadence Init Eval" autocomplete="off"></td></tr>';
+    });
+    h+='</tbody></table></div>'
+      +'<div class="modal-actions" style="justify-content:flex-start"><button class="btn btn-primary" style="width:auto;margin:0" id="officeSave">Save layouts</button><button class="btn btn-ghost" id="officeDefaults">Restore SDMPT defaults</button><span class="savehint" id="officeMsg"></span></div></div>'
+      +'<div class="card office-card"><h2>Chrome extension</h2>'
+      +(ext
+        ? '<p class="setup-lede">✓ Installed (version '+esc(ext)+'). Clinicians use <b>Send to Office Ally</b> under any saved note.</p>'
+        : '<p class="setup-lede">Not detected in this browser. <button class="btn btn-ghost btn-sm" id="officeSetup">Show setup steps</button></p>')
+      +'</div>';
+    mount.innerHTML=h;
+    // Values set as properties, never spliced into the HTML.
+    const fill=layouts=>{
+      Array.prototype.forEach.call(mount.querySelectorAll(".office-id"), el=>{ el.value=((layouts[el.dataset.form]||{}).id)||""; });
+      Array.prototype.forEach.call(mount.querySelectorAll(".office-name"), el=>{ el.value=((layouts[el.dataset.form]||{}).name)||""; });
+    };
+    fill(data.layouts||{});
+    const msg=$("officeMsg");
+    $("officeDefaults").addEventListener("click", ()=>{ fill(data.defaults||{}); msg.textContent="Defaults filled in — click Save layouts to keep them."; });
+    $("officeSave").addEventListener("click", async ()=>{
+      const layouts={};
+      Array.prototype.forEach.call(mount.querySelectorAll(".office-id"), el=>{
+        const f=el.dataset.form, name=mount.querySelector('.office-name[data-form="'+f+'"]').value;
+        layouts[f]={id:el.value.trim(), name:name.trim()};
+      });
+      const b=$("officeSave"); b.disabled=true;
+      try{
+        const r=await fetch("/api/office-ally/settings",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({layouts})});
+        const j=await r.json();
+        if(!r.ok){ msg.textContent=j.detail||"Couldn't save."; msg.style.color="#cf4631"; }
+        else { fill(j.layouts||{}); msg.style.color=""; msg.textContent="Saved. Reload the Office Ally tab before the next Fill."; toast("Office Ally layouts saved"); }
+      }catch(_){ msg.textContent="Couldn't save — try again."; }
+      b.disabled=false;
+    });
+    const setupBtn=$("officeSetup");
+    if(setupBtn) setupBtn.addEventListener("click", ()=>showExtensionSetup(null));
+  }
+
   // ---------- Nav ----------
-  const PAGES={home:$("page-home"), patients:$("page-patients"), templates:$("page-templates"), evals:$("page-evals"), status:$("page-status")};
+  const PAGES={home:$("page-home"), patients:$("page-patients"), templates:$("page-templates"), evals:$("page-evals"), office:$("page-office"), status:$("page-status")};
   let currentPage="home";
   function showPage(name){
     if(!PAGES[name]) return;
@@ -2087,6 +2299,7 @@
     if(name==="patients") renderRoster();
     else if(name==="templates") renderTemplates();
     else if(name==="evals") renderEvals();
+    else if(name==="office") renderOffice();
     else if(name==="status") renderStatus();
   }
   Array.prototype.forEach.call(document.querySelectorAll(".nav-tab"), t=>{

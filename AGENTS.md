@@ -1,4 +1,4 @@
-# Cadence — Claude Code Project Guide
+# Cadence — Codex Project Guide
 
 Cadence is a **local, offline, HIPAA-conscious desktop app** that turns a physical
 therapist's spoken summary of a session into a completed clinical note, filling the
@@ -28,30 +28,6 @@ submissions don't look templated.
     (e.g. a patient/notes view in Google Sheets). It does not change anything about
     local generation, local model inference, or local storage — those still never
     leave the device.
-  - **Second sanctioned destination: Office Ally, the practice's EHR (BAA confirmed by the practice,
-    2026-09-28).** Scoped as narrowly as the Google one: the Chrome extension (`extension/`) may put
-    a SAVED, clinician-reviewed Cadence note into the note boxes of the Office Ally chart the
-    clinician has open in their own logged-in tab. That is all. Cadence never calls an Office Ally
-    API, never holds Office Ally credentials (the extension uses the clinician's existing session;
-    credentials go in Chrome's password manager, never in Cadence), and never submits or signs an
-    Office Ally note — it saves only a DRAFT (Office Ally's Apply), only after every filled box reads
-    back correctly, then re-checks the saved boxes against the note (practice rule, 2026-09-28).
-    Office Ally creates an encounter the moment an Add Note page opens, so Cadence opens Add Note
-    at most once per note. The extension refuses to fill unless the page's Office Ally Patient
-    ID equals the Cadence patient's MRN, because a note in the wrong chart is the worst failure it
-    can cause. Note that Office Ally's own page forwards the patient's age, sex, and any ICD-10 codes
-    in the form to its advertising panel — Office Ally's behaviour under its BAA, not Cadence's, but
-    worth knowing before auto-filling diagnosis codes.
-  - **The practice's Office Ally rules are in `docs/OfficeAlly_Integration_Rules.md` and are
-    binding** (set by the practice 2026-09-28). The hard ones, all enforced by the extension as
-    blocks that fill NOTHING and never override: Initial Evaluation → layout "Cadence Init Eval",
-    Follow-Up → "Progress Notes"; the Office Ally encounter date must equal the Cadence note date;
-    and **at most one encounter per patient per day** — if another exists, the clinician deletes
-    the older one and retries. Read that file before changing anything in `extension/`. The
-    clinician's path is one button — **Send to Office Ally** in Cadence (setup, patient linking,
-    hand-off, opens the chart) — and the extension blocks on an Office Ally login page or a
-    timed-out session. The extension ships in the release (`scripts/release.py` INCLUDE); its
-    tests do not.
 - The prototype (`cadence-prototype.html`, at the repo root) **no longer calls any
   model.** It formerly POSTed to a cloud model (Anthropic) as a stand-in for the local
   model, using FAKE data only; that live cloud call has been removed. It is now a
@@ -646,7 +622,7 @@ every note-generation prompt:
     (iii) a missed ICD on a post-surgical header ("ten weeks post left SLAP repair, type two
     labral tear"), which carried no recognized diagnosis context.
     All three are fixed with regression tests. **The current gold labels were hand-read from the
-    transcripts by Claude, NOT by the clinician** — `gold_provenance.verified_by` in the JSONL is
+    transcripts by Codex, NOT by the clinician** — `gold_provenance.verified_by` in the JSONL is
     still blank and must be filled by the clinician or a coder before these numbers mean anything
     clinically. One known remaining gap is deliberate: record 106 states its diagnosis as a bare
     header phrase ("Follow up, ..., left shoulder impingement, week two") with no framing at all,
@@ -775,18 +751,6 @@ correction to the rules above so it persists.
   still run); CPU transcription can lag a long session (bounded only by queue memory); and a
   recorded visit needs the patient's **consent** (surfaced in the UI copy). Speaker attribution and
   chunked *generation* for very long transcripts (rule 16) remain future work.
-- **Office Ally fill routes by meaning, not by position** (`extension/lib/oaroute.js`). Cadence's
-  templates (one `## ` section per field) and Office Ally's layouts (fewer, differently named boxes,
-  each 2,000 chars, custom boxes renamed per layout) do not line up, and forcing them to would mean
-  editing one to mirror the other. Instead the extension reads the boxes present on the open page
-  (key, practice label, limit), classifies each Cadence section by its heading, and packs sections
-  WHOLE into the best box: a box labelled for that concept, then the concept's built-in box, then the
-  SOAP bucket's general box. Overflow moves a whole section to the next box; only a section longer
-  than a box is split, and only at a sentence boundary, as "(cont.)". Nothing is truncated;
-  anything unplaceable is shown for manual copy. Office Ally stores newlines as CRLF, so length is
-  measured with each newline counted twice. Review-of-Systems boxes are never auto-filled. New
-  layouts and new Cadence templates need no code change unless a heading introduces a new concept —
-  then add it to `CONCEPTS`, with a test in `extension/tests/oaroute.test.js`.
 - **Generation is queued, not awaited** (rule 26). `POST /api/generate/jobs` returns immediately;
   the "Notes in progress" tray under the nav is visible from every tab and is how the clinician
   tracks a note while doing something else. One serialized worker, an append-only buffer read by

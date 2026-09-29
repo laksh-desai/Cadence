@@ -43,6 +43,22 @@
     if (pid) document.getElementById("ctl00_phFolderContent_myPatientHeader_lblPatientID").textContent = pid;
   })();
 </script>
+<div><span id="ctl00_phFolderContent_ucSOAPNote_lblTitle">Add Note / Encounter [Encounter ID 900000001 - User Defined SOAP Form - Progress Notes]</span></div>
+<input type="hidden" id="ctl00_phFolderContent_ucSOAPNote_EncounterID" value="900000001">
+<div>Encounter Date:
+  <input id="ctl00_phFolderContent_ucSOAPNote_EncounterDate_Month" size="2"> /
+  <input id="ctl00_phFolderContent_ucSOAPNote_EncounterDate_Day" size="2"> /
+  <input id="ctl00_phFolderContent_ucSOAPNote_EncounterDate_Year" size="4">
+  <small>(defaults to today — change it to see the date check block the fill)</small>
+</div>
+<script>
+  (function () {
+    var d = new Date(), p = "ctl00_phFolderContent_ucSOAPNote_EncounterDate_";
+    document.getElementById(p + "Month").value = d.getMonth() + 1;
+    document.getElementById(p + "Day").value = d.getDate();
+    document.getElementById(p + "Year").value = d.getFullYear();
+  })();
+</script>
 <div>SOAP Note Layout:
   <select id="ctl00_phFolderContent_ucSOAPNote_ddlSoapLayout">
     <option value="361919" selected>Progress Notes</option>

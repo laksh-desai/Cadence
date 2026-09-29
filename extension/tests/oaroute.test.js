@@ -190,3 +190,247 @@ test("layoutWarning flags an evaluation filled into a daily layout and vice vers
 test("countGaps counts unresolved [[NEEDS: ...]] markers", () => {
   assert.strictEqual(R.countGaps([{ body: "a [[NEEDS: x]] b [[NEEDS: y]]" }, { body: "none" }]), 2);
 });
+
+// ---- Practice rules: layout per note type, encounter date, one encounter per day ----
+
+test("an Initial Evaluation must go into 'Cadence Init Eval' and a Follow-Up into 'Progress Notes'", () => {
+  assert.strictEqual(R.checkLayout("initial", "374261", "Cadence Init Eval").ok, true);
+  assert.strictEqual(R.checkLayout("initial_updated", "", "Cadence Initial Eval").ok, true);
+  assert.strictEqual(R.checkLayout("followup", "361919", "Progress Notes").ok, true);
+  const wrong = R.checkLayout("initial", "361919", "Progress Notes");
+  assert.strictEqual(wrong.ok, false);
+  assert.ok(wrong.reason.indexOf("Cadence Init Eval") !== -1);
+  assert.strictEqual(R.checkLayout("followup", "374261", "Cadence Init Eval").ok, false);
+});
+
+test("a look-alike layout name is not accepted ('Copy Of Progress Notes' is not 'Progress Notes')", () => {
+  assert.strictEqual(R.checkLayout("followup", "375083", "Copy Of Progress Notes").ok, false);
+  assert.strictEqual(R.checkLayout("followup", "352530", "DailyNotes New").ok, false);
+});
+
+test("custom Cadence templates and non-Office-Ally pages are not blocked by the layout rule", () => {
+  assert.strictEqual(R.checkLayout("my_custom_form", "361919", "Progress Notes").ok, true);
+  assert.strictEqual(R.checkLayout("initial", "", "").ok, true);
+});
+
+test("noteDate gives the note's local calendar date as MM/DD/YYYY", () => {
+  assert.strictEqual(R.noteDate("2026-09-28T10:15:00"), "09/28/2026"); // no zone → local
+  assert.strictEqual(R.noteDate(""), "");
+});
+
+test("the Office Ally encounter date must equal the Cadence note date", () => {
+  assert.strictEqual(R.checkEncounterDate("09/28/2026", { month: "9", day: "28", year: "2026" }).ok, true);
+  const bad = R.checkEncounterDate("09/28/2026", { month: "9", day: "27", year: "2026" });
+  assert.strictEqual(bad.ok, false);
+  assert.ok(bad.reason.indexOf("09/27/2026") !== -1 && bad.reason.indexOf("09/28/2026") !== -1);
+  assert.strictEqual(R.checkEncounterDate("", { month: "9", day: "28", year: "2026" }).ok, false);
+  assert.strictEqual(R.checkEncounterDate("09/28/2026", "").ok, true); // not a note page
+});
+
+const ENCOUNTER_LIST_HTML = `
+<table>
+  <tr><th>Date</th><th>Encounter</th><th>Type</th></tr>
+  <tr><td>09/28/2026</td><td><a href="PatientChart_EditNote.aspx?PageAction=EditNote&EID=349893114&PID=155793457">349893114</a></td><td>Initial Evaluation</td></tr>
+  <tr><td>9/30/2026</td><td><a onclick="OpenNote('x', EID=351111111)">351111111</a></td><td>Progress Notes</td></tr>
+  <tr><td>No link here 10/01/2026</td></tr>
+</table>`;
+
+test("parseEncounters reads encounter ids and dates from Office Ally's list", () => {
+  assert.deepStrictEqual(R.parseEncounters(ENCOUNTER_LIST_HTML), [
+    { eid: "349893114", date: "09/28/2026" },
+    { eid: "351111111", date: "09/30/2026" },
+  ]);
+});
+
+test("a second encounter on the same day blocks the fill", () => {
+  const encs = R.parseEncounters(ENCOUNTER_LIST_HTML);
+  const dup = R.checkSameDayEncounters(encs, "09/28/2026", "353868524");
+  assert.strictEqual(dup.ok, false);
+  assert.strictEqual(dup.block, true);
+  assert.ok(dup.reason.indexOf("349893114") !== -1);
+  assert.ok(/Delete the older encounter/.test(dup.reason));
+});
+
+test("the encounter being filled does not count as its own duplicate", () => {
+  const encs = R.parseEncounters(ENCOUNTER_LIST_HTML);
+  assert.strictEqual(R.checkSameDayEncounters(encs, "09/28/2026", "349893114").ok, true);
+  assert.strictEqual(R.checkSameDayEncounters(encs, "10/05/2026", "999").ok, true);
+});
+
+test("an unreadable or empty encounter list asks the clinician to check instead of passing silently", () => {
+  const unread = R.checkSameDayEncounters(null, "09/28/2026", "1");
+  assert.strictEqual(unread.ok, false);
+  assert.strictEqual(unread.block, false);
+  const empty = R.checkSameDayEncounters([], "09/28/2026", "1");
+  assert.strictEqual(empty.ok, false);
+  assert.strictEqual(empty.block, false);
+});
+
+// ---- Login / page detection ----
+
+test("pageKind tells a logged-in Office Ally page from its sign-in page and from other sites", () => {
+  assert.strictEqual(R.pageKind("pm.officeally.com", "/emr/PatientCharts/PatientChart_EditNote.aspx", false), "officeally");
+  assert.strictEqual(R.pageKind("x02.officeally.com", "/auth0bridge/Logon/CleanLogon", false), "login");
+  assert.strictEqual(R.pageKind("pm.officeally.com", "/emr/default.aspx", true), "login"); // password box on page
+  assert.strictEqual(R.pageKind("localhost", "/test-oa-form.html", false), "practice");
+  assert.strictEqual(R.pageKind("example.com", "/", false), "other");
+  assert.strictEqual(R.pageKind("officeally.com.evil.example", "/", false), "other");
+});
+
+test("looksLoggedOut spots an expired Office Ally session", () => {
+  assert.strictEqual(R.looksLoggedOut("https://x02.officeally.com/auth0bridge/Logon/CleanLogon?returnUrl=/emr", ""), true);
+  assert.strictEqual(R.looksLoggedOut("https://pm.officeally.com/emr/x.aspx", '<form><input type="password" name="p"></form>'), true);
+  assert.strictEqual(R.looksLoggedOut("https://pm.officeally.com/emr/PatientCharts/Patient_Encounters.aspx", "<table><tr><td>09/28/2026</td></tr></table>"), false);
+  // Every logged-in page has this keep-alive script; it must not read as "logged out" (real bug, 2026-09-28).
+  const keepAlive = '<script>var loginPageUrl = "https://x02.officeally.com/auth0bridge/Logon/CleanLogon" + "?returnUrl=" + window.location.pathname;</script><table></table>';
+  assert.strictEqual(R.looksLoggedOut("https://pm.officeally.com/emr/PatientCharts/PatientChart_ProgressNotes.aspx", keepAlive), false);
+});
+
+test("officeAllyUrls builds the practice's Progress Notes list and Add Note links for the right layout", () => {
+  const eval_ = R.officeAllyUrls("155798537", "initial");
+  assert.strictEqual(eval_.addNote,
+    "https://pm.officeally.com/emr/PatientCharts/PatientChart_EditNote.aspx?PageAction=AddNote&SoapLayoutID=374261&Tab=C&PID=155798537&Scope=&Date1=&Date2=");
+  assert.strictEqual(eval_.progressNotes,
+    "https://pm.officeally.com/emr/PatientCharts/PatientChart_ProgressNotes.aspx?PageAction=ProgressNotes,PatientCharts_ProgressNotes_Add&Tab=C&PID=155798537&Scope=&Date1=&Date2=");
+  assert.ok(R.officeAllyUrls("155798537", "followup").addNote.indexOf("SoapLayoutID=361919") !== -1);
+  assert.strictEqual(R.officeAllyUrls("155798537", "my_custom").addNote, ""); // no required layout
+});
+
+test("SOAP boxes are recognised under any parent prefix, still excluding diagnosis and nurse boxes", () => {
+  assert.strictEqual(R.keyFromId("ctl00_phFolderContent_ucSOAPNote_S_Custom1"), "S_Custom1");
+  assert.strictEqual(R.keyFromId("ctl00_ContentPlaceHolder1_ucSOAPNote_P_Plans"), "P_Plans");
+  assert.strictEqual(R.keyFromId("ucSOAPNote_O_Objective"), "O_Objective");
+  assert.strictEqual(R.keyFromId("ctl00_x_ucSOAPNote_ucDiagnosisCodes_A_A_10_1"), null);
+  assert.strictEqual(R.keyFromId("ctl00_x_ucSOAPNote_NurseNote"), null);
+});
+
+test("layouts saved in Cadence's Manage Office replace the built-in defaults", () => {
+  const rules = R.layoutRulesFrom({
+    initial: { id: "500001", name: "Eval 2027" },
+    followup: { id: "361919", name: "Progress Notes" },
+    discharge: { id: "500002", name: "Discharge Summary" },
+  });
+  assert.strictEqual(R.checkLayout("initial", "500001", "Eval 2027", rules).ok, true);
+  assert.strictEqual(R.checkLayout("initial", "374261", "Cadence Init Eval", rules).ok, false); // old default no longer accepted
+  assert.ok(R.checkLayout("initial", "374261", "Cadence Init Eval", rules).reason.indexOf("Eval 2027") !== -1);
+  assert.strictEqual(R.checkLayout("discharge", "500002", "Discharge Summary", rules).ok, true);
+  assert.strictEqual(R.checkLayout("initial_updated", "999", "Anything", rules).ok, true); // no saved rule → not blocked
+  assert.ok(R.officeAllyUrls("155798537", "discharge", rules).addNote.indexOf("SoapLayoutID=500002") !== -1);
+  assert.strictEqual(R.layoutRulesFrom(null), null);
+});
+
+test("the visit date comes from the note's visit_date, else from when it was saved", () => {
+  assert.strictEqual(R.visitDateOf({ visit_date: "2026-09-29", created_at: "2026-09-30T10:00:00" }), "09/29/2026");
+  assert.strictEqual(R.visitDateOf({ created_at: "2026-09-28T10:00:00" }), "09/28/2026");
+  assert.strictEqual(R.visitDateOf(null), "");
+});
+
+test("only a brand-new (Add Note) encounter counts as new", () => {
+  assert.strictEqual(R.isNewEncounter("https://pm.officeally.com/emr/PatientCharts/PatientChart_EditNote.aspx?PageAction=AddNote&SoapLayoutID=361919&PID=1", ""), true);
+  assert.strictEqual(R.isNewEncounter("", "Add Note / Encounter [Encounter ID 353868524 - User Defined SOAP Form]"), true);
+  assert.strictEqual(R.isNewEncounter("https://pm.officeally.com/emr/PatientCharts/PatientChart_EditNote.aspx?PageAction=EditNote&EID=1", "Edit Note / Encounter [Encounter ID 1]"), false);
+});
+
+test("a long section fills the ROOM LEFT in a partly used box before moving on (found on the real page)", () => {
+  const long = Array.from({ length: 30 }, (_, i) => "Finding " + i + ": steady progress with the prescribed program and tolerated increased load.").join(" ");
+  const plan = R.planRouting([
+    { heading: "Response to Treatment", text: "Good; tolerated the full session." },   // takes part of Assessment
+    { heading: "Assessment Summary", text: long },
+  ], PROGRESS_LAYOUT);
+  assert.deepStrictEqual(plan.unplaced, []);
+  const joined = plan.boxes.map((b) => b.text).join(" ");
+  long.match(/[^.]+\./g).forEach((s) => assert.ok(joined.indexOf(s.trim()) !== -1, "lost: " + s));
+  plan.boxes.forEach((b) => assert.ok(b.length <= 2000, b.key + " " + b.length));
+});
+
+// SDMPT's real "Cadence Init Eval" layout (SoapLayoutID 374261): the boxes and the labels the
+// practice gave its custom boxes, read from a saved copy of the live form (no patient data).
+const INIT_EVAL_LAYOUT = [
+  { key: "S_ChiefComplaint" }, { key: "S_HOPI_Original" },
+  { key: "S_Custom1", label: "Personal Factors" }, { key: "S_Custom2", label: "Cognition" },
+  { key: "S_MedicalHistory" }, { key: "S_SurgicalHistory" }, { key: "S_SocialHistory" }, { key: "S_Medications" },
+  { key: "S_Custom3", label: "History of Falls" }, { key: "S_Custom4", label: "Patient Goals" },
+  { key: "S_ROS_Custom1", label: "Pain Description" },
+  { key: "O_Objective" }, { key: "O_PE_Custom1", label: "Outcome Measurement tools" },
+  { key: "O_PE_Custom2", label: "Special Test" }, { key: "O_FunctionalStatus" },
+  { key: "A_Custom1", label: "Diagnosis" }, { key: "A_Custom2", label: "Clinical Presentation" },
+  { key: "P_Procedures" }, { key: "P_GoalNotes" }, { key: "P_Plans" },
+  { key: "P_Custom1", label: "Patient Education" }, { key: "P_Custom2", label: "Rehab Potential" },
+  { key: "P_Custom3", label: "Contra Indication" }, { key: "P_Custom4", label: "Treatment Diagnosis" },
+];
+
+test("every Initial Evaluation section lands in the right box on the real Cadence Init Eval layout", () => {
+  const plan = R.planRouting(INITIAL_SECTIONS, INIT_EVAL_LAYOUT);
+  assert.deepStrictEqual(plan.unplaced, []);
+  const where = (h) => boxOf(plan, h).key;
+  assert.strictEqual(where("Chief Complaint"), "S_ChiefComplaint");
+  assert.strictEqual(where("Diagnoses"), "A_Custom1");                   // "Diagnosis"
+  assert.strictEqual(where("Medications"), "S_Medications");
+  assert.strictEqual(where("Allergies"), "S_MedicalHistory");
+  assert.strictEqual(where("Referral & Relevant History"), "S_MedicalHistory"); // not History Of Present Illness
+  assert.strictEqual(where("Social History & Living Environment"), "S_SocialHistory");
+  assert.strictEqual(where("Fall Risk"), "S_Custom3");                   // "History of Falls"
+  assert.strictEqual(where("Musculoskeletal Assessment"), "O_Objective");
+  assert.strictEqual(where("Functional Mobility"), "O_FunctionalStatus");
+  assert.strictEqual(where("Assessment Summary"), "A_Custom2");          // "Clinical Presentation", not "Diagnosis"
+  assert.strictEqual(where("Short-Term Goals"), "P_GoalNotes");
+  assert.strictEqual(where("Plan of Treatment"), "P_Plans");
+  plan.boxes.forEach((b) => assert.ok(b.key.indexOf("S_ROS_") !== 0));
+});
+
+test("a custom box is never chosen by its position: Init Eval's P_Custom1 is Patient Education, not goals", () => {
+  const long = Array.from({ length: 40 }, (_, i) => "Goal " + i + ": walk further with less assistance within four weeks.").join(" ");
+  const plan = R.planRouting([{ heading: "Short-Term Goals", text: long }], INIT_EVAL_LAYOUT);
+  assert.ok(!plan.boxes.some((b) => b.key === "P_Custom1"), "goals overflowed into Patient Education");
+  assert.ok(!plan.boxes.some((b) => b.key === "P_Custom3"), "goals overflowed into Contra Indication");
+});
+
+test("the practice's specific boxes receive sections of the same name", () => {
+  const plan = R.planRouting([
+    { heading: "Rehab Potential", text: "Good." }, { heading: "Patient Education", text: "HEP reviewed." },
+    { heading: "Special Tests", text: "Lachman negative." }, { heading: "Outcome Measures", text: "TUG 14 s." },
+    { heading: "Contraindications", text: "None." }, { heading: "Cognition", text: "Alert and oriented." },
+    { heading: "Personal Factors", text: "Motivated." }, { heading: "Treatment Diagnosis", text: "Gait abnormality." },
+  ], INIT_EVAL_LAYOUT);
+  const where = (h) => boxOf(plan, h).key;
+  assert.strictEqual(where("Rehab Potential"), "P_Custom2");
+  assert.strictEqual(where("Patient Education"), "P_Custom1");
+  assert.strictEqual(where("Special Tests"), "O_PE_Custom2");
+  assert.strictEqual(where("Outcome Measures"), "O_PE_Custom1");
+  assert.strictEqual(where("Contraindications"), "P_Custom3");
+  assert.strictEqual(where("Cognition"), "S_Custom2");
+  assert.strictEqual(where("Personal Factors"), "S_Custom1");
+  assert.strictEqual(where("Treatment Diagnosis"), "P_Custom4");
+});
+
+// ---- Did the text really land in Office Ally? ----
+
+test("verifyBoxes: every planned box holding exactly its text is a match (CRLF and trailing space ignored)", () => {
+  const plan = R.planRouting([
+    { heading: "Chief Complaint", text: "Left knee pain." },
+    { heading: "Plan", text: "Continue 2x/week.\nProgress load." },
+  ], PROGRESS_LAYOUT);
+  const current = {};
+  plan.boxes.forEach((b) => { current[b.key] = b.text.replace(/\n/g, "\r\n") + "  "; });
+  const v = R.verifyBoxes(plan.boxes, current);
+  assert.strictEqual(v.ok, true);
+  assert.strictEqual(v.matched.length, plan.boxes.length);
+});
+
+test("verifyBoxes: an empty box or different text is reported by label, never counted as a match", () => {
+  const boxes = [
+    { key: "S_ChiefComplaint", label: "Chief Complaints", text: "Left knee pain." },
+    { key: "P_Plans", label: "Plan Notes", text: "Continue 2x/week." },
+    { key: "O_Objective", label: "Objective Notes", text: "AROM 5-90." },
+  ];
+  const v = R.verifyBoxes(boxes, { S_ChiefComplaint: "Left knee pain.", P_Plans: "", O_Objective: "AROM 5-9" });
+  assert.strictEqual(v.ok, false);
+  assert.deepStrictEqual(v.matched, ["Chief Complaints"]);
+  assert.deepStrictEqual(v.empty, ["Plan Notes"]);
+  assert.deepStrictEqual(v.differ, ["Objective Notes"]);
+});
+
+test("verifyBoxes: a box missing from the page counts as empty, and nothing planned is not ok", () => {
+  assert.deepStrictEqual(R.verifyBoxes([{ key: "P_Plans", label: "Plan Notes", text: "x" }], {}).empty, ["Plan Notes"]);
+  assert.strictEqual(R.verifyBoxes([], {}).ok, false);
+});

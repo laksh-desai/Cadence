@@ -8,6 +8,7 @@ want to re-encrypt once per request, not once per table write).
 import json
 import re
 import uuid
+import datetime as _dt
 from datetime import datetime, timezone
 
 from app import version as app_version
@@ -310,9 +311,13 @@ def create_note(
     template_spec_sha: str | None = None,
     template_customized: bool = False,
     synthetic: bool = False,
+    visit_date: str | None = None,
 ) -> dict:
     note_id = _new_id("n")
     created_at = _now_iso()
+    # The visit day defaults to today on THIS computer (the clinician's local date), not UTC —
+    # an evening note saved after 5pm Pacific is still that day's visit.
+    visit_date = visit_date or _dt.date.today().isoformat()
     conn = db.get_connection()
     try:
         conn.execute(
@@ -320,8 +325,8 @@ def create_note(
             "sections_json, missing_json, dictation_raw, used_prior, "
             "original_sections_json, revise_instructions_json, edited_section_count, "
             "model_id, fast_tier, template_spec_sha, template_customized, app_version, "
-            "synthetic) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "synthetic, visit_date) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 note_id, patient_id, form_id, form_name, created_at,
                 json.dumps(sections), json.dumps(missing_info), dictation_raw,
@@ -338,19 +343,20 @@ def create_note(
                 # same reason model_id is stamped server-side.
                 app_version(),
                 1 if synthetic else 0,
+                visit_date,
             ),
         )
         conn.commit()
     finally:
         conn.close()
-    return {"id": note_id, "created_at": created_at}
+    return {"id": note_id, "created_at": created_at, "visit_date": visit_date}
 
 
 def list_notes(patient_id: str) -> list[dict]:
     conn = db.get_connection()
     try:
         rows = conn.execute(
-            "SELECT id, form_id, form_name, created_at, sections_json, missing_json "
+            "SELECT id, form_id, form_name, created_at, visit_date, sections_json, missing_json "
             "FROM notes WHERE patient_id = ? ORDER BY created_at DESC",
             (patient_id,),
         ).fetchall()
@@ -372,7 +378,8 @@ def list_notes(patient_id: str) -> list[dict]:
         out.append(
             {
                 "id": r["id"], "form_id": r["form_id"], "form_name": r["form_name"],
-                "created_at": r["created_at"], "missing_count": len(missing),
+                "created_at": r["created_at"], "visit_date": r["visit_date"],
+                "missing_count": len(missing),
                 "snippet": snippet,
             }
         )
@@ -383,7 +390,7 @@ def get_note(patient_id: str, note_id: str) -> dict | None:
     conn = db.get_connection()
     try:
         r = conn.execute(
-            "SELECT id, form_id, form_name, created_at, sections_json, missing_json "
+            "SELECT id, form_id, form_name, created_at, visit_date, sections_json, missing_json "
             "FROM notes WHERE patient_id = ? AND id = ?",
             (patient_id, note_id),
         ).fetchone()
@@ -393,7 +400,8 @@ def get_note(patient_id: str, note_id: str) -> dict | None:
         return None
     return {
         "id": r["id"], "form_id": r["form_id"], "form_name": r["form_name"],
-        "created_at": r["created_at"], "sections": json.loads(r["sections_json"]),
+        "created_at": r["created_at"], "visit_date": r["visit_date"],
+        "sections": json.loads(r["sections_json"]),
         "missing_info": json.loads(r["missing_json"]),
     }
 

@@ -25,6 +25,7 @@
     <button class="nav-tab" data-page="patients">All Patients</button>
     <button class="nav-tab" data-page="templates">Templates</button>
     <button class="nav-tab" data-page="evals">Evals</button>
+    <button class="nav-tab" data-page="office">Manage Office</button>
     <button class="nav-tab" data-page="status">Status</button>
   </nav>
 
@@ -142,6 +143,14 @@
     </div>
     <p class="pagelede">Measure how well Cadence reads billing codes, treatment minutes, and units out of a dictation. Cadence writes realistic fake sessions <em>together with the right answers</em>, runs them through the real pipeline, and scores what it got. No real patient data is involved and nothing is saved to any patient's file. Generating samples is instant; running a sweep uses the local model and takes roughly a minute or two per note, during which note generation will be slow.</p>
     <div id="evalsMount"></div>
+  </section>
+
+  <section id="page-office" class="page hidden">
+    <div class="pagehead">
+      <h1>Manage Office</h1>
+    </div>
+    <p class="pagelede">Practice settings for sending notes to Office Ally. These hold layout numbers and names only — no patient information.</p>
+    <div id="officeMount"></div>
   </section>
 
   <section id="page-status" class="page hidden">

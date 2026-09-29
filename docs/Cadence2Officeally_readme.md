@@ -1,5 +1,10 @@
 # Cadence → Office Ally: Setup and Daily Use
 
+> **Clinicians:** use the one-page [Clinician_Guide_Send_to_Office_Ally.md](Clinician_Guide_Send_to_Office_Ally.md).
+> Cadence's **Send to Office Ally** button now does the setup (Part 1) and the patient linking
+> (Part 3) on screen, and pre-selects the note in the extension. This document is the detailed
+> reference for whoever installs and supports Cadence.
+
 This guide shows how to move a finished Cadence note into Office Ally with one click, using the
 **Cadence → Office Ally** Chrome extension. No technical background is needed. Follow the parts
 in order the first time; after that, only **Part 5** is needed for each visit.
@@ -19,7 +24,7 @@ The extension does that copying for you:
 - It types the text into those boxes on the Office Ally page you have open.
 
 **What it never does:**
-- It never saves, submits, or signs an Office Ally note. **You review and sign every note yourself.**
+- It saves a note only as a DRAFT (Office Ally's Apply), only after every box reads back correctly, and then re-checks the saved boxes. It never submits or signs. **You review and sign every note yourself.**
 - It never stores your Office Ally username or password. It works inside the Office Ally tab you
   are already logged in to.
 - It never sends anything to the internet. It only talks to Cadence on this laptop and the Office
@@ -109,7 +114,14 @@ the extension behaves.
 3. **Click the Cadence icon** in the toolbar. A panel opens on the right. It should show
    **"Office Ally Patient ID 155793457"** and select the matching patient.
 
-4. **Choose the saved note**, check the preview (see Part 6), and click **Fill Office Ally**.
+4. **Choose the saved note**, check the preview (see Part 6), and click **Fill & save draft**.
+   On the practice page:
+   - Set the **SOAP Note Layout** dropdown to match the note (**Cadence Init Eval** for an Initial
+     Evaluation, **Progress Notes** for a Follow-Up). Otherwise the fill is blocked with "Template
+     mismatch" — which is the rule working.
+   - The **Encounter Date** defaults to today. Change it to see "Date mismatch" block the fill.
+   - The practice page has no real encounter list, so "Only one encounter" shows **?**. The first
+     click warns; click **Fill & save draft** again to continue.
 
 5. **Look at the filled boxes.** The **Update** button on this page only shows a message; it
    saves nothing.
@@ -118,25 +130,44 @@ the extension behaves.
 
 ## Part 5 — Everyday use with a real patient
 
-1. **In Cadence:** generate the note, review it, and click **Save**. The extension only works with
-   saved notes.
+The binding rules behind these steps are in
+[OfficeAlly_Integration_Rules.md](OfficeAlly_Integration_Rules.md).
 
-2. **In Office Ally:** open the patient's chart → **Progress Notes** → **Add Custom Progress Note /
-   Encounter**, and choose the right layout:
-   - **Cadence Init Eval** for an initial evaluation
-   - **Progress Notes** for a daily / follow-up visit
+1. **In Cadence:** generate the note, review it, and click **Save** — **on the day of the visit**.
+   The extension only works with saved notes, and the note's date is the day it was saved. That
+   date must match the Office Ally encounter's date.
 
-   If the note type and layout don't match, the panel warns you.
+2. **In Office Ally, open ONE encounter for that date.** Use **Send to Office Ally → Create … note**
+   (it opens Add Note on the right layout), or open that day's existing encounter from the chart:
+   - **Cadence Init Eval** for an Initial Evaluation
+   - **Progress Notes** for a Follow-Up Visit
+
+   **Office Ally creates an encounter the moment its Add Note page opens** — before anything is
+   saved. Every extra Add Note is an extra blank encounter in the chart, so open it once per note.
+   Cadence remembers each note's encounter and warns before a second one.
 
 3. **Click the Cadence icon.** The panel selects the patient for you (from the Patient ID). Pick
    the **saved note** from the list.
 
-4. **Check the preview** under **"Automatic fill — where each section will go"** (see Part 6).
+4. **Read the checks at the top of the panel.** Each shows ✓ (fine), ✕ (blocked — the reason is
+   underneath), or ? (couldn't be checked — look yourself):
+   - Patient ID matches MRN
+   - Layout matches note type
+   - Encounter date = note date
+   - Only one encounter on that date
 
-5. **Click "Fill Office Ally".**
+   Any ✕ means nothing will be filled until it's fixed. The extension never changes the layout or
+   date for you.
 
-6. **Review every box in Office Ally, then save and sign it yourself.**
-   Office Ally auto-saves drafts about every 20 minutes, so review right after filling.
+5. **Check the preview** under **"Automatic fill — where each section will go"** (see Part 6).
+
+6. **Click "Fill & save draft".** All checks run again at this moment, in case something changed.
+   The extension fills each box, **reads every box back** (a box that didn't keep its text is named
+   and nothing is saved), clicks Office Ally's **Apply** to save a draft, and after the page reloads
+   **checks the saved note box by box** — "Saved and checked: all N boxes match Cadence". If the
+   panel doesn't reopen by itself, click the Cadence icon and the same check runs.
+
+7. **Review every box in Office Ally, then sign it yourself.** Cadence never signs.
 
 ---
 
@@ -190,6 +221,10 @@ Example on the **Progress Notes** layout:
 | When you click Fill… | What happens | Why |
 |---|---|---|
 | The chart's Patient ID ≠ the patient's MRN in Cadence | Nothing is filled; the panel says "Wrong chart" | A note must never go into the wrong chart |
+| Wrong layout: an Initial Evaluation not in **Cadence Init Eval**, or a Follow-Up not in **Progress Notes** | Nothing is filled; the panel says "Template mismatch" and which layout to choose. It never switches the layout for you. | Practice rule 2.1 |
+| The encounter's **Encounter Date** ≠ the Cadence note's date | Nothing is filled; the panel says "Date mismatch" | Each encounter belongs to one visit date (rule 3.2) |
+| Office Ally already has **another encounter on the same date** | Nothing is filled; the panel names that encounter. Delete the older one in Office Ally, then retry. | Only one encounter per patient per day (rule 3.3) |
+| The encounter list couldn't be read | The first click only warns; check the Encounters list yourself, then click again | Cadence can't confirm there's only one encounter that day |
 | The patient has no MRN in Cadence | Nothing is filled; the panel tells you which ID to enter | The link hasn't been made yet (Part 3) |
 | The note still has unresolved `[! …]` gaps | The first click only warns; a second click fills anyway | Unfinished items shouldn't reach the chart unnoticed |
 | An Office Ally box already has different text | That box is left alone and named in the message | Never overwrite what someone typed |
@@ -214,7 +249,10 @@ When the extension's files change (for example after the developer improves the 
 |---|---|
 | "Couldn't reach Cadence" | Start Cadence (Part 2). |
 | "Wrong chart…" or "has no Office Ally Patient ID" | Put the chart's Patient ID in the patient's MRN box in Cadence (Part 3). |
-| "No Office Ally note boxes found on this page" | Open the note form (Add Note / Encounter) first, then click the Cadence icon again. |
+| "No Office Ally note boxes on this page" | Follow the directions in the panel: open the encounter for the note's date, or create one with the matching layout. Then click the Cadence icon again. |
+| "Template mismatch" | Change the **SOAP Note Layout** dropdown in Office Ally to the layout the panel names, then click Fill again. |
+| "Date mismatch" | You're in the wrong encounter. Open the encounter dated the same day as the Cadence note (or create it). A note saved in Cadence the day after the visit carries the later date. |
+| "Duplicate encounter" | Delete the older encounter for that day in Office Ally, then click the Cadence icon and Fill again. |
 | The saved-note list is empty | Save the note in Cadence first (Part 5, step 1). |
 | A red "Not placed" line | Copy that section by hand; report which section it was. |
 | "Not overwritten (already has text)" | Clear that Office Ally box if you want it replaced, then fill again. |
