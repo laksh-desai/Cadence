@@ -535,8 +535,8 @@
     openOverlay("Link "+firstName(p.name)+" to Office Ally");
     modalBody.innerHTML=
       '<p class="setup-lede">One time per patient: enter <b>'+esc(p.name)+'</b>\'s Office Ally Patient ID. Cadence uses it to open the right chart, and the extension refuses to fill any other patient\'s chart.</p>'
-      +'<p class="setup-lede">Where to find it: open the patient in Office Ally — it\'s <b>Patient ID</b> at the top of the chart (a number like 155793457).</p>'
-      +'<div class="mfield"><label>Office Ally Patient ID</label><input id="oaPid" inputmode="numeric" autocomplete="off" placeholder="e.g. 155793457"></div>'
+      +'<p class="setup-lede">Where to find it: open the patient in Office Ally — it\'s <b>Patient ID</b> at the top of the chart.</p>'
+      +'<div class="mfield"><label>Office Ally Patient ID</label><input id="oaPid" inputmode="numeric" autocomplete="off" placeholder="Patient ID from Office Ally"></div>'
       +'<div class="modal-actions"><button class="btn btn-ghost" id="oaPidCancel">Cancel</button><button class="btn btn-primary" style="width:auto;margin:0" id="oaPidSave">Save and continue</button></div>';
     $("oaPid").focus();
     $("oaPidCancel").addEventListener("click", closeOverlay);
@@ -1637,7 +1637,7 @@
     openOverlay("New patient");
     modalBody.innerHTML=
       '<div class="mfield"><label>Full name</label><input id="npName" placeholder="e.g. Alex Rivera" autocomplete="off"></div>'+
-      '<div class="mrow"><div class="mfield"><label>Date of birth</label><input id="npDob" placeholder="MM/DD/YYYY" autocomplete="off"></div><div class="mfield"><label>Office Ally Patient ID (MRN)</label><input id="npMrn" placeholder="e.g. 155793457" autocomplete="off"></div></div>'+
+      '<div class="mrow"><div class="mfield"><label>Date of birth</label><input id="npDob" placeholder="MM/DD/YYYY" autocomplete="off"></div><div class="mfield"><label>Office Ally Patient ID (MRN)</label><input id="npMrn" placeholder="Patient ID from Office Ally" autocomplete="off"></div></div>'+
       '<div class="mfield"><label>Condition / clinical summary</label><textarea id="npCond" rows="3" placeholder="e.g. L ankle sprain, 2 weeks post-injury — type or dictate"></textarea><div class="resolve-actions"><button class="btn btn-mic" id="npMic"><span class="pulse"></span><span id="npMicLabel">Dictate</span></button></div><p class="mic-help-sm" id="npMicHelp"></p></div>'+
       '<div class="mfield"><label>Scheduling notes <span class="mfield-opt">(optional)</span></label><input id="npSched" placeholder="e.g. Tue/Thu mornings; prefers early slots" autocomplete="off"></div>'+
       '<div class="modal-actions"><button class="btn btn-ghost" id="npCancel">Cancel</button><button class="btn btn-primary" style="width:auto;margin:0" id="npSave">Add patient</button></div>';
@@ -1672,7 +1672,7 @@
     openOverlay("Edit patient");
     modalBody.innerHTML=
       '<div class="mfield"><label>Full name</label><input id="epName" autocomplete="off"></div>'+
-      '<div class="mrow"><div class="mfield"><label>Date of birth</label><input id="epDob" placeholder="MM/DD/YYYY" autocomplete="off"></div><div class="mfield"><label>Office Ally Patient ID (MRN)</label><input id="epMrn" placeholder="e.g. 155793457" autocomplete="off"></div></div>'+
+      '<div class="mrow"><div class="mfield"><label>Date of birth</label><input id="epDob" placeholder="MM/DD/YYYY" autocomplete="off"></div><div class="mfield"><label>Office Ally Patient ID (MRN)</label><input id="epMrn" placeholder="Patient ID from Office Ally" autocomplete="off"></div></div>'+
       '<div class="mfield"><label>Condition / clinical summary</label><textarea id="epCond" rows="3" placeholder="e.g. L ankle sprain, 2 weeks post-injury — type or dictate"></textarea><div class="resolve-actions"><button class="btn btn-mic" id="epMic"><span class="pulse"></span><span id="epMicLabel">Dictate</span></button></div><p class="mic-help-sm" id="epMicHelp"></p></div>'+
       '<div class="mfield"><label>Scheduling notes <span class="mfield-opt">(optional)</span></label><input id="epSched" placeholder="e.g. Tue/Thu mornings; prefers early slots" autocomplete="off"></div>'+
       '<div class="modal-actions"><button class="btn btn-ghost" id="epCancel">Cancel</button><button class="btn btn-primary" style="width:auto;margin:0" id="epSave">Save changes</button></div>';
@@ -2241,18 +2241,18 @@
       +'<p class="setup-lede">Each Cadence note type goes into exactly one Office Ally layout. Cadence\'s <b>Send to Office Ally</b> opens that layout, and the Chrome extension refuses to fill any other.</p>'
       +'<details class="office-help"><summary>How to find a SoapLayoutID</summary><ol class="setup-steps">'
       +'<li>In Office Ally, open any patient\'s chart → <b>Progress Notes</b> → <b>Add Custom Progress Note / Encounter</b>, and pick the layout.</li>'
-      +'<li>Look at the address bar. It contains <code>SoapLayoutID=374261</code> — that number is the SoapLayoutID.</li>'
-      +'<li>The layout name is exactly as Office Ally shows it in the <b>SOAP Note Layout</b> dropdown (e.g. <i>Cadence Init Eval</i>).</li>'
+      +'<li>Look at the address bar. It contains <code>SoapLayoutID=</code> followed by a number — that number is the SoapLayoutID.</li>'
+      +'<li>The layout name is exactly as Office Ally shows it in the <b>SOAP Note Layout</b> dropdown.</li>'
       +'</ol><p class="setup-note">Leave a row empty if that note type isn\'t sent to Office Ally.</p></details>'
       +'<div class="office-table-wrap"><table class="office-table"><thead><tr><th>Cadence note type</th><th>SoapLayoutID</th><th>Office Ally layout name</th></tr></thead><tbody>';
     (data.forms||[]).forEach(f=>{
       const row=(data.layouts||{})[f.id]||{};
       h+='<tr><td>'+esc(f.name)+'</td>'
-        +'<td><input class="office-id" data-form="'+esc(f.id)+'" inputmode="numeric" placeholder="e.g. 374261" autocomplete="off"></td>'
-        +'<td><input class="office-name" data-form="'+esc(f.id)+'" placeholder="e.g. Cadence Init Eval" autocomplete="off"></td></tr>';
+        +'<td><input class="office-id" data-form="'+esc(f.id)+'" inputmode="numeric" placeholder="SoapLayoutID" autocomplete="off"></td>'
+        +'<td><input class="office-name" data-form="'+esc(f.id)+'" placeholder="Layout name" autocomplete="off"></td></tr>';
     });
     h+='</tbody></table></div>'
-      +'<div class="modal-actions" style="justify-content:flex-start"><button class="btn btn-primary" style="width:auto;margin:0" id="officeSave">Save layouts</button><button class="btn btn-ghost" id="officeDefaults">Restore SDMPT defaults</button><span class="savehint" id="officeMsg"></span></div></div>'
+      +'<div class="modal-actions" style="justify-content:flex-start"><button class="btn btn-primary" style="width:auto;margin:0" id="officeSave">Save layouts</button><span class="savehint" id="officeMsg"></span></div></div>'
       +'<div class="card office-card"><h2>Chrome extension</h2>'
       +(ext
         ? '<p class="setup-lede">✓ Installed (version '+esc(ext)+'). Clinicians use <b>Send to Office Ally</b> under any saved note.</p>'
@@ -2266,7 +2266,6 @@
     };
     fill(data.layouts||{});
     const msg=$("officeMsg");
-    $("officeDefaults").addEventListener("click", ()=>{ fill(data.defaults||{}); msg.textContent="Defaults filled in — click Save layouts to keep them."; });
     $("officeSave").addEventListener("click", async ()=>{
       const layouts={};
       Array.prototype.forEach.call(mount.querySelectorAll(".office-id"), el=>{

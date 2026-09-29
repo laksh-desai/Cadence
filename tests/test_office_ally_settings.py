@@ -34,10 +34,11 @@ class SettingsTests(unittest.TestCase):
         self.patch.stop()
         self.tmp.cleanup()
 
-    def test_defaults_are_the_practices_layouts_until_something_is_saved(self):
-        layouts = office_ally.load_layouts()
-        self.assertEqual(layouts["initial"], {"id": "374261", "name": "Cadence Init Eval"})
-        self.assertEqual(layouts["followup"], {"id": "361919", "name": "Progress Notes"})
+    def test_no_layouts_are_built_in_every_practice_enters_its_own(self):
+        # SoapLayoutIDs belong to one Office Ally account; a built-in default would send another
+        # practice's notes to the wrong layout.
+        self.assertEqual(office_ally.load_layouts(), {})
+        self.assertEqual(office_ally.DEFAULT_LAYOUTS, {})
 
     def test_saved_layouts_round_trip(self):
         clean = office_ally.validate_layouts(
@@ -61,9 +62,9 @@ class SettingsTests(unittest.TestCase):
                 with self.assertRaises(office_ally.SettingsError):
                     office_ally.validate_layouts(bad, KNOWN)
 
-    def test_an_unreadable_file_falls_back_to_the_defaults(self):
+    def test_an_unreadable_file_means_no_layouts_rather_than_a_crash(self):
         self.path.write_text("{ not json", encoding="utf-8")
-        self.assertEqual(office_ally.load_layouts()["initial"]["id"], "374261")
+        self.assertEqual(office_ally.load_layouts(), {})
 
 
 class PackagingTests(unittest.TestCase):

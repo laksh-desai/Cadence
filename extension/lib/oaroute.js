@@ -207,6 +207,18 @@
     return out;
   }
 
+  // Last-resort room for a section too long for its own boxes: the OTHER general boxes of the same
+  // SOAP part (e.g. Objective Notes full -> Functional Status), and any box the practice labelled as
+  // a continuation ("Assessment (Cont)", "Goals (Continue)"). Custom boxes with a specific topic
+  // ("Special Test", "Diagnosis") are never used as overflow — unrelated text there would mislead.
+  // Only "(cont.)" parts land here, so the reader always sees where a section carries on.
+  function overflowFor(concept, fields, taken) {
+    return fields.filter(function (f) {
+      if (taken.indexOf(f) !== -1 || bucketOfKey(f.key) !== concept.bucket) return false;
+      return f.key.indexOf("Custom") === -1 || /\bcont(inue|inued)?\b|\(cont\b/.test(norm(f.label));
+    });
+  }
+
   // Split an oversized body at paragraph, then sentence, boundaries into pieces of at most
   // `limit` Office Ally characters. Returns null if even one sentence is longer than the limit —
   // the caller then reports the section unplaced rather than cutting a sentence in half.
@@ -309,15 +321,16 @@
       // filling each box's REMAINING room (a box already holding another section still takes
       // what fits). Parts after the first are labelled "(cont.)". Never mid-sentence.
       const units = boundaryUnits(body);
-      const biggest = Math.max.apply(null, cands.map(function (c) { return c.maxLen; }));
+      const pour = cands.concat(overflowFor(conceptFor(heading), all, cands));
+      const biggest = Math.max.apply(null, pour.map(function (c) { return c.maxLen; }));
       if (units.some(function (u) { return oaLength(u.text) > biggest - oaLength(heading + " (cont.):\n"); })) {
         unplaced.push({ heading: heading, reason: "a single sentence is longer than an Office Ally box" });
         return;
       }
       const placed = [];
       let ui = 0;
-      for (let ci = 0; ci < cands.length && ui < units.length; ci++) {
-        const box = boxFor(cands[ci]);
+      for (let ci = 0; ci < pour.length && ui < units.length; ci++) {
+        const box = boxFor(pour[ci]);
         const h = placed.length ? heading + " (cont.)" : heading;
         let chunk = "";
         while (ui < units.length) {
@@ -329,7 +342,10 @@
         if (chunk) placed.push({ box: box, block: { heading: h, body: chunk } });
       }
       if (ui < units.length) {
-        unplaced.push({ heading: heading, reason: "longer than the room left in its Office Ally boxes" });
+        const left = units.slice(ui).reduce(function (n, u) { return n + oaLength(u.text) + 1; }, 0);
+        unplaced.push({ heading: heading, over: left,
+          reason: "about " + left.toLocaleString() + " characters more than its Office Ally boxes can hold — shorten it in Cadence " +
+            "(Ask for changes: \"shorten " + heading + " by about " + left.toLocaleString() + " characters, keep every value\"), then Fill again" });
         return; // all or nothing: half a section in the chart is worse than none
       }
       placed.forEach(function (x) { x.box.blocks.push(x.block); });
@@ -367,19 +383,17 @@
     return { ok: true, reason: "" };
   }
 
-  // ---- Practice rules (SDMPT, 2026-09-28): see docs/OfficeAlly_Integration_Rules.md ----
+  // ---- Practice rules: see docs/OfficeAlly_Integration_Rules.md ----
 
   // Each Cadence note type must be filled into exactly one Office Ally layout. Matched on the
   // layout's id OR its exact name — never a partial name, so "Copy Of Progress Notes" is not
-  // "Progress Notes". Custom Cadence templates have no rule and are not blocked.
-  const REQUIRED_LAYOUT = {
-    initial: { label: "Cadence Init Eval", ids: ["374261"], names: ["cadence init eval", "cadence initial eval"] },
-    initial_updated: { label: "Cadence Init Eval", ids: ["374261"], names: ["cadence init eval", "cadence initial eval"] },
-    followup: { label: "Progress Notes", ids: ["361919"], names: ["progress notes"] },
-  };
+  // "Progress Notes". NOTHING is built in: SoapLayoutIDs belong to one practice's Office Ally
+  // account, so the rules come only from Cadence's Manage Office settings (layoutRulesFrom). A note
+  // type with no saved layout has no rule and is not blocked.
+  const REQUIRED_LAYOUT = {};
 
   // The Office Ally pages Cadence sends the clinician to (URL patterns supplied by the practice):
-  //   progressNotes — the patient's Progress Notes list, where an encounter is deleted with Del
+  //   progressNotes — the patient's Progress Notes list
   //   addNote       — a NEW encounter already on the layout this note type requires
   function officeAllyUrls(pid, formId, rules) {
     const base = "https://pm.officeally.com/emr/PatientCharts/";

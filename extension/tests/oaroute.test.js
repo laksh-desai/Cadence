@@ -193,24 +193,37 @@ test("countGaps counts unresolved [[NEEDS: ...]] markers", () => {
 
 // ---- Practice rules: layout per note type, encounter date, one encounter per day ----
 
+// Layouts as a practice would save them in Manage Office. Nothing is built into the extension.
+const PRACTICE = R.layoutRulesFrom({
+  initial: { id: "374261", name: "Cadence Init Eval" },
+  initial_updated: { id: "374261", name: "Cadence Init Eval" },
+  followup: { id: "361919", name: "Progress Notes" },
+});
+
+test("no layout is built in: without Manage Office settings nothing is linked or blocked", () => {
+  assert.deepStrictEqual(R.REQUIRED_LAYOUT, {});
+  assert.strictEqual(R.checkLayout("initial", "361919", "Progress Notes").ok, true);
+  assert.strictEqual(R.officeAllyUrls("123456789", "initial").addNote, "");
+});
+
 test("an Initial Evaluation must go into 'Cadence Init Eval' and a Follow-Up into 'Progress Notes'", () => {
-  assert.strictEqual(R.checkLayout("initial", "374261", "Cadence Init Eval").ok, true);
-  assert.strictEqual(R.checkLayout("initial_updated", "", "Cadence Initial Eval").ok, true);
-  assert.strictEqual(R.checkLayout("followup", "361919", "Progress Notes").ok, true);
-  const wrong = R.checkLayout("initial", "361919", "Progress Notes");
+  assert.strictEqual(R.checkLayout("initial", "374261", "Cadence Init Eval", PRACTICE).ok, true);
+  assert.strictEqual(R.checkLayout("initial_updated", "", "Cadence Init Eval", PRACTICE).ok, true);
+  assert.strictEqual(R.checkLayout("followup", "361919", "Progress Notes", PRACTICE).ok, true);
+  const wrong = R.checkLayout("initial", "361919", "Progress Notes", PRACTICE);
   assert.strictEqual(wrong.ok, false);
   assert.ok(wrong.reason.indexOf("Cadence Init Eval") !== -1);
-  assert.strictEqual(R.checkLayout("followup", "374261", "Cadence Init Eval").ok, false);
+  assert.strictEqual(R.checkLayout("followup", "374261", "Cadence Init Eval", PRACTICE).ok, false);
 });
 
 test("a look-alike layout name is not accepted ('Copy Of Progress Notes' is not 'Progress Notes')", () => {
-  assert.strictEqual(R.checkLayout("followup", "375083", "Copy Of Progress Notes").ok, false);
-  assert.strictEqual(R.checkLayout("followup", "352530", "DailyNotes New").ok, false);
+  assert.strictEqual(R.checkLayout("followup", "375083", "Copy Of Progress Notes", PRACTICE).ok, false);
+  assert.strictEqual(R.checkLayout("followup", "352530", "DailyNotes New", PRACTICE).ok, false);
 });
 
 test("custom Cadence templates and non-Office-Ally pages are not blocked by the layout rule", () => {
-  assert.strictEqual(R.checkLayout("my_custom_form", "361919", "Progress Notes").ok, true);
-  assert.strictEqual(R.checkLayout("initial", "", "").ok, true);
+  assert.strictEqual(R.checkLayout("my_custom_form", "361919", "Progress Notes", PRACTICE).ok, true);
+  assert.strictEqual(R.checkLayout("initial", "", "", PRACTICE).ok, true);
 });
 
 test("noteDate gives the note's local calendar date as MM/DD/YYYY", () => {
@@ -287,13 +300,13 @@ test("looksLoggedOut spots an expired Office Ally session", () => {
 });
 
 test("officeAllyUrls builds the practice's Progress Notes list and Add Note links for the right layout", () => {
-  const eval_ = R.officeAllyUrls("155798537", "initial");
+  const eval_ = R.officeAllyUrls("123456789", "initial", PRACTICE);
   assert.strictEqual(eval_.addNote,
-    "https://pm.officeally.com/emr/PatientCharts/PatientChart_EditNote.aspx?PageAction=AddNote&SoapLayoutID=374261&Tab=C&PID=155798537&Scope=&Date1=&Date2=");
+    "https://pm.officeally.com/emr/PatientCharts/PatientChart_EditNote.aspx?PageAction=AddNote&SoapLayoutID=374261&Tab=C&PID=123456789&Scope=&Date1=&Date2=");
   assert.strictEqual(eval_.progressNotes,
-    "https://pm.officeally.com/emr/PatientCharts/PatientChart_ProgressNotes.aspx?PageAction=ProgressNotes,PatientCharts_ProgressNotes_Add&Tab=C&PID=155798537&Scope=&Date1=&Date2=");
-  assert.ok(R.officeAllyUrls("155798537", "followup").addNote.indexOf("SoapLayoutID=361919") !== -1);
-  assert.strictEqual(R.officeAllyUrls("155798537", "my_custom").addNote, ""); // no required layout
+    "https://pm.officeally.com/emr/PatientCharts/PatientChart_ProgressNotes.aspx?PageAction=ProgressNotes,PatientCharts_ProgressNotes_Add&Tab=C&PID=123456789&Scope=&Date1=&Date2=");
+  assert.ok(R.officeAllyUrls("123456789", "followup", PRACTICE).addNote.indexOf("SoapLayoutID=361919") !== -1);
+  assert.strictEqual(R.officeAllyUrls("123456789", "my_custom", PRACTICE).addNote, ""); // no required layout
 });
 
 test("SOAP boxes are recognised under any parent prefix, still excluding diagnosis and nurse boxes", () => {
@@ -315,7 +328,7 @@ test("layouts saved in Cadence's Manage Office replace the built-in defaults", (
   assert.ok(R.checkLayout("initial", "374261", "Cadence Init Eval", rules).reason.indexOf("Eval 2027") !== -1);
   assert.strictEqual(R.checkLayout("discharge", "500002", "Discharge Summary", rules).ok, true);
   assert.strictEqual(R.checkLayout("initial_updated", "999", "Anything", rules).ok, true); // no saved rule → not blocked
-  assert.ok(R.officeAllyUrls("155798537", "discharge", rules).addNote.indexOf("SoapLayoutID=500002") !== -1);
+  assert.ok(R.officeAllyUrls("123456789", "discharge", rules).addNote.indexOf("SoapLayoutID=500002") !== -1);
   assert.strictEqual(R.layoutRulesFrom(null), null);
 });
 
@@ -433,4 +446,43 @@ test("verifyBoxes: an empty box or different text is reported by label, never co
 test("verifyBoxes: a box missing from the page counts as empty, and nothing planned is not ok", () => {
   assert.deepStrictEqual(R.verifyBoxes([{ key: "P_Plans", label: "Plan Notes", text: "x" }], {}).empty, ["Plan Notes"]);
   assert.strictEqual(R.verifyBoxes([], {}).ok, false);
+});
+
+// ---- Overflow into the other boxes of the same SOAP part ----
+
+const longText = (n, word) => Array.from({ length: n }, (_, i) => word + " finding " + i + " was measured and recorded today.").join(" ");
+
+test("a long Objective section overflows Objective Notes into Functional Status, never into topic boxes", () => {
+  const body = longText(60, "Objective"); // ~3,300 characters: more than one box, less than two
+  const plan = R.planRouting([{ heading: "Objective Summary", text: body }], INIT_EVAL_LAYOUT);
+  assert.deepStrictEqual(plan.unplaced, []);
+  const keys = plan.boxes.map((b) => b.key);
+  assert.ok(keys.indexOf("O_Objective") !== -1);
+  assert.ok(keys.indexOf("O_FunctionalStatus") !== -1, "overflow reached Functional Status: " + keys);
+  assert.strictEqual(keys.indexOf("O_PE_Custom1"), -1);  // Outcome Measurement tools
+  assert.strictEqual(keys.indexOf("O_PE_Custom2"), -1);  // Special Test
+  const fs = plan.boxes.find((b) => b.key === "O_FunctionalStatus");
+  assert.ok(/Objective Summary \(cont\.\)/.test(fs.text), "the continuation is labelled");
+  plan.boxes.forEach((b) => assert.ok(b.length <= 2000));
+  // Nothing lost: every sentence is somewhere.
+  const joined = plan.boxes.map((b) => b.text).join(" ");
+  body.split(/(?<=\.) /).forEach((sent) => assert.ok(joined.indexOf(sent) !== -1, "lost: " + sent));
+});
+
+test("overflow uses a box the practice labelled as a continuation, but never 'Contra Indication'", () => {
+  const cont = R.planRouting([{ heading: "Plan of Treatment", text: longText(70, "Plan") }], PROGRESS_LAYOUT);
+  assert.deepStrictEqual(cont.unplaced, []);
+  const pk = cont.boxes.map((b) => b.key);
+  assert.ok(pk.indexOf("P_Plans") !== -1);
+  const init = R.planRouting([{ heading: "Plan of Treatment", text: longText(200, "Plan") }], INIT_EVAL_LAYOUT);
+  assert.strictEqual(init.boxes.map((b) => b.key).indexOf("P_Custom3"), -1); // Contra Indication
+  assert.strictEqual(init.boxes.map((b) => b.key).indexOf("P_Custom1"), -1); // Patient Education
+});
+
+test("a section that still cannot fit is reported with how much to cut, never truncated or reworded", () => {
+  const plan = R.planRouting([{ heading: "Objective Summary", text: longText(400, "Objective") }], INIT_EVAL_LAYOUT);
+  assert.strictEqual(plan.boxes.length, 0); // all or nothing
+  assert.strictEqual(plan.unplaced.length, 1);
+  assert.ok(plan.unplaced[0].over > 0);
+  assert.ok(/shorten it in Cadence/.test(plan.unplaced[0].reason));
 });

@@ -917,7 +917,7 @@
   // ---------- small utils ----------
   function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
   function truncate(s, n) { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
-  function layoutRules() { return state.layoutRules || R.REQUIRED_LAYOUT; }
+  function layoutRules() { return state.layoutRules || {}; }
   function digitsOnly(s) { return String(s || "").replace(/\D/g, ""); }
   function fmtDate(d) { const x = d ? new Date(d) : null; return x && !isNaN(x) ? x.toLocaleDateString() : ""; }
 

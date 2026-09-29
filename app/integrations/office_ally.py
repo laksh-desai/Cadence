@@ -2,7 +2,7 @@
 
 Today that is one thing: which Office Ally SOAP layout each Cadence note type goes into, as the
 layout's SoapLayoutID (the number in Office Ally's Add Note link, e.g.
-`PatientChart_EditNote.aspx?PageAction=AddNote&SoapLayoutID=374261&...`) and its name as shown in
+`PatientChart_EditNote.aspx?PageAction=AddNote&SoapLayoutID=<number>&...`) and its name as shown in
 Office Ally's "SOAP Note Layout" dropdown. SoapLayoutIDs are fixed per Office Ally account, so a
 second practice — or a new layout for Re-evaluation or Discharge — is a settings change, not a
 code change.
@@ -27,12 +27,9 @@ from app.paths import INSTALL_DIR, config_dir
 
 SETTINGS_FILENAME = "office_ally.json"
 
-#: SDMPT's layouts (set by the practice 2026-09-28). Used until the practice saves its own.
-DEFAULT_LAYOUTS: dict[str, dict[str, str]] = {
-    "initial": {"id": "374261", "name": "Cadence Init Eval"},
-    "initial_updated": {"id": "374261", "name": "Cadence Init Eval"},
-    "followup": {"id": "361919", "name": "Progress Notes"},
-}
+#: No built-in layouts: SoapLayoutIDs belong to each practice's Office Ally account, so every
+#: practice enters its own in Manage Office. A note type with no layout is simply not linked.
+DEFAULT_LAYOUTS: dict[str, dict[str, str]] = {}
 
 _ID_RE = re.compile(r"^\d{1,12}$")
 MAX_NAME = 80
@@ -43,9 +40,7 @@ def settings_path() -> Path:
 
 
 def load_layouts() -> dict[str, dict[str, str]]:
-    """The saved layouts, or the defaults when nothing has been saved (or the file is unreadable —
-    a broken settings file must not stop notes from being sent; the defaults are the practice's
-    known-good values)."""
+    """The saved layouts, or none when nothing has been saved (or the file is unreadable)."""
     try:
         data = json.loads(settings_path().read_text(encoding="utf-8"))
         layouts = data.get("layouts")
@@ -76,7 +71,7 @@ def validate_layouts(layouts: dict, known_form_ids: set[str]) -> dict[str, dict[
         if not layout_id:
             continue
         if not _ID_RE.match(layout_id):
-            raise SettingsError(f"{form_id}: SoapLayoutID must be digits only, e.g. 374261")
+            raise SettingsError(f"{form_id}: SoapLayoutID must be digits only")
         if not name:
             raise SettingsError(f"{form_id}: enter the layout name as Office Ally shows it")
         if len(name) > MAX_NAME:
@@ -86,7 +81,7 @@ def validate_layouts(layouts: dict, known_form_ids: set[str]) -> dict[str, dict[
 
 
 def save_layouts(layouts: dict[str, dict[str, str]]) -> None:
-    """Atomic write: a half-written settings file would silently fall back to the defaults."""
+    """Atomic write: a half-written settings file would silently drop every layout."""
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".office_ally.", suffix=".tmp")
