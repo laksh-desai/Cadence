@@ -48,3 +48,9 @@ app/storage/.dblock
 
 # Release artifacts (rebuildable from a tag; the zip itself is attached to a GitHub Release).
 dist/
+
+# Saved Office Ally pages (patient details + session tokens) — never commit
+evals/Ingestion/
+
+# Practice-specific Office Ally layout settings (Manage Office tab)
+app/integrations/office_ally.json

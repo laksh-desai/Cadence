@@ -36,20 +36,65 @@ Before touching a real chart, validate the mechanics against the included mock f
    (each section, plus patient name/DOB/MRN, plus optional SOAP blocks).
 5. For a source, click **Map**, then click the matching field on the page. The extension records a
    selector for that field. Repeat for the fields you care about.
-6. Click **Fill Office Ally** — the mapped fields populate. Reload the page and Fill again to confirm
+6. Click **Fill & save draft** — the mapped fields populate. Reload the page and Fill again to confirm
    the mapping persisted.
 
 ## Everyday use with Office Ally
 
 1. In Cadence: generate a note, review, and **Save** it to the patient's file.
 2. In Office Ally: open the patient's note form.
-3. Click the extension icon → pick the patient + the saved note → **Fill Office Ally**.
+3. Click the extension icon → pick the patient + the saved note → **Fill & save draft**.
    - First time on a given form, do the **Map** step once (click each field). After that it's
      just pick-note → Fill.
 4. **Review every field in Office Ally before signing** — the clinician is always the final check.
 
 Mappings are saved **per form** (by the page's URL path), so each note type / form can have its own
 remembered layout.
+
+## Automatic fill (no mapping needed)
+
+A Cadence note has one section per field (an Initial Evaluation has ~17: Chief Complaint,
+Diagnoses, Medications, Allergies, …). An Office Ally layout has a different, smaller set of boxes,
+each capped at **2,000 characters**, and the practice can rename its custom boxes. The two outlines
+do not line up, so the extension routes the note itself (`lib/oaroute.js`):
+
+1. **It reads the boxes that are actually on the open page**: their Office Ally key, the label the
+   practice gave them, and their character limit. Nothing about a specific layout is hard-coded, so
+   Progress Notes, Cadence Init Eval, or a layout added later all work the same way.
+2. **Each Cadence section is matched by what it means.** Medications go to a box labelled
+   "Medications" if the layout has one, otherwise to the Medications built-in box, otherwise to the
+   general Subjective box. The same pattern applies to goals, the plan, exam findings, and so on.
+   Headings are matched by meaning, so "Musculoskeletal Assessment" is treated as exam findings (Objective),
+   not the Assessment box, and a treatment like "Therapeutic Exercise" goes to Procedure Notes,
+   never to "Exercises (Continue)".
+3. **Sections are packed whole, in note order, with their heading as a sub-label.** When a box is
+   full, the next section moves whole to the next suitable box (e.g. Assessment → Assessment
+   (Cont)). A section longer than a box by itself is split only at a paragraph or sentence break,
+   with the second part labelled "(cont.)". **Nothing is ever cut mid-sentence or truncated.**
+   Anything that cannot be placed is listed in red for the clinician to copy in by hand.
+
+The panel shows the plan before anything is filled: each box, which sections go in it, and its
+character count against the limit.
+
+**Safety checks when you click Fill:**
+- **Right chart.** The Office Ally Patient ID is read from the page and must equal the Cadence
+  patient's **MRN**. A mismatch, or a patient with no MRN, fills nothing. Enter the Office Ally Patient
+  ID as the patient's MRN in Cadence once; after that the panel even selects that patient for you.
+- **Unresolved gaps.** If the note still has `[! …]` gaps, the first click only warns; filling with
+  them visible takes a second click.
+- **Never overwrites.** A box that already holds different text is left alone and named in the
+  status line.
+- **Never saves or signs.** The extension only puts text in boxes. It never clicks Update, Apply, or
+  anything else. Office Ally's own 20-minute auto-save may store the draft, so review right after filling.
+- Boxes in collapsed Office Ally sections (e.g. Physical Examination) are expanded after filling,
+  so nothing that was filled goes unseen.
+
+**Manual overrides** (click-to-map, below) still work and take precedence: a section you map by
+hand, and the box you map it to, are left out of automatic routing.
+
+Test it first on the fake Office Ally page: `cd extension && python -m http.server 8080`, open
+`http://localhost:8080/test-oa-form.html?PID=155793457`, and make sure the Cadence patient has the MRN
+`155793457`.
 
 ## What it maps
 
@@ -72,8 +117,12 @@ given note are skipped at Fill (a mapped field is never overwritten with blank).
 Pure helper logic (selector building, marker rendering, source resolution, mapping records):
 
 ```
-node --test extension/tests/mapping.test.js
+node --test extension/tests/
 ```
+
+(No Node.js installed? VS Code ships one: in PowerShell, `$env:ELECTRON_RUN_AS_NODE=1` then
+`& "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe" --test extension/tests/`. Its output goes
+to stdout only when redirected, e.g. with `Start-Process … -RedirectStandardOutput out.txt`.)
 
 The DOM parts (click-to-pick, fill) are validated on `test-form.html` and, finally, on a **blank**
 Office Ally form — never first on a real patient.
@@ -84,5 +133,10 @@ Office Ally form — never first on a real patient.
 - `background.js` — injects the panel on icon click; proxies read-only fetches to Cadence.
 - `content.js` — the in-page panel (shadow-DOM isolated), patient/note picker, click-to-pick, fill.
 - `lib/mapping.js` — pure, testable helpers shared by the content script and the node tests.
+- `bridge.js` — runs only on the local Cadence page: tells Cadence the extension is installed and
+  receives the note chosen with Cadence's **Send to Office Ally** button (ids only).
+- `lib/oaroute.js` — automatic routing of note sections into Office Ally boxes, plus the
+  patient-ID, layout, and gap checks. Pure and tested.
 - `test-form.html` — local mock EHR form for validating without Office Ally.
-- `tests/mapping.test.js` — node tests for the pure helpers.
+- `test-oa-form.html` — PHI-free stand-in for Office Ally's Progress Notes layout (same field ids).
+- `tests/` — node tests for the pure helpers and the routing.

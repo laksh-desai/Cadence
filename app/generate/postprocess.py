@@ -12,6 +12,7 @@ rules in code so the contract holds regardless of model compliance.
 import re
 
 from app.generate import forms as forms_store
+from app.generate import loopguard
 from app.generate.forms import CARRY_SECTION_LABELS
 
 _ZERO_MINUTES_RE = re.compile(r"^\s*Minutes:\s*0\b", re.IGNORECASE)
@@ -686,6 +687,9 @@ def apply(form_id: str, sections: list[dict]) -> list[dict]:
     # After the value-shaped fold repair, for the ones it cannot recognise: a non-numeric value
     # stranded on a heading that starts with one of the template's own section labels.
     sections = split_declared_label_headings(form_id, sections)
+    # Once content sits in the bodies: drop the model's repetition loops (exact repeated sentences
+    # and repeated whole sections — the first copy stays). See loopguard.py.
+    sections = loopguard.collapse_repeats(sections)
     sections = drop_unperformed_treatment_sections(sections)
     sections = enforce_carry_tags(form_id, sections)
     sections = flag_template_echo(form_id, sections)

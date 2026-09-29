@@ -152,6 +152,56 @@ except Exception:  # noqa: BLE001
                                          exc_info=True)
 
 
+def extension_dir() -> Path:
+    """The folder the clinician loads into Chrome as the Office Ally extension.
+
+    On an installed copy this is `<root>/current/extension` rather than the version folder,
+    because `current` is repointed by every update: Chrome keeps loading from the same path and
+    picks up the new version on its next reload, instead of staying pinned to an old version
+    folder the clinician would have to find and re-load by hand.
+    """
+    from app.paths import INSTALL_DIR
+    if INSTALL_DIR.parent.name.lower() == "versions":
+        current = INSTALL_DIR.parent.parent / "current" / "extension"
+        if current.exists():
+            return current
+    return INSTALL_DIR / "extension"
+
+
+@app.get("/api/extension/info")
+async def extension_info():
+    """Setup details for the "Send to Office Ally" pop-up: where the extension folder is and
+    which version is in it. Local paths only — nothing about patients."""
+    folder = extension_dir()
+    version = None
+    try:
+        version = json.loads((folder / "manifest.json").read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError):
+        pass
+    return {"path": str(folder), "version": version, "exists": folder.exists()}
+
+
+@app.get("/api/office-ally/settings")
+async def get_office_ally_settings():
+    """Manage Office: which Office Ally SOAP layout each Cadence note type goes into. Read by the
+    Manage Office tab, the Send to Office Ally button, and the Chrome extension."""
+    from app.integrations import office_ally
+    forms = [{"id": fid, "name": FORMS[fid].name} for fid in forms_store.ordered_form_ids()]
+    return {"layouts": office_ally.load_layouts(), "forms": forms,
+            "defaults": office_ally.DEFAULT_LAYOUTS}
+
+
+@app.put("/api/office-ally/settings")
+async def put_office_ally_settings(body: dict):
+    from app.integrations import office_ally
+    try:
+        layouts = office_ally.validate_layouts(body.get("layouts"), set(FORMS.keys()))
+    except office_ally.SettingsError as e:
+        raise HTTPException(400, str(e))
+    office_ally.save_layouts(layouts)
+    return {"layouts": office_ally.load_layouts()}
+
+
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status():
     sheets_configured = load_sheets_config() is not None
@@ -739,6 +789,7 @@ async def save_note(patient_id: str, body: SaveNoteRequest):
         model_id=body.model_id, fast=body.fast,
         template_spec_sha=body.template_spec_sha,
         template_customized=body.template_customized, synthetic=body.synthetic,
+        visit_date=body.visit_date,
     )
     carry_forward.update_snapshot_after_save(
         patient_id=patient_id, note_id=created["id"], form_id=body.form_id, sections=sections

@@ -5,6 +5,8 @@ import os
 
 import httpx
 
+from app.generate import loopguard
+
 # Quality tier: the medical-tuned 4B used for every note the clinician signs.
 # Env-overridable so a fine-tuned build can be A/B'd against the base with no code edit and no
 # rebuild — `set CADENCE_MODEL=cadence-medgemma:v1` then re-run the sweep. This and `model_for()`
@@ -108,6 +110,7 @@ async def stream_note(prompt: str, timeout_s: float = 1800.0, model: str | None 
     """
     payload = _build_payload(prompt, model)
     payload["stream"] = True
+    written, checked_at = "", 0
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
             async with client.stream("POST", OLLAMA_URL, json=payload) as resp:
@@ -123,6 +126,14 @@ async def stream_note(prompt: str, timeout_s: float = 1800.0, model: str | None 
                     chunk = data.get("message", {}).get("content", "")
                     if chunk:
                         yield chunk
+                        written += chunk
+                        # Repetition loop (the same sentences over and over): stop now instead of
+                        # burning minutes to the output ceiling. The copies are removed afterwards
+                        # by postprocess (loopguard.collapse_repeats).
+                        if len(written) - checked_at >= 300:
+                            checked_at = len(written)
+                            if loopguard.is_looping(written):
+                                return
                     if data.get("done"):
                         return
     except httpx.HTTPError as e:

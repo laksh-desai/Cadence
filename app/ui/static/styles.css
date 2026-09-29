@@ -386,3 +386,28 @@ footer b{color:var(--ink)}
 .brepl-in:focus{outline:none;border-color:var(--teal)}
 /* A confirmed code chip in the note body: settled, not a pending question. */
 .code-ok{background:var(--teal-soft);border-color:var(--teal);color:var(--teal)}
+
+/* Send to Office Ally */
+.oa-send-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.oa-send-row .oa-send{width:auto;margin:0}
+.oa-send-hint{font-size:12.5px;color:var(--muted)}
+.setup-lede{font-size:14px;margin:0 0 12px}
+.setup-steps{margin:0 0 14px;padding-left:22px;font-size:14px}
+.setup-steps li{margin-bottom:10px}
+.setup-note{font-size:12px;color:var(--muted)}
+.copychip{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;max-width:100%}
+.copychip code{font-family:"IBM Plex Mono",Consolas,monospace;font-size:12.5px;background:var(--teal-tint);border:1px solid var(--line);border-radius:6px;padding:4px 8px;word-break:break-all}
+
+/* Manage Office */
+.office-card{margin-bottom:18px}
+.office-card h2{font-size:17px;margin:0 0 8px}
+.office-help{margin:0 0 14px;font-size:13.5px}
+.office-help summary{cursor:pointer;color:var(--teal);font-weight:600}
+.office-help code{font-family:"IBM Plex Mono",Consolas,monospace;background:var(--teal-tint);padding:1px 5px;border-radius:4px}
+.office-table-wrap{overflow-x:auto}
+.office-table{width:100%;border-collapse:collapse;font-size:14px}
+.office-table th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line)}
+.office-table td{padding:6px 8px;border-bottom:1px solid var(--line)}
+.office-table input{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:7px}
+.visitdate{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-right:6px}
+.visitdate input{font:inherit;color:var(--ink);padding:5px 7px;border:1px solid var(--line);border-radius:7px}

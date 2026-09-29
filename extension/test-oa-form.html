@@ -1,0 +1,120 @@
+<!doctype html>
+<!--
+  A PHI-free stand-in for Office Ally's "Progress Notes" SOAP layout, for testing the automatic
+  fill before touching a real chart. It copies only what the extension reads from the real page:
+  the field ids (ctl00_phFolderContent_ucSOAPNote_<KEY>), the header-label tables, the hidden
+  *_Label inputs for custom boxes, the CheckMaxLength(…, 2000, …) handlers, the collapsed
+  Physical Examination section, the Patient ID label, and the SOAP Note Layout dropdown.
+  Serve it and open it with a Patient ID in the URL, e.g.
+    cd extension && python -m http.server 8080
+    http://localhost:8080/test-oa-form.html?PID=155793457
+  then make sure the Cadence patient has the MRN 155793457.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Test — Office Ally Progress Notes (fake)</title>
+<style>
+  body { font: 13px Arial, sans-serif; margin: 16px; max-width: 900px; }
+  textarea { width: 100%; min-height: 40px; color: blue; }
+  .soapTextAreaHeaderTable { width: 100%; margin-top: 10px; }
+  .soapTextAreaHeaderLabel { font-weight: bold; }
+  h3 { background: #dadde5; padding: 4px 8px; }
+  .fake { background: #fff3cd; padding: 8px; border: 1px solid #e0c36b; }
+</style>
+<script>
+  // Office Ally's own limiter: truncates at the limit on keyup and shows chars left.
+  function CheckMaxLength(obj, maxlen, labelname, mode) {
+    var lbl = document.getElementById(labelname);
+    if (mode == 0) { if (lbl) lbl.innerHTML = ""; return; }
+    if (obj.value.length >= maxlen) obj.value = obj.value.substring(0, maxlen);
+    if (lbl) lbl.innerHTML = "(max " + maxlen + " chars, " + (maxlen - obj.value.length) + " chars left)";
+  }
+</script>
+</head>
+<body>
+<p class="fake">FAKE TEST PAGE — not Office Ally. No real patient data.</p>
+<div>Patient ID: <span id="ctl00_phFolderContent_myPatientHeader_lblPatientID">155793457</span></div>
+<script>
+  // Show whatever Patient ID is in the address bar (?PID=…), so the page matches what the
+  // extension reads. Defaults to 155793457 when no PID is given.
+  (function () {
+    var pid = new URLSearchParams(location.search).get("PID");
+    if (pid) document.getElementById("ctl00_phFolderContent_myPatientHeader_lblPatientID").textContent = pid;
+  })();
+</script>
+<div><span id="ctl00_phFolderContent_ucSOAPNote_lblTitle">Add Note / Encounter [Encounter ID 900000001 - User Defined SOAP Form - Progress Notes]</span></div>
+<input type="hidden" id="ctl00_phFolderContent_ucSOAPNote_EncounterID" value="900000001">
+<div>Encounter Date:
+  <input id="ctl00_phFolderContent_ucSOAPNote_EncounterDate_Month" size="2"> /
+  <input id="ctl00_phFolderContent_ucSOAPNote_EncounterDate_Day" size="2"> /
+  <input id="ctl00_phFolderContent_ucSOAPNote_EncounterDate_Year" size="4">
+  <small>(defaults to today — change it to see the date check block the fill)</small>
+</div>
+<script>
+  (function () {
+    var d = new Date(), p = "ctl00_phFolderContent_ucSOAPNote_EncounterDate_";
+    document.getElementById(p + "Month").value = d.getMonth() + 1;
+    document.getElementById(p + "Day").value = d.getDate();
+    document.getElementById(p + "Year").value = d.getFullYear();
+  })();
+</script>
+<div>SOAP Note Layout:
+  <select id="ctl00_phFolderContent_ucSOAPNote_ddlSoapLayout">
+    <option value="361919" selected>Progress Notes</option>
+    <option value="374261">Cadence Init Eval</option>
+  </select>
+</div>
+
+<h3>Subjective</h3>
+<table class="soapTextAreaHeaderTable"><tr><td class="textbold soapTextAreaHeaderLabel">Chief Complaints:</td><td><small><span id="lbl_S_ChiefComplaintCounter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_S_ChiefComplaint" onkeyup="CheckMaxLength(this, 2000, 'lbl_S_ChiefComplaintCounter', 2)"></textarea>
+
+<table class="soapTextAreaHeaderTable"><tr><td class="textbold soapTextAreaHeaderLabel">History Of Present Illness:</td><td><small><span id="lbl_S_HOPI_OriginalCounter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_S_HOPI_Original" onkeyup="CheckMaxLength(this, 2000, 'lbl_S_HOPI_OriginalCounter', 2)"></textarea>
+
+<h3>Objective</h3>
+<table class="soapTextAreaHeaderTable"><tr><td class="textbold soapTextAreaHeaderLabel">Objective Notes:</td><td><small><span id="lbl_O_ObjectiveCounter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_O_Objective" onkeyup="CheckMaxLength(this, 2000, 'lbl_O_ObjectiveCounter', 2)"></textarea>
+
+<b>Physical Examination:</b> (collapsed, as in Office Ally)
+<div id="divPE" style="display: none;">
+  <table style="width: 100%;">
+    <tr><td><table class="soapTextAreaHeaderTable"><tr><td class="text soapTextAreaHeaderLabel">Musculoskeletal <small><span id="lbl_O_PE_MusculoskeletalCounter"></span></small></td></tr></table></td></tr>
+    <tr><td><span class="text"></span></td></tr>
+    <tr><td><textarea id="ctl00_phFolderContent_ucSOAPNote_O_PE_Musculoskeletal" onkeyup="CheckMaxLength(this, 2000, 'lbl_O_PE_MusculoskeletalCounter', 2)"></textarea></td></tr>
+  </table>
+</div>
+
+<table class="soapTextAreaHeaderTable"><tr><td class="text soapTextAreaHeaderLabel">Comments</td><td><small><span id="lbl_O_FunctionalStatusCounter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_O_FunctionalStatus" onkeyup="CheckMaxLength(this, 2000, 'lbl_O_FunctionalStatusCounter', 2)"></textarea>
+
+<h3>Assessment &amp; Plan</h3>
+<table class="soapTextAreaHeaderTable"><tr><td class="textbold soapTextAreaHeaderLabel">Assessment:</td><td><small><span id="lbl_A_Custom1Counter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_A_Custom1" onkeyup="CheckMaxLength(this, 2000, 'lbl_A_Custom1Counter', 2)"></textarea>
+<table class="soapTextAreaHeaderTable"><tr><td class="textbold soapTextAreaHeaderLabel">Assessment (Cont):</td><td><small><span id="lbl_A_Custom2Counter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_A_Custom2" onkeyup="CheckMaxLength(this, 2000, 'lbl_A_Custom2Counter', 2)"></textarea>
+
+<table class="soapTextAreaHeaderTable"><tr><td class="textbold soapTextAreaHeaderLabel">Procedure Notes:</td><td><small><span id="lbl_P_ProceduresCounter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_P_Procedures" onkeyup="CheckMaxLength(this, 2000, 'lbl_P_ProceduresCounter', 2)"></textarea>
+
+<table class="soapTextAreaHeaderTable"><tr><td class="text soapTextAreaHeaderLabel">Goal Notes:</td><td><small><span id="lbl_GoalNotes"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_P_GoalNotes" onkeyup="CheckMaxLength(this, 2000, 'lbl_GoalNotes', 2)"></textarea>
+
+<table class="soapTextAreaHeaderTable"><tr><td class="text soapTextAreaHeaderLabel">Plan Notes:</td><td><small><span id="lbl_P_PlansCounter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_P_Plans" onkeyup="CheckMaxLength(this, 2000, 'lbl_P_PlansCounter', 2)"></textarea>
+
+<table class="soapTextAreaHeaderTable"><tr><td class="textbold soapTextAreaHeaderLabel">Goals (Continue):</td><td><small><span id="lbl_P_Custom1Counter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_P_Custom1" onkeyup="CheckMaxLength(this, 2000, 'lbl_P_Custom1Counter', 2)"></textarea>
+<table class="soapTextAreaHeaderTable"><tr><td class="textbold soapTextAreaHeaderLabel">Next Steps:</td><td><small><span id="lbl_P_Custom3Counter"></span></small></td></tr></table>
+<textarea id="ctl00_phFolderContent_ucSOAPNote_P_Custom3" onkeyup="CheckMaxLength(this, 2000, 'lbl_P_Custom3Counter', 2)"></textarea>
+
+<!-- Office Ally keeps custom-box labels in hidden inputs; the extension prefers these. -->
+<input type="hidden" id="ctl00_phFolderContent_ucSOAPNote_A_Custom1_Label" value="Assessment">
+<input type="hidden" id="ctl00_phFolderContent_ucSOAPNote_A_Custom2_Label" value="Assessment (Cont)">
+<input type="hidden" id="ctl00_phFolderContent_ucSOAPNote_P_Custom1_Label" value="Goals (Continue)">
+<input type="hidden" id="ctl00_phFolderContent_ucSOAPNote_P_Custom3_Label" value="Next Steps">
+
+<p><button type="button" onclick="alert('Update would save here — the extension must never click this.')">Update</button></p>
+</body>
+</html>

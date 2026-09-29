@@ -43,17 +43,17 @@ DIST = ROOT / "dist"
 
 #: Everything the running app needs, and nothing else. An allowlist rather than a denylist: a
 #: denylist that misses one entry ships a patient database, and no test would catch it.
-INCLUDE = ("app", "templates", "docs", "scripts", "launcher.py", "setup.ps1",
+INCLUDE = ("app", "templates", "docs", "scripts", "extension", "launcher.py", "setup.ps1",
            "requirements.txt", "README.md", "CLAUDE.md")
 
 #: Never packaged, whatever a glob might sweep up. Belt and braces over `.gitignore`.
 EXCLUDE_PARTS = frozenset({
     ".venv", "__pycache__", ".git", ".claude", "dist", "node_modules",
-    "evals", "tests", "saas", "extension",
+    "evals", "tests", "saas",
 })
 EXCLUDE_NAMES = frozenset({
     ".keyfile", ".dblock", "cadence.db.enc", ".sheets_credentials.json",
-    "sheets_config.yaml", "hf_config.yaml", "launcher.log",
+    "sheets_config.yaml", "hf_config.yaml", "launcher.log", "office_ally.json",
 })
 EXCLUDE_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".db.enc", ".pyc", ".pem", ".key", ".local.json")
 

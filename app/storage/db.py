@@ -193,6 +193,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # column existed genuinely has an unknown version, and recording a guess would be worse
         # than recording nothing.
         ("app_version", "TEXT"),
+        # The visit day the note documents (YYYY-MM-DD). NULL on older notes, which fall back to
+        # the local date of created_at.
+        ("visit_date", "TEXT"),
         ("synthetic", "INTEGER NOT NULL DEFAULT 0"),
     ):
         if column not in note_cols:
