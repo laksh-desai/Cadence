@@ -1,7 +1,0 @@
-# Netlify rules. One site serves both addresses:
-#   sdmobilept.com / www.sdmobilept.com  -> the patient site (this folder)
-#   cadence.sdmobilept.com               -> the Cadence page (cadence/), with the shared styles
-https://cadence.sdmobilept.com/assets/*  /assets/:splat   200!
-https://cadence.sdmobilept.com/*         /cadence/:splat  200!
-# Always use www for the patient site (one address, one set of search results).
-https://sdmobilept.com/*                 https://www.sdmobilept.com/:splat  301!
