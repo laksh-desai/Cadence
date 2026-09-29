@@ -86,6 +86,7 @@ Key behaviour:
 | Task | Command / action |
 |---|---|
 | Start Cadence server | `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/Scripts/python.exe -m uvicorn app.ui.server:app --host 127.0.0.1 --port 8420` (offline flags: MedASR otherwise fails on this network's SSL) |
+| Required models (Ollama) | `williamljx/medgemma-4b-it-Q4_K_M-GGUF` (notes) and `gemma2:2b` (fast draft) — both installed 2026-09-29; `setup.ps1` pulls both. Don't update them casually: a new model changes what notes say |
 | Website preview | in `website/`: `..\.venv\Scripts\python.exe -m http.server 8430 --bind 127.0.0.1` → http://127.0.0.1:8430/ |
 | Reload the extension after a change | `chrome://extensions` → ↻ on "Cadence → Office Ally"; Ctrl+F5 the Cadence tab |
 | Install extension fresh | `chrome://extensions` → Developer mode → Load unpacked → `C:\Users\localuser\Cadence\extension` |

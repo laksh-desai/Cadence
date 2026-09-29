@@ -36,7 +36,7 @@ if ($installed) {
 }
 $py  = Join-Path $base '.venv\Scripts\python.exe'
 $MODEL      = 'williamljx/medgemma-4b-it-Q4_K_M-GGUF'   # quality tier (docs/shipping.md)
-$FAST_MODEL = 'gemma2:2b'                                # optional Fast-draft tier
+$FAST_MODEL = 'gemma2:2b'                                # Fast-draft tier (required)
 
 function Section($t){ Write-Host "`n=== $t ===" -ForegroundColor Cyan }
 function Ok($t){   Write-Host "  [ok] $t"  -ForegroundColor Green }
@@ -77,8 +77,9 @@ if("$have" -match 'medgemma'){ Ok 'MedGemma (quality) already pulled' }
 else { Write-Host "  pulling $MODEL (several GB) ..."; & ollama pull $MODEL }
 if("$have" -match 'gemma2:2b'){ Ok 'gemma2:2b (fast draft) already pulled' }
 else {
-  Write-Host "  pulling $FAST_MODEL (~1.6 GB, optional Fast-draft tier) ..."
-  try { & ollama pull $FAST_MODEL } catch { Warn "fast-draft model pull failed (optional) - Quality tier still works." }
+  Write-Host "  pulling $FAST_MODEL (~1.6 GB, Fast-draft tier) ..."
+  & ollama pull $FAST_MODEL
+  if($LASTEXITCODE -ne 0){ Fail "could not pull $FAST_MODEL - check the internet connection and re-run."; exit 1 }
 }
 
 # --- 4. Transcription token (MedASR / Hugging Face) ---------------------------

@@ -112,7 +112,9 @@ architecture. See `CLAUDE.md` → Conventions.
 
 ## Running the app
 
-Prerequisite: [Ollama](https://ollama.com) installed with the MedGemma 4B model pulled,
+Prerequisite: [Ollama](https://ollama.com) installed with both models pulled —
+MedGemma 4B (`ollama pull williamljx/medgemma-4b-it-Q4_K_M-GGUF`, quality tier) and
+Gemma 2 2B (`ollama pull gemma2:2b`, fast-draft tier) —
 and the one-time MedASR token set up (`docs/medasr-setup.md`).
 
 ```
