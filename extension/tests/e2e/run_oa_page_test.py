@@ -37,22 +37,33 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 EXT = ROOT / "extension"
-INGEST = ROOT / "evals" / "Ingestion"
-# Real Office Ally note forms saved by the practice (git-ignored). Newest save wins.
+INGEST = ROOT / "evals" / "Ingestion"          # private, git-ignored pages saved from Office Ally
+FIXTURES = EXT / "tests" / "fixtures"          # clean templates made by scripts/make_oa_template.py
+# Real Office Ally note forms. The private saved pages are used when present (full fidelity); the
+# committed templates otherwise, or always with E2E_FIXTURES=1.
 PAGES = {
-    "progress": [INGEST / "OfficeAlly_ProgressNotes.html", INGEST / "Patient Edit Progress Note_Kushang.html"],
-    "init_eval": [INGEST / "OfficeAlly_Initial_Eval.html"],
+    "progress": [INGEST / "OfficeAlly_ProgressNotes.html", FIXTURES / "oa_progress_notes.html"],
+    "init_eval": [INGEST / "OfficeAlly_Initial_Eval.html", FIXTURES / "oa_cadence_init_eval.html"],
 }
 
 
 def page_file(kind):
-    return next((p for p in PAGES[kind] if p.exists()), None)
+    paths = PAGES[kind][1:] if os.environ.get("E2E_FIXTURES") else PAGES[kind]
+    return next((p for p in paths if p.exists()), None)
+
+
 CHROME_CANDIDATES = [
     Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
 ]
 PREFIX = "ctl00_phFolderContent_ucSOAPNote_"
-PAGE_PID = "155793457"   # the Patient ID on the saved page's header
+def _page_pid() -> str:
+    f = page_file("progress")
+    m = f and re.search(r'lblPatientID"[^>]*>(\d+)', f.read_text(encoding="utf-8", errors="replace"))
+    return m.group(1) if m else "100000001"
+
+
+PAGE_PID = _page_pid()   # the Patient ID on the page under test
 
 
 # ---- Notes the fake Cadence hands to the extension (made-up clinical content, not a real visit) --
@@ -119,14 +130,14 @@ SCENARIOS = [
          expect=dict(filled=True, saved=True, date="9/29/2026", boxes={"P_Plans": "Continue 2x/week"})),
     dict(name="3. Another day into an EXISTING encounter → blocked, date not changed",
          note=note("followup", FOLLOWUP_SECTIONS, "2026-09-29"), mrn=PAGE_PID,
-         query="PageAction=EditNote&EID=353868524&PID=" + PAGE_PID, title="Edit Note / Encounter [Encounter ID 353868524]",
+         query="PageAction=EditNote&EID=900000002&PID=" + PAGE_PID, title="Edit Note / Encounter [Encounter ID 900000002]",
          expect=dict(filled=False, saved=False, date="9/28/2026", status="Date mismatch")),
     dict(name="4. Initial Evaluation into the Progress Notes layout → blocked (template mismatch)",
          note=note("initial", INITIAL_SECTIONS, "2026-09-28"), mrn=PAGE_PID,
          query="PageAction=AddNote&SoapLayoutID=361919&PID=" + PAGE_PID,
          expect=dict(filled=False, saved=False, status="Template mismatch")),
     dict(name="5. Wrong patient (Cadence MRN differs from the chart) → blocked",
-         note=note("followup", FOLLOWUP_SECTIONS, "2026-09-28"), mrn="155798537",
+         note=note("followup", FOLLOWUP_SECTIONS, "2026-09-28"), mrn="999999999",
          query="PageAction=AddNote&SoapLayoutID=361919&PID=" + PAGE_PID,
          expect=dict(filled=False, saved=False, status="Wrong chart")),
     dict(name="6. A long assessment is split across boxes at sentence ends, never truncated",
@@ -163,7 +174,7 @@ SCENARIOS = [
          expect=dict(filled=True, saved=True, after_reload="check FAILED")),
     dict(name="13. This note already went to another encounter → no extra warning (relaxed 2026-09-28), fills in one click",
          note=note("followup", FOLLOWUP_SECTIONS, "2026-09-28"), mrn=PAGE_PID,
-         noteEncounter={"eid": "353800000", "pid": PAGE_PID, "filled": False, "at": 0},
+         noteEncounter={"eid": "900000003", "pid": PAGE_PID, "filled": False, "at": 0},
          query="PageAction=AddNote&SoapLayoutID=361919&PID=" + PAGE_PID,
          expect=dict(filled=True, saved=True)),
     dict(name="7. Unrecognised layout (no known boxes) → nothing filled, nothing changed",
