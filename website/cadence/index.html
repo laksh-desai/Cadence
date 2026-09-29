@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cadence — Clinical Notes for SD Mobile PT</title>
+  <meta name="description" content="Cadence turns a therapist's spoken summary into a finished PT note, on the clinician's own laptop, and sends it to Office Ally.">
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,600;0,9..144,700;1,9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/site.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230a3f3d'/%3E%3Cpath d='M18 40c6-14 10-14 14 0s8 14 14 0' fill='none' stroke='%23f4c26b' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <style>
+    .hero.cad { background: linear-gradient(160deg, #0a3f3d, #0e5a57 60%, #13706b); color: #eef6f5; padding: 72px 0 110px; }
+    .hero.cad h1 { color: #fff; } .hero.cad h1 em { color: #f4c26b; }
+    .hero.cad .lede { color: #cfe3e0; }
+    .hero.cad .eyebrow { color: #f4c26b; }
+    .dl { background: #fff; color: var(--ink); border-radius: 26px; padding: 30px; box-shadow: var(--shadow); }
+    .dl h3 { margin-bottom: 6px; }
+    .dl .ver { color: var(--muted); font-size: .95rem; margin-bottom: 20px; }
+    .dl .btn { width: 100%; }
+    .dl ul { list-style: none; padding: 0; margin: 20px 0 0; display: grid; gap: 10px; font-size: .95rem; color: var(--ink-soft); }
+    .dl li { display: flex; gap: 10px; align-items: flex-start; }
+    .dl li svg { width: 18px; height: 18px; color: var(--teal); flex: none; margin-top: 4px; }
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .flow .card h3 { font-size: 1.12rem; }
+    .num { font: 700 .82rem/1 "Inter", sans-serif; letter-spacing: .1em; color: var(--coral-deep); margin-bottom: 12px; }
+    ol.install { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+    ol.install > li { counter-increment: s; background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 22px 24px 22px 76px; position: relative; }
+    ol.install > li::before { content: counter(s); position: absolute; left: 22px; top: 20px; width: 38px; height: 38px; border-radius: 50%; background: var(--teal); color: #fff; font: 700 1rem/38px "Inter", sans-serif; text-align: center; }
+    ol.install h3 { font-size: 1.1rem; margin-bottom: 6px; font-family: "Inter", sans-serif; font-weight: 700; }
+    ol.install p { margin: 0; color: var(--ink-soft); }
+    code, .code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: .9em; background: var(--teal-tint); color: var(--teal-deep); padding: 2px 7px; border-radius: 6px; word-break: break-all; }
+    .code { display: block; padding: 12px 14px; margin-top: 10px; }
+    .note { background: #fdf0d6; border-radius: 16px; padding: 18px 22px; color: #6b4a0c; font-size: .98rem; }
+    .privacy li { margin-bottom: 10px; color: #cfe3e0; }
+    .privacy strong { color: #fff; }
+    @media (max-width: 980px) { .flow { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 620px) { .flow { grid-template-columns: 1fr; } ol.install > li { padding-left: 22px; padding-top: 70px; } }
+  </style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12 20 4l-6 16-3-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="m4 20 4-1 11-11-3-3L5 16zM14 6l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 14c3-8 5-8 7 0s4 8 7 0 3-6 4-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<header class="site-header" id="top">
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <span class="brand-mark" style="background:linear-gradient(140deg,#0a3f3d,#13706b)"><svg style="color:#f4c26b"><use href="#i-wave"/></svg></span>
+      <span>Cadence<small>For SD Mobile PT clinicians</small></span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#office-ally">Office Ally</a></li>
+      <li><a href="#updates">Updates</a></li>
+      <li><a href="#help">Help</a></li>
+    </ul>
+    <div class="nav-cta">
+      <a class="btn btn-primary" href="#download">Download</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="hero cad">
+    <div class="wrap hero-grid">
+      <div class="reveal">
+        <span class="eyebrow">Clinician tools</span>
+        <h1>Say the visit. <em>Get the note.</em></h1>
+        <p class="lede">Cadence turns your spoken summary of a session into a finished, template-ready PT note — on your own laptop — and sends it into the patient's Office Ally chart for you to review and sign.</p>
+      </div>
+      <div class="dl reveal" id="download">
+        <h3>Cadence for Windows</h3>
+        <!-- RELEASE: update the version, date and link below for each release. The link points to the
+             zip in the practice's Google Drive folder "Cadence Releases" (shared with clinicians only). -->
+        <div class="ver">Version <strong id="ver">1.1.0</strong> · <span id="rel">coming soon</span></div>
+        <a class="btn btn-primary" id="dlBtn" href="#install"><svg><use href="#i-down"/></svg>Download Cadence</a>
+        <ul>
+          <li><svg><use href="#i-check"/></svg>Windows 10 or 11 Pro · 16 GB memory · 40 GB free disk</li>
+          <li><svg><use href="#i-check"/></svg>Runs on your laptop — no patient data goes to the cloud</li>
+          <li><svg><use href="#i-check"/></svg>Includes the Chrome add-on for Office Ally</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="how">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="eyebrow">How it works</span>
+        <h2>From your voice to the chart in four steps.</h2>
+      </div>
+      <div class="flow">
+        <article class="card reveal"><div class="icon"><svg><use href="#i-mic"/></svg></div><div class="num">STEP 1</div><h3>Dictate</h3><p>After the visit, talk through what you did — or type rough notes. Transcription happens on your laptop.</p></article>
+        <article class="card reveal"><div class="icon coral"><svg><use href="#i-doc"/></svg></div><div class="num">STEP 2</div><h3>Cadence drafts</h3><p>It fills your practice's template, carries forward what should carry, and flags anything you didn't say instead of guessing.</p></article>
+        <article class="card reveal"><div class="icon sun"><svg><use href="#i-pen"/></svg></div><div class="num">STEP 3</div><h3>You review</h3><p>Check every section, fix the amber flags, and save. Nothing is final until you say so.</p></article>
+        <article class="card reveal"><div class="icon"><svg><use href="#i-send"/></svg></div><div class="num">STEP 4</div><h3>Send to Office Ally</h3><p>One click opens the patient's note in Office Ally; the Chrome add-on fills each box and saves a draft for you to sign.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section dark">
+    <div class="wrap split">
+      <div class="reveal">
+        <span class="eyebrow" style="color:#f4c26b">Privacy by design</span>
+        <h2 style="color:#fff">Patient information stays on your laptop.</h2>
+      </div>
+      <ul class="privacy reveal">
+        <li><strong>Local AI.</strong> Transcription and note writing run on the laptop itself — not a cloud service.</li>
+        <li><strong>Encrypted storage.</strong> Patients and notes are stored encrypted on the device.</li>
+        <li><strong>Office Ally only through your browser.</strong> The add-on fills the chart you have open in your own logged-in session. Cadence never stores your Office Ally password.</li>
+        <li><strong>You sign.</strong> Cadence saves drafts; it never signs or submits a note.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section" id="install">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="eyebrow">Install</span>
+        <h2>One-time setup, about 45 minutes.</h2>
+        <p class="lede">Most of that is downloading. You only do this once per laptop.</p>
+      </div>
+      <ol class="install reveal">
+        <li><h3>Check the laptop</h3><p>Windows 10 or 11 <strong>Pro</strong>, 16 GB memory, about 40 GB free disk. Turn on <strong>BitLocker</strong> (Settings → Privacy &amp; security → Device encryption) before any patient data goes on it.</p></li>
+        <li><h3>Install Python 3.12</h3><p>From <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">python.org</a>. On the first installer screen, tick <strong>“Add python.exe to PATH.”</strong></p></li>
+        <li><h3>Install Ollama</h3><p>From <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com</a>. It runs Cadence's note-writing model on your laptop.</p></li>
+        <li><h3>Download and unzip Cadence</h3><p>Download above, then unzip into this exact folder (use the version number you downloaded):<span class="code">C:\Cadence\versions\1.1.0\</span></p></li>
+        <li><h3>Run the installer</h3><p>Open that folder, click the address bar, type <code>powershell</code> and press Enter. Then paste:<span class="code">powershell -ExecutionPolicy Bypass -File .\setup.ps1</span>It installs everything, downloads the models, and puts a <strong>Cadence</strong> shortcut on your desktop.</p></li>
+        <li><h3>Voice-to-text (one time)</h3><p>The installer asks for a free <strong>Hugging Face</strong> access token. Create an account at huggingface.co, accept the terms on the <em>google/medasr</em> page, then create a “Read” token and paste it in.</p></li>
+        <li><h3>Open Cadence</h3><p>Double-click the desktop shortcut. In <strong>Manage Office</strong>, enter your Office Ally layout numbers (SoapLayoutIDs). Add your patients with their Office Ally Patient ID.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section tint" id="office-ally">
+    <div class="wrap split">
+      <div class="reveal">
+        <span class="eyebrow">Office Ally</span>
+        <h2>Add the Chrome add-on.</h2>
+        <p class="lede">The first time you click <strong>Send to Office Ally</strong>, Cadence shows these steps with copy buttons.</p>
+      </div>
+      <ol class="install reveal">
+        <li><h3>Open the extensions page</h3><p>Paste <code>chrome://extensions</code> into Chrome's address bar and turn on <strong>Developer mode</strong> (top right).</p></li>
+        <li><h3>Load Cadence</h3><p>Click <strong>Load unpacked</strong> and choose <span class="code">C:\Cadence\current\extension</span></p></li>
+        <li><h3>Pin it</h3><p>Click the puzzle-piece icon and pin <strong>Cadence → Office Ally</strong>.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section" id="updates">
+    <div class="wrap split">
+      <div class="reveal">
+        <span class="eyebrow">Updates</span>
+        <h2>You decide when to update.</h2>
+        <p class="lede">An update can change how notes are written, so Cadence never updates by itself. Read what changed, then update when it suits you — your patients and notes are backed up first and never touched.</p>
+      </div>
+      <div class="reveal">
+        <div class="note"><strong>To update:</strong> close Cadence, download the new version above, and follow the release notes that come with it. Rolling back to the previous version is always possible.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="help" style="padding-top:0">
+    <div class="wrap">
+      <div class="cta reveal">
+        <div>
+          <h2>Need a hand?</h2>
+          <p class="lede" style="color:#cfe3e0">Setup questions, something not filling in Office Ally, or an idea to make notes better — get in touch.</p>
+        </div>
+        <ul class="contact-list">
+          <li><a href="mailto:info@sdmobilept.com?subject=Cadence%20help"><svg><use href="#i-send"/></svg><span>info@sdmobilept.com<small>Email — please never include patient details</small></span></a></li>
+          <li><a href="../"><svg><use href="#i-lock"/></svg><span>SD Mobile PT<small>Back to the main site</small></span></a></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <span>Cadence · for SD Mobile PT clinicians · Every note is reviewed and signed by the treating clinician.</span>
+    <span><a href="#install">Install</a><a href="#help">Help</a></span>
+  </div>
+</footer>
+
+<script>
+  const header = document.querySelector(".site-header");
+  addEventListener("scroll", () => header.classList.toggle("scrolled", scrollY > 8), { passive: true });
+  const io = "IntersectionObserver" in window ? new IntersectionObserver((entries) => entries.forEach((e) => {
+    if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }), { threshold: 0.12 }) : null;
+  document.querySelectorAll(".reveal").forEach((el) => io ? io.observe(el) : el.classList.add("in"));
+</script>
+</body>
+</html>
