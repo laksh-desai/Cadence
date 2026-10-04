@@ -736,6 +736,15 @@ When a generated note is wrong, **fix the underlying prompt/logic so that entire
 of mistake is prevented going forward** — do not just patch the single note. Add the new
 correction to the rules above so it persists.
 
+**Change log guard rail (practice rule, 2026-10-03).** Every change to this project — code,
+templates, extension, website, scripts, docs — must append an entry to the **Change log** at the
+bottom of `Summary_of_Implementation.md`: a `### YYYY-MM-DD` heading (reuse today's if it exists)
+and plain-language bullets of what changed and why. Append only; never rewrite past entries. If the
+change alters what is built, also update the matching bullet in that file's summary sections, and
+add a dated line to `Cadence_Claude_Context.md` §9. Enforced by `.githooks/pre-commit` (enable per
+clone: `git config core.hooksPath .githooks`), which blocks a commit that changes project files
+without a dated Change-log entry. Never bypass it with `--no-verify`.
+
 ## Conventions
 
 - The prototype is the behavioral reference for UX and note quality; preserve its

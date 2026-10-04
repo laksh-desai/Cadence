@@ -125,3 +125,5 @@ No Python package upgrades either (versions are pinned). Do keep Windows updates
 - **2026-10-02** — Website published: Pages project `sdmobilept` created (after a Worker mix-up),
   www and cadence CNAMEs added at Squarespace (via Google Workspace admin login); www live.
 - **2026-10-03** — All three addresses confirmed live over https. This context file created.
+  `Summary_of_Implementation.md` created (5-min overview + Change log); guard rail added
+  (`.githooks/pre-commit` + CLAUDE.md rule) so every change appends a dated Change-log entry.

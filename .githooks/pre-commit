@@ -1,0 +1,32 @@
+#!/bin/sh
+# Guard rail: every commit that changes the project must also append a dated entry to the
+# "Change log" at the bottom of Summary_of_Implementation.md (practice rule, 2026-10-03).
+# Enable once per clone:  git config core.hooksPath .githooks
+
+SUMMARY="Summary_of_Implementation.md"
+staged=$(git diff --cached --name-only --diff-filter=ACMRD)
+[ -z "$staged" ] && exit 0
+
+# Commits touching only these files don't need a summary entry.
+other=$(printf '%s\n' "$staged" | grep -v -x -e "$SUMMARY" -e "Cadence_Claude_Context.md" -e "launcher.log")
+[ -z "$other" ] && exit 0
+
+if ! printf '%s\n' "$staged" | grep -q -x "$SUMMARY"; then
+  echo ""
+  echo "BLOCKED: this commit changes the project but $SUMMARY was not updated."
+  echo "Append to its 'Change log' section:"
+  echo "  ### YYYY-MM-DD"
+  echo "  - what changed, in plain words"
+  echo "then: git add $SUMMARY  and commit again."
+  echo ""
+  exit 1
+fi
+
+today=$(date +%Y-%m-%d)
+if ! git show ":$SUMMARY" | grep -q "^### $today" || ! git diff --cached -U0 -- "$SUMMARY" | grep -q "^+[^+]"; then
+  echo ""
+  echo "BLOCKED: $SUMMARY needs a '### $today' entry in its Change log with what this commit changes."
+  echo ""
+  exit 1
+fi
+exit 0
