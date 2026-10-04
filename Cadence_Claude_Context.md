@@ -129,3 +129,5 @@ No Python package upgrades either (versions are pinned). Do keep Windows updates
   (`.githooks/pre-commit` + CLAUDE.md rule) so every change appends a dated Change-log entry.
   Website: added `pt-booking/` ("Appointment booked by PT", staff books for a patient via the same
   Google Calendar embed) + footer link on the home page. Re-deployed 5:32 PM; confirmed live.
+  `to_do_list.md` created (repo root) — Kushang's own to-do list: flexible staff booking, calendar
+  sharing, website follow-ups. Keep it; add items there when he says "add to my to-do".

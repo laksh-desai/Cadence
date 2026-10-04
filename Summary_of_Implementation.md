@@ -214,3 +214,5 @@ changes, update Parts A/B too. Enforced by `.githooks/pre-commit` and by the rul
   Cloudflare Pages.
 - Website re-deployed to Cloudflare Pages (5:32 PM); www.sdmobilept.com/pt-booking/ and the new
   footer link confirmed live.
+- Added `to_do_list.md` (repo root): flexible PT/admin booking options, work ↔ family calendar
+  sharing steps (free/busy only, no patient details in personal Gmail), website follow-ups.
