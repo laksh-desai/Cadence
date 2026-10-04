@@ -166,6 +166,12 @@ change from now on.
   - cadence.sdmobilept.com lands here.
   - The **Download button isn't linked yet**; it waits for the 1.1.0 release.
 
+- **Appointment booked by PT (`pt-booking/`)** — for therapists/staff booking on a patient's
+  behalf: same Google Calendar booking embed, steps (enter the PATIENT's contact so reminders reach
+  them), "no diagnoses in bookings" note, link to Google Calendar for off-schedule times. Hidden from
+  search engines (noindex) but publicly reachable. Linked from the home page footer, above
+  Patient forms · Contact · For clinicians.
+
 ## B3. Domain and DNS
 - The domain is at **Squarespace Domains**. Reach it by signing in with the **Google Workspace
   admin** account; a plain Squarespace login shows no domains.
@@ -202,3 +208,9 @@ changes, update Parts A/B too. Enforced by `.githooks/pre-commit` and by the rul
 - Hooks enabled on this machine with `git config core.hooksPath .githooks` (needed once per new
   copy of the repo).
 - `.gitattributes`: the hook keeps Unix line endings so it runs on Windows.
+- Website: new page **Appointment booked by PT** (`website/pt-booking/`) for staff booking on a
+  patient's behalf; home-page footer gets an "Appointment booked by PT" link above Patient forms ·
+  Contact · For clinicians (`index.html`, `assets/site.css`). Not live until re-uploaded to
+  Cloudflare Pages.
+- Website re-deployed to Cloudflare Pages (5:32 PM); www.sdmobilept.com/pt-booking/ and the new
+  footer link confirmed live.

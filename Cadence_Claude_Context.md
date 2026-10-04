@@ -127,3 +127,5 @@ No Python package upgrades either (versions are pinned). Do keep Windows updates
 - **2026-10-03** — All three addresses confirmed live over https. This context file created.
   `Summary_of_Implementation.md` created (5-min overview + Change log); guard rail added
   (`.githooks/pre-commit` + CLAUDE.md rule) so every change appends a dated Change-log entry.
+  Website: added `pt-booking/` ("Appointment booked by PT", staff books for a patient via the same
+  Google Calendar embed) + footer link on the home page. Re-deployed 5:32 PM; confirmed live.
