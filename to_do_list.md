@@ -51,3 +51,59 @@ The fixed times only limit what **patients** see. Staff signed into the practice
 - [ ] Delete the unused Cloudflare Worker `blue-boat-487f`.
 - [ ] Squarespace billing: domain auto-renew ON (expires 2027-02-01); cancel any unused website plan.
 - [ ] Change the Office Ally password if not done yet.
+
+---
+
+## 4. Pending as of 2026-10-13 (consolidated)
+
+**Done already:** Workspace BAA accepted · laptop Device encryption / BitLocker ON · 2-Step
+Verification on info@ · info@ app password saved in Cadence, Test connection ✓ · automatic email
+checking ON (every 2 min).
+
+**A. This week (≈30 min)**
+- [ ] BitLocker recovery key saved (Microsoft account / USB / printed) — confirm you have a copy.
+- [ ] Review the test "Unknown patient — Daily Visit" note in Notes in progress; delete the test
+      patient in All Patients if it was only a test.
+- [ ] Send one more fake test email (subject `Cadence <date>`, from an @sdmobilept.com account) and
+      do NOT click Check now — confirm it appears by itself within ~2 min.
+- [ ] admin.google.com → Security → Authentication → 2-step verification → **Enforcement: On**
+      (all users, not just info@).
+- [ ] admin.google.com → Devices → Mobile & endpoints → Universal settings → Mobile management:
+      **Basic**; sign in on the iPhone and the Android tablet and accept the screen-lock prompt.
+- [ ] Laptop: Windows Hello sign-in + screen lock after 5 minutes.
+- [ ] Reload the Chrome extension (chrome://extensions → ↻) to get the billing audit + new mapping.
+
+**B. Office Ally**
+- [ ] Email the 4 layout specs to Office Ally: `templates/OfficeAlly_Initial_Eval_Template.md`,
+      `OfficeAlly_Daily_Visit_Template.md`, `OfficeAlly_Reevaluation_Template.md`,
+      `OfficeAlly_Discharge_Summary_Template.md`.
+- [ ] When they deliver the layouts: enter each SoapLayoutID + name in Manage Office (incl.
+      Re-evaluation and Discharge Summary).
+- [ ] Ask Office Ally whether the Billing box can feed their charge / superbill screen.
+
+**C. Billing / compliance**
+- [ ] Coder sign-off of the ICD-10 tables: run `scripts/coding_signoff.py --out signoff.md`, give
+      it to a certified coder; until then every ICD code says "confirm".
+- [ ] First REAL dictation end to end on the target 16 GB ThinkPad (not this X1 — it overheats on
+      long runs).
+
+**D. Optional — Google Form intake (voice recordings from the phone)**
+- [ ] Build the "Cadence dictation" form (visit date, note type, dictation, audio upload; Verified
+      email collection; restricted to SD Mobile PT; link to a Sheet).
+- [ ] Google Cloud service account (Sheets + Drive APIs, JSON key saved as
+      `app/integrations/.sheets_credentials.json`; share Sheet = Editor, upload folder = Viewer).
+- [ ] Manage Office → paste Sheet link → tick Check the form responses → Save → Test connection.
+- [ ] Add the form to the iPhone and tablet home screens.
+  (Steps: `docs/Intake_Setup_Guide.md`.)
+
+**E. Website** (sections 1–3 above still apply)
+- [ ] Test email to info@ from an outside account, both directions.
+- [ ] Booking calendar shows times on /book/ and /pt-booking/.
+- [ ] After a week: remove the custom domain from the old Google Site; delete the Cloudflare
+      Worker `blue-boat-487f`; cancel any unused Squarespace website plan (keep the domain).
+- [ ] Decide whether the exercise builder's login (SDMPT / Exercises, visible in the page source)
+      needs to be stronger.
+
+**F. Housekeeping**
+- [ ] Delete the leftover `start_cadence.bat.disabled` from the Cadence folder.
+- [ ] Back up Cadence data to a USB stick now and then (`scripts/backup.py`).

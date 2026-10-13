@@ -339,3 +339,5 @@ changes, update Parts A/B too. Enforced by `.githooks/pre-commit` and by the rul
 - `Start_Server.bat` now writes the server's output to `logs\server.log` (previous run kept as
   `server.prev.log`; `logs/` is git-ignored), so a server that stops on its own leaves its reason
   on disk. Only startup messages, request lines, timings and errors — never note text.
+- `to_do_list.md`: consolidated "Pending as of 2026-10-13" section (what is done, and the
+  remaining HIPAA, Office Ally, billing, Google Form, website and housekeeping steps).
