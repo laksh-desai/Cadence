@@ -486,3 +486,55 @@ test("a section that still cannot fit is reported with how much to cut, never tr
   assert.ok(plan.unplaced[0].over > 0);
   assert.ok(/shorten it in Cadence/.test(plan.unplaced[0].reason));
 });
+
+// ---- 2026-10: exact-label mapping for the Cadence-built Office Ally templates, and Billing ----
+
+// A layout built from templates/OfficeAlly_Daily_Visit_Template.md: every box named after a Cadence
+// section (Office Ally custom boxes, so keys are generic).
+const CADENCE_DAILY_LAYOUT = [
+  { key: "S_Custom1", label: "Subjective" },
+  { key: "S_Custom2", label: "Precautions" },
+  { key: "O_Custom1", label: "Vitals" },
+  { key: "O_Custom2", label: "Pain - At Rest" },
+  { key: "O_Custom3", label: "Pain - With Movement" },
+  { key: "O_Custom4", label: "Gait Training" },
+  { key: "O_Custom5", label: "Neuromuscular Re-education" },
+  { key: "O_Custom6", label: "Therapeutic Exercise" },
+  { key: "O_Custom7", label: "Objective Measures" },
+  { key: "O_FunctionalStatus", label: "Functional Status" },
+  { key: "A_Custom1", label: "Assessment" },
+  { key: "P_Custom1", label: "Short-Term Goals" },
+  { key: "P_Custom2", label: "Long-Term Goals" },
+  { key: "P_Plans", label: "Plan" },
+  { key: "P_Custom3", label: "Billing - CPT & Minutes" },
+];
+
+test("a box labelled with the section's exact heading always wins", () => {
+  const sections = [
+    ["Subjective", "Less pain today."], ["Pain - At Rest", "2/10."],
+    ["Gait Training", "Minutes: 15. 150 ft with walker."],
+    ["Neuromuscular Re-education", "Minutes: 12. Tandem stance."],
+    ["Therapeutic Exercise", "Minutes: 10. Sit to stand."],
+    ["Objective Measures", "TUG 16 s."], ["Assessment", "Improving."],
+    ["Short-Term Goals", "MET."], ["Plan", "Continue 2x/week."],
+    ["Billing — CPT & Minutes", "CPT 97116 Gait Training 15 min\nTotal treatment time: 40 min"],
+  ].map(([heading, text]) => ({ heading, text }));
+  const plan = R.planRouting(sections, CADENCE_DAILY_LAYOUT);
+  assert.deepStrictEqual(plan.unplaced, []);
+  const where = (h) => boxOf(plan, h).key;
+  assert.strictEqual(where("Pain - At Rest"), "O_Custom2");
+  assert.strictEqual(where("Gait Training"), "O_Custom4");
+  assert.strictEqual(where("Neuromuscular Re-education"), "O_Custom5");
+  assert.strictEqual(where("Therapeutic Exercise"), "O_Custom6");
+  assert.strictEqual(where("Objective Measures"), "O_Custom7");
+  assert.strictEqual(where("Short-Term Goals"), "P_Custom1");
+  assert.strictEqual(where("Billing — CPT & Minutes"), "P_Custom3"); // em dash vs hyphen
+  // One section per box: nothing else was packed in beside an exact match.
+  plan.boxes.forEach((b) => assert.strictEqual(b.sections.length, 1, b.label));
+});
+
+test("the Billing section goes to Procedure Notes on a layout without a Billing box", () => {
+  const plan = R.planRouting([{ heading: "Billing — CPT & Minutes", text: "CPT 97110 Therapeutic Exercise 15 min" }],
+    PROGRESS_LAYOUT);
+  assert.strictEqual(boxOf(plan, "Billing — CPT & Minutes").key, "P_Procedures");
+});

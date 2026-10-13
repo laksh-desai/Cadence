@@ -8,7 +8,8 @@ uniquely. It is a self-hosted replacement for ScopeHealth.
 
 **Status:** The local app (`app/`) is built and feature-complete — local transcription,
 local note generation, encrypted storage, and the full browser UI all work end-to-end on
-one machine. What remains before real day-to-day use is **not** more features: it's
+one machine. What remains before real day-to-day 
+use is **not** more features: it's
 clinical validation of note quality, provisioning the target laptop (disk + models), and
 device-level HIPAA hardening. See [Remaining work](#remaining-work-to-real-use) below.
 

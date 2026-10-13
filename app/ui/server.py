@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import version as app_version
+from app.generate import billing_section, compliance, note_audit
 from app.generate import (
     billing, chunked, cpt, forms as forms_store, jobs, ollama_client, postprocess, traceability,
 )
@@ -17,7 +19,7 @@ from app.generate.forms import FORMS, VALID_MODES
 from app.generate.ollama_client import OllamaUnavailableError, generate_note
 from app.generate.parser import parse_plain
 from app.generate.prompt import (
-    PatientContext, build_prompt, build_revise_prompt, build_scoped_revise_prompt,
+    PatientContext, build_prompt, build_revise_prompt, build_scoped_revise_prompt, static_prefix,
     is_structural_instruction, render_prior_block, select_revise_sections,
 )
 from app.integrations import sheets_sync
@@ -54,7 +56,19 @@ from app.ui.schemas import (
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+# The form whose prompt prefix is pre-read at startup: the Daily Visit is by far the most frequent.
+WARM_FORM_ID = "followup"
 logger = logging.getLogger(__name__)
+
+# Generation timing lines ("ollama: prompt N tok in Xs, output M tok in Ys") go to the server
+# console. Counts and seconds only — never note or dictation text.
+_gen_log = logging.getLogger("cadence.generate")
+if not _gen_log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+    _gen_log.addHandler(_h)
+    _gen_log.setLevel(logging.INFO)
+    _gen_log.propagate = False
 
 # Shared by the background poll loop and the manual POST /api/sync/now trigger so
 # they can never run a sync cycle concurrently and double-write.
@@ -93,6 +107,17 @@ async def lifespan(app: FastAPI):
         app.state.medasr_ready = False
         app.state.medasr_error = str(e)
 
+    # Load the note model and pre-read the Daily Visit prompt prefix (template + rules) in the
+    # background, so the first note of the day neither waits for the model to load nor re-reads
+    # ~3k tokens of fixed instructions. Never blocks startup; a missing Ollama is simply skipped.
+    warm_form = FORMS.get(WARM_FORM_ID)
+    warm_task = (asyncio.create_task(ollama_client.warm_prefix(static_prefix(warm_form)))
+                 if warm_form else None)
+
+    # Intake (email / Google Form): checks the subscribed sources while the server runs. Always
+    # started; it does nothing until switched on in Manage Office, so turning it on needs no restart.
+    intake_task = asyncio.create_task(_intake_loop())
+
     sync_task = None
     config = load_sheets_config()
     if config is not None:
@@ -109,6 +134,9 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await _job_queue.stop()
+        if warm_task is not None and not warm_task.done():
+            warm_task.cancel()
+        intake_task.cancel()
         if sync_task is not None:
             sync_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -181,6 +209,16 @@ async def extension_info():
     return {"path": str(folder), "version": version, "exists": folder.exists()}
 
 
+@app.get("/api/patients/{patient_id}/notes/{note_id}/audit")
+async def audit_note(patient_id: str, note_id: str):
+    """Pre-send billing audit for a saved note (codes, minutes, total treatment time). Read by the
+    Send to Office Ally button and the Chrome extension — one implementation for both."""
+    note = repository.get_note(patient_id, note_id)
+    if note is None:
+        raise HTTPException(404, "note not found")
+    return note_audit.audit(note["form_id"], note["sections"])
+
+
 @app.get("/api/office-ally/settings")
 async def get_office_ally_settings():
     """Manage Office: which Office Ally SOAP layout each Cadence note type goes into. Read by the
@@ -188,7 +226,7 @@ async def get_office_ally_settings():
     from app.integrations import office_ally
     forms = [{"id": fid, "name": FORMS[fid].name} for fid in forms_store.ordered_form_ids()]
     return {"layouts": office_ally.load_layouts(), "forms": forms,
-            "defaults": office_ally.DEFAULT_LAYOUTS}
+            "defaults": office_ally.DEFAULT_LAYOUTS, "billing": office_ally.load_billing_choice()}
 
 
 @app.put("/api/office-ally/settings")
@@ -199,7 +237,41 @@ async def put_office_ally_settings(body: dict):
     except office_ally.SettingsError as e:
         raise HTTPException(400, str(e))
     office_ally.save_layouts(layouts)
-    return {"layouts": office_ally.load_layouts()}
+    if "billing" in body:
+        try:
+            office_ally.save_billing_choice(body["billing"])
+        except office_ally.SettingsError as e:
+            raise HTTPException(400, str(e))
+    return {"layouts": office_ally.load_layouts(), "billing": office_ally.load_billing_choice()}
+
+
+def _protection_status() -> IntegrationStatus:
+    """What protects patient data on this computer, layer by layer (HIPAA safeguards)."""
+    from app import secure_store
+    parts = ["database encrypted at rest (Fernet)",
+             "working copy EFS-encrypted" if db.working_copy_efs else
+             "working copy NOT EFS-encrypted (rely on disk encryption)",
+             "intake secrets DPAPI-locked to this Windows user" if secure_store.available() else
+             "intake secrets not DPAPI-protected",
+             "server reachable from this computer only (127.0.0.1)",
+             "mail/Google over TLS",
+             "confirm BitLocker/Device encryption is ON in Windows Settings"]
+    return IntegrationStatus(name="Data protection", ready=bool(db.working_copy_efs),
+                             detail="; ".join(parts) + ".")
+
+
+def _intake_status() -> IntegrationStatus:
+    from app.integrations import email_intake as ei
+    from app.integrations import form_intake as fi
+    es, fs = ei.load_settings(), fi.load_settings()
+    on = [n for n, ok in (("email", es["enabled"] and ei.mailboxes()),
+                          ("Google Form", fs["enabled"] and fs["spreadsheet_id"])) if ok]
+    if not on:
+        return IntegrationStatus(name="Dictation intake (email / Google Form)", ready=False,
+                                 detail="Off (optional) — set up in Manage Office; see docs/Intake_Setup_Guide.md")
+    last = [x for x in (ei.load_state().get("last_result"), fi.load_state().get("last_result")) if x]
+    return IntegrationStatus(name="Dictation intake (email / Google Form)", ready=True,
+                             detail="Checking " + " and ".join(on) + (". Last: " + " | ".join(last) if last else ""))
 
 
 @app.get("/api/status", response_model=StatusResponse)
@@ -212,6 +284,8 @@ async def get_status():
             ready=ollama_ok,
             detail="Reachable" if ollama_ok else "Could not reach Ollama on localhost:11434 — is it running?",
         ),
+        _intake_status(),
+        _protection_status(),
         IntegrationStatus(
             name="Local transcription (MedASR)",
             ready=app.state.medasr_ready,
@@ -535,11 +609,37 @@ def _finalize_note(form, text, was_condensed, still_over, transcript, used_prior
             "seen — check every section against what you said, especially the beginning and end, "
             "or split the visit into two shorter dictations."
         )
+    # A note the model abandoned — headings with nothing under them, or a stop after the treatment
+    # sections — must say so at the top instead of looking finished (measured 2026-10: a 445-char
+    # "note" that was only the outline's headings).
+    declared = forms_store.spec_section_labels(form.id)
+    if declared:
+        filled = {(s.get("heading") or "").strip().lower() for s in sections
+                  if (s.get("body") or "").replace("[[", "").strip()
+                  and not (s.get("body") or "").strip().startswith("[[")}
+        missing_count = sum(1 for l in declared if l.lower() not in filled)
+        if missing_count * 2 > len(declared):
+            missing.insert(0, f"INCOMPLETE NOTE: the model left {missing_count} of {len(declared)} "
+                              "sections empty or missing. Click Regenerate (or Generate again) before "
+                              "reviewing — do not save this draft as it is.")
+    # Medicare documentation checklist: what a medical reviewer would deny or question as written,
+    # shown in the review list so it is fixed BEFORE saving rather than discovered at Send.
+    for f in compliance.check(form.id, sections):
+        if f["level"] == "fix":
+            missing.append(f"Medicare checklist — {f['element']}: {f['text']}")
+    billing_model = _billing_draft(form, bill_from, sections)
+    if billing_model is not None:
+        # Saved WITH the note (the draft above is response-only and vanished on Save), so the
+        # codes, minutes and total time reach Office Ally and the pre-send audit can check them.
+        raw_draft = billing.reconcile(
+            billing.extract(bill_from, eval_form=cpt.is_eval_form(form.id)), sections)
+        sections = billing_section.flag_undictated_treatments(sections, raw_draft)
+        sections = sections + [billing_section.build(raw_draft, bill_from, form.id)]
     return GenerateResponse(
         sections=[SectionModel(**s) for s in sections],
         missing_info=missing,
         form_id=form.id, form_name=form.name, used_prior=used_prior, raw_text=None,
-        billing=_billing_draft(form, bill_from, sections), **prov,
+        billing=billing_model, **prov,
     )
 
 
@@ -635,10 +735,220 @@ async def _run_generation_job(job: jobs.Job, emit) -> dict:
         emit(chunk)
     result = _finalize_note(form, "".join(parts), was_condensed, still_over, transcript,
                             used_prior, bill_from=transcript, model_id=model)
-    return result.model_dump()
+    out = result.model_dump()
+    out["visit_date"] = body.visit_date
+    return out
 
 
 _job_queue = jobs.JobQueue(_run_generation_job)
+
+
+# ---------------------------------------------------------------------------------
+# Intake: dictation that arrives from OUTSIDE the app — emailed to a subscribed practice mailbox
+# (app/integrations/email_intake.py) or submitted through the practice's Google Form
+# (app/integrations/form_intake.py). Both feed ONE path here: a new "Unknown patient" with the
+# visit date in the DOB column, and the note queued in "Notes in progress" for review. Nothing is
+# saved until the clinician saves it; an item whose draft was never saved (server restarted) is
+# picked up again on the next check.
+# ---------------------------------------------------------------------------------
+
+_intake_lock = asyncio.Lock()
+
+
+def _intake_job_alive(job_id: str | None) -> bool:
+    job = _job_queue.get(job_id) if job_id else None
+    return job is not None and job.status not in (jobs.CANCELLED, jobs.ERROR)
+
+
+def _intake_needs_resend(entry: dict) -> bool:
+    pid = entry.get("patient_id")
+    return bool(pid and repository.get_patient(pid) and not repository.list_notes(pid)
+                and not _intake_job_alive(entry.get("job_id")))
+
+
+async def _queue_intake_item(*, text: str, visit, form_id: str, existing_pid: str | None) -> tuple[str, str]:
+    """Create (or reuse) the Unknown patient and queue the note. Returns (patient_id, job_id)."""
+    from app.integrations import email_intake as ei
+    pid = existing_pid if existing_pid and repository.get_patient(existing_pid) else None
+    if pid is None:
+        pid = repository.create_patient(
+            name=ei.PATIENT_NAME, dob=ei.dob_display(visit), mrn=None,
+            condition="Dictation received" + (f" — visit {ei.dob_display(visit)}" if visit else ""),
+        )["id"]
+        await asyncio.to_thread(db.persist)
+    form = FORMS.get(form_id) or FORMS["followup"]
+    body = GenerateRequest(patient_id=pid, form_id=form.id, summary=text, use_prior=False,
+                           visit_date=visit.isoformat() if visit else None)
+    job = _job_queue.submit(patient_id=pid, patient_name=ei.PATIENT_NAME, form_id=form.id,
+                            form_name=form.name, fast=False, payload=body.model_dump())
+    return pid, job.id
+
+
+async def _email_check_once() -> dict:
+    from app.integrations import email_intake as ei
+    state = ei.load_state()
+    processed = state["processed"]
+    queued, skipped, errors = 0, [], []
+    for mb in ei.mailboxes():
+        known = {mid for mid, v in processed.items() if v.get("mailbox") == mb.address}
+        resend = {mid for mid in known if _intake_needs_resend(processed[mid])}
+        try:
+            emails, skip = await asyncio.to_thread(ei.fetch_new, mb, known_ids=known, resend_ids=resend)
+        except Exception as e:  # noqa: BLE001 - one bad mailbox must not stop the others
+            errors.append(f"{mb.address}: {await asyncio.to_thread(ei.test_login, mb) or e.__class__.__name__}")
+            continue
+        skipped += [f"{mb.address}: sender not allowed ({s})" for s in skip]
+        seen = []
+        for em in emails:
+            seen.append(em.uid)
+            if not em.body.strip():
+                skipped.append(f"{em.mailbox}: empty email")
+                continue
+            visit, _ = ei.parse_visit_date(em.subject, em.body, em.sent)
+            pid, job_id = await _queue_intake_item(
+                text=em.body, visit=visit, form_id=ei.form_for_subject(em.subject),
+                existing_pid=(processed.get(em.message_id) or {}).get("patient_id"))
+            processed[em.message_id] = {"mailbox": mb.address, "patient_id": pid, "job_id": job_id,
+                                        "at": time.time()}
+            queued += 1
+        try:
+            await asyncio.to_thread(ei.mark_seen, mb, seen)
+        except Exception:  # noqa: BLE001 - the Message-ID record already prevents a re-queue
+            pass
+    state["last_check"] = ei.now_iso()
+    state["last_result"] = _intake_summary(queued, skipped, errors)
+    ei.save_state(state)
+    return {"queued": queued, "skipped": skipped, "errors": errors, "result": state["last_result"]}
+
+
+async def _form_check_once() -> dict:
+    from app.integrations import email_intake as ei
+    from app.integrations import form_intake as fi
+    state = fi.load_state()
+    processed = state["processed"]
+    queued, skipped, errors = 0, [], []
+    try:
+        rows = await asyncio.to_thread(fi.fetch_rows)
+    except Exception as e:  # noqa: BLE001
+        errors.append(fi.explain_error(e))
+        rows = []
+    marks = {}
+    for row in rows:
+        entry = processed.get(row.item_id)
+        if entry and not _intake_needs_resend(entry):
+            continue
+        if not fi.sender_ok(row):
+            skipped.append(f"row {row.row_number}: submitted by a non-practice account")
+            marks[row.row_number] = "Skipped — not a practice account"
+            continue
+        if not row.dictation.strip():
+            marks[row.row_number] = "Skipped — empty dictation"
+            continue
+        visit, _ = ei.parse_visit_date(row.visit_date_text, row.dictation, row.submitted)
+        pid, job_id = await _queue_intake_item(
+            text=row.dictation, visit=visit, form_id=fi.form_for_choice(row.note_type),
+            existing_pid=(entry or {}).get("patient_id"))
+        processed[row.item_id] = {"patient_id": pid, "job_id": job_id, "at": time.time()}
+        marks[row.row_number] = f"Queued in Cadence {ei.now_iso()}"
+        queued += 1
+    if marks:
+        try:
+            await asyncio.to_thread(fi.write_status, marks)
+        except Exception as e:  # noqa: BLE001 - the local record already prevents a re-queue
+            errors.append("could not write the status column: " + fi.explain_error(e))
+    state["last_check"] = ei.now_iso()
+    state["last_result"] = _intake_summary(queued, skipped, errors)
+    fi.save_state(state)
+    return {"queued": queued, "skipped": skipped, "errors": errors, "result": state["last_result"]}
+
+
+def _intake_summary(queued, skipped, errors) -> str:
+    out = f"{queued} note(s) queued"
+    if skipped:
+        out += f"; {len(skipped)} skipped"
+    if errors:
+        out += "; " + "; ".join(errors)
+    return out
+
+
+async def _intake_loop():
+    from app.integrations import email_intake as ei
+    from app.integrations import form_intake as fi
+    while True:
+        interval = ei.DEFAULT_POLL_SECONDS
+        try:
+            es, fs = ei.load_settings(), fi.load_settings()
+            interval = min(es["poll_seconds"], fs["poll_seconds"])
+            async with _intake_lock:
+                if es["enabled"] and ei.mailboxes():
+                    await _email_check_once()
+                if fs["enabled"] and fs["spreadsheet_id"]:
+                    await _form_check_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - never let an intake problem take the server down
+            logger.exception("intake check failed")
+        await asyncio.sleep(interval)
+
+
+@app.get("/api/intake/settings")
+async def get_intake_settings():
+    from app.integrations import email_intake as ei
+    from app.integrations import form_intake as fi
+    es, fs = ei.load_state(), fi.load_state()
+    return {
+        "email": {**ei.public_settings(), "last_check": es.get("last_check"),
+                  "last_result": es.get("last_result")},
+        "form": {**fi.public_settings(), "last_check": fs.get("last_check"),
+                 "last_result": fs.get("last_result")},
+    }
+
+
+@app.put("/api/intake/settings")
+async def put_intake_settings(body: dict):
+    from app.integrations import email_intake as ei
+    from app.integrations import form_intake as fi
+    try:
+        if "email" in body:
+            ei.save_settings(body["email"])
+        if "form" in body:
+            fi.save_settings(body["form"])
+    except (ei.SettingsError, fi.SettingsError) as e:
+        raise HTTPException(400, str(e))
+    return await get_intake_settings()
+
+
+@app.post("/api/intake/test")
+async def test_intake(body: dict | None = None):
+    """Check each configured source can be reached — mailboxes sign in, the form Sheet opens."""
+    from app.integrations import email_intake as ei
+    from app.integrations import form_intake as fi
+    results = []
+    for mb in ei.mailboxes():
+        reason = await asyncio.to_thread(ei.test_login, mb)
+        results.append({"source": mb.address, "ok": not reason, "detail": reason or "Connected."})
+    if fi.load_settings()["spreadsheet_id"]:
+        reason = await asyncio.to_thread(fi.test_access)
+        results.append({"source": "Google Form responses Sheet", "ok": not reason,
+                        "detail": reason or "Connected."})
+    if not results:
+        raise HTTPException(400, "Set up a mailbox or the Google Form first.")
+    return {"results": results}
+
+
+@app.post("/api/intake/check")
+async def check_intake_now():
+    from app.integrations import email_intake as ei
+    from app.integrations import form_intake as fi
+    out = {}
+    async with _intake_lock:
+        if ei.mailboxes():
+            out["email"] = await _email_check_once()
+        if fi.load_settings()["spreadsheet_id"]:
+            out["form"] = await _form_check_once()
+    if not out:
+        raise HTTPException(400, "Set up a mailbox or the Google Form first.")
+    return out
 
 
 @app.post("/api/generate/jobs", response_model=JobSummary, status_code=202)

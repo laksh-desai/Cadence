@@ -54,3 +54,13 @@ evals/Ingestion/
 
 # Practice-specific Office Ally layout settings (Manage Office tab)
 app/integrations/office_ally.json
+
+# Intake (email / Google Form) settings, secrets and state — local only.
+app/integrations/email_intake.json
+app/integrations/.email_intake.key
+app/integrations/email_intake_state.json
+app/integrations/form_intake.json
+app/integrations/form_intake_state.json
+
+# Server runtime log (Start_Server.bat)
+logs/

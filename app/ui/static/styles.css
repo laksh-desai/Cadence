@@ -411,3 +411,15 @@ footer b{color:var(--ink)}
 .office-table input{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:7px}
 .visitdate{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-right:6px}
 .visitdate input{font:inherit;color:var(--ink);padding:5px 7px;border:1px solid var(--line);border-radius:7px}
+/* Pre-send billing audit */
+.audit-sum{font-size:13px;margin:0 0 10px;padding:8px 12px;border-radius:10px;background:#eef6f5;color:#0e5a57;font-weight:600}
+.audit-list{list-style:none;padding:0;margin:0 0 14px;display:grid;gap:8px}
+.audit-list li{font-size:14px;line-height:1.45;padding:9px 12px 9px 34px;border-radius:10px;position:relative}
+.audit-list li::before{position:absolute;left:12px;top:9px;font-weight:700}
+.audit-fix{background:#fdecea;color:#8a2416}.audit-fix::before{content:"!"}
+.audit-check{background:#fff6e0;color:#7a5200}.audit-check::before{content:"?"}
+.billing-choice{display:flex;gap:18px;flex-wrap:wrap;margin:4px 0 10px;font-size:14px}
+.billing-choice label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.in-h{font-size:15px;margin:18px 0 4px}
+.in-on{display:flex;align-items:center;gap:8px;font-size:14px;margin:6px 0 8px;cursor:pointer}
+.office-table input.in-addr,.office-table input.in-pw,.office-table input.in-allow{width:100%}

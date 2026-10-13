@@ -40,7 +40,7 @@ class SpecLabelTests(unittest.TestCase):
 
     def test_field_per_section_labels(self):
         labels = forms.spec_section_labels("followup")
-        for expected in ("Summary of Daily Skilled Services", "Precautions", "Short-Term Goals",
+        for expected in ("Subjective", "Precautions", "Assessment", "Short-Term Goals",
                          "Plan"):
             self.assertIn(expected, labels)
 
@@ -49,8 +49,8 @@ class SpecLabelTests(unittest.TestCase):
                          ["Subjective", "Objective", "Assessment", "Plan"])
 
     def test_the_title_is_not_mistaken_for_a_section(self):
-        self.assertEqual(forms.spec_title("followup"), "FOLLOW-UP VISIT")
-        self.assertNotIn("FOLLOW-UP VISIT", forms.spec_section_labels("followup"))
+        self.assertEqual(forms.spec_title("followup"), "DAILY VISIT")
+        self.assertNotIn("DAILY VISIT", forms.spec_section_labels("followup"))
 
     def test_instruction_prose_is_excluded(self):
         for label in forms.spec_section_labels("initial"):
@@ -60,7 +60,7 @@ class SpecLabelTests(unittest.TestCase):
 class TitleHeadingTests(unittest.TestCase):
     def test_a_title_heading_is_relabelled_from_its_body(self):
         out = postprocess.relabel_spec_title_heading("followup", [
-            _sec("Follow-Up Visit", "Precautions [carry forward] — weight-bearing as tolerated."),
+            _sec("Daily Visit", "Precautions [carry forward] — weight-bearing as tolerated."),
         ])
         self.assertEqual(out[0]["heading"], "Precautions")
         self.assertEqual(out[0]["body"], "weight-bearing as tolerated.")
@@ -69,7 +69,7 @@ class TitleHeadingTests(unittest.TestCase):
         """The reason this is not cosmetic. With the heading left as the title, the section is not
         a carry-forward label any more, and the next visit carries nothing."""
         sections = postprocess.apply("followup", [
-            _sec("Follow-Up Visit", "Precautions [carry forward] — no overhead lifting.", True),
+            _sec("Daily Visit", "Precautions [carry forward] — no overhead lifting.", True),
         ])
         self.assertEqual(sections[0]["heading"], "Precautions")
         self.assertIn("Precautions", forms.CARRY_SECTION_LABELS["followup"])
@@ -84,7 +84,7 @@ class TitleHeadingTests(unittest.TestCase):
         """
         from app.storage import carry_forward
         sections = postprocess.apply("followup", [
-            _sec("Follow-Up Visit",
+            _sec("Daily Visit",
                  "Precautions [carry forward] — weight-bearing status, no lifting over ten "
                  "pounds overhead.", True),
         ])
@@ -139,9 +139,9 @@ class DeclaredLabelHeadingTests(unittest.TestCase):
         """`split_folded_headings` cannot see this one — "Good" is a value to a reader and nothing
         to a regex. The template's own label is what makes it tractable."""
         out = postprocess.split_declared_label_headings("followup", [
-            _sec("Response to Treatment Good", ""),
+            _sec("Assessment Good", ""),
         ])
-        self.assertEqual(out[0]["heading"], "Response to Treatment")
+        self.assertEqual(out[0]["heading"], "Assessment")
         self.assertEqual(out[0]["body"], "Good")
 
     def test_a_label_continuation_is_not_treated_as_a_value(self):
@@ -151,7 +151,7 @@ class DeclaredLabelHeadingTests(unittest.TestCase):
         self.assertEqual(postprocess.split_declared_label_headings("followup", sections), sections)
 
     def test_a_populated_body_blocks_the_split(self):
-        sections = [_sec("Response to Treatment Good", "She tolerated it well.")]
+        sections = [_sec("Assessment Good", "She tolerated it well.")]
         self.assertEqual(postprocess.split_declared_label_headings("followup", sections), sections)
 
     def test_an_exact_label_is_untouched(self):
@@ -212,12 +212,13 @@ class SectionRosterNotUsedTests(unittest.TestCase):
         self.assertIn("REQUIRED SECTIONS", _section_roster_rule(FORMS["followup"]))
         self.assertIn("MEASURED HARMFUL", _section_roster_rule.__doc__)
 
-    def test_the_template_has_no_objective_measures_section(self):
-        """The other half of the same revert. Adding it was well-motivated — 15 of 22 dropped
-        values were ROM/MMT with nowhere to go — but it shipped alongside the roster and the pair
-        regressed section coverage badly. The rule-15 gap is real and still open; the fix has to
-        be re-attempted on its own."""
-        self.assertNotIn("Objective Measures", forms.spec_section_labels("followup"))
+    def test_objective_measures_is_back_without_the_roster(self):
+        """Rule 35 reverted Objective Measures because it shipped TOGETHER with the roster and the
+        pair regressed coverage. The 2026-10 Daily Visit redesign re-adds it ON ITS OWN (the roster
+        stays off — asserted above), as a conditional section ("omit if none were done today"),
+        and is re-measured with real generations (CLAUDE.md rule 36). If that measurement regresses,
+        this is the section to suspect first."""
+        self.assertIn("Objective Measures", forms.spec_section_labels("followup"))
 
 
 if __name__ == "__main__":

@@ -40,7 +40,41 @@ CARRY_FIELD_HEADING_MAP: dict[str, dict[str, list[str]]] = {
         "short_term_goals": ["short-term goals", "short term goals"],
         "long_term_goals": ["long-term goals", "long term goals"],
     },
+    "reeval": {
+        "precautions": ["precautions"],
+        "functional_status": ["functional mobility", "functional status"],
+        "short_term_goals": ["short-term goals", "short term goals"],
+        "long_term_goals": ["long-term goals", "long term goals"],
+    },
+    "discharge": {
+        "precautions": ["precautions"],
+        "functional_status": ["functional status"],
+        "short_term_goals": ["short-term goals", "short term goals"],
+        "long_term_goals": ["long-term goals", "long term goals"],
+    },
 }
+
+# Forms that START an episode: they never read a prior note (carry-forward OFF) but their goals,
+# precautions and functional status must seed the snapshot, or the first Daily Visit after an
+# evaluation has nothing to carry forward (it used to start empty and flag every goal as missing).
+SNAPSHOT_SEED_MAP: dict[str, dict[str, list[str]]] = {
+    "initial": {
+        "precautions": ["precautions"],
+        "functional_status": ["functional mobility", "functional status"],
+        "short_term_goals": ["short-term goals", "short term goals"],
+        "long_term_goals": ["long-term goals", "long term goals"],
+    },
+    "initial_updated": {
+        "precautions": ["precautions"],
+        "functional_status": ["functional mobility", "functional status"],
+        "short_term_goals": ["short-term goals", "short term goals", "short term"],
+        "long_term_goals": ["long-term goals", "long term goals", "long term"],
+    },
+}
+
+
+def _field_map(form_id: str) -> dict[str, list[str]] | None:
+    return CARRY_FIELD_HEADING_MAP.get(form_id) or SNAPSHOT_SEED_MAP.get(form_id)
 
 
 def _find_labeled_value(sections: list[dict], substrings: list[str]) -> str | None:
@@ -63,7 +97,7 @@ def _find_labeled_value(sections: list[dict], substrings: list[str]) -> str | No
 
 
 def extract_snapshot_fields(form_id: str, sections: list[dict]) -> dict[str, str | None]:
-    field_map = CARRY_FIELD_HEADING_MAP.get(form_id)
+    field_map = _field_map(form_id)
     if field_map is None:
         return {}
     result: dict[str, str | None] = {field: None for field in field_map}
@@ -85,7 +119,7 @@ def extract_snapshot_fields(form_id: str, sections: list[dict]) -> dict[str, str
 def update_snapshot_after_save(
     patient_id: str, note_id: str, form_id: str, sections: list[dict]
 ) -> None:
-    if form_id not in CARRY_FIELD_HEADING_MAP:
+    if _field_map(form_id) is None:
         return
     fields = extract_snapshot_fields(form_id, sections)
     repository.upsert_carry_snapshot(
@@ -106,7 +140,7 @@ def rebuild_snapshot_after_delete(patient_id: str) -> None:
     deleting any note. repository.list_notes returns newest-first, so the first
     carry-eligible hit is the correct new source."""
     for meta in repository.list_notes(patient_id):
-        if meta["form_id"] in CARRY_FIELD_HEADING_MAP:
+        if _field_map(meta["form_id"]) is not None:
             note = repository.get_note(patient_id, meta["id"])
             if note is not None:
                 update_snapshot_after_save(

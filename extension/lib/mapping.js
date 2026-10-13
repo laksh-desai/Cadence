@@ -17,7 +17,8 @@
   function markerToText(body) {
     return (body || "")
       .replace(/\[\[NEEDS:\s*([^\]]+)\]\]/g, "[! $1]")
-      .replace(/\[\[CPT:\s*([^\]]+?)\s*—\s*confirm\]\]/g, "[CPT: $1]");
+      .replace(/\[\[CPT:\s*([^\]]+?)\s*—\s*confirm\]\]/g, "[CPT: $1 — unconfirmed]")
+      .replace(/\[\[CPT:\s*([^\]]+?)(?:\s*—\s*clinician-assigned)?\]\]/g, "CPT $1");
   }
 
   function normalizeHeading(h) {

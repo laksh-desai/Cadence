@@ -227,30 +227,46 @@ def build_prompt(
     # gap-filling details, and this is the single chokepoint for guided-mode text too.
     summary = clean_dictation(summary)
     extra_info = clean_dictation(extra_info)
-    mode_rule = MODE_RULE_REQUIRE if form.mode == "require" else MODE_RULE_OMIT
     extra_block = (
         f'\nADDITIONAL DETAILS THE THERAPIST JUST PROVIDED (use to fill gaps they cover):\n'
         f'"""{extra_info}"""'
         if extra_info
         else ""
     )
+
+    mode_rule = MODE_RULE_REQUIRE if form.mode == "require" else MODE_RULE_OMIT
     carry_labels_rule = _carry_labels_rule(form)
     tail = WRITING_RULES_TAIL if not carry_labels_rule else f"{carry_labels_rule}\n{WRITING_RULES_TAIL}"
-
     parts = [
-        f'You are a documentation assistant for a physical therapist. Convert the '
-        f'therapist\'s spoken summary into a complete, professional "{form.name}".',
+        static_prefix(form),
         f"PATIENT: {patient.name}. {patient.sub}.",
-        f'NOTE STRUCTURE FOR "{form.name}":\n{form.spec}',
-        # `_section_roster_rule(form)` is deliberately NOT called here. It was measured and it made
-        # the problem worse — see that function's docstring. The function is kept, unused, so the
-        # negative result stays attached to the idea rather than being rediscovered.
         prior_block,
         f'THERAPIST\'S DICTATION OF TODAY\'S SESSION:\n"""{summary}"""{extra_block}',
+        # The rules stay AFTER the dictation. Moving them above it (2026-10, for the prefix cache)
+        # was measured on the same input: 5 of 14 sections, the model stopped after the treatment
+        # sections; with the rules last, 14 of 14 (CLAUDE.md rule 36(g)). Do not move them again.
         f"{WRITING_RULES_LEAD}\n- {mode_rule}\n{tail}",
         OUTPUT_FORMAT,
     ]
     return "\n\n".join(p for p in parts if p)
+
+
+def static_prefix(form: FormSpec) -> str:
+    """The part of the prompt that is identical for every note of this form: the framing line and
+    the template outline. It comes FIRST so Ollama can reuse its cached computation of it between
+    notes, and `server` warms it at startup for the most common form.
+
+    Only the outline is here, NOT the writing rules: putting the rules above the dictation too made
+    the model stop early (measured, rule 36(g)). Nothing per-patient or per-visit may ever be added
+    here, or the cache stops matching.
+    """
+    return "\n\n".join([
+        f'You are a documentation assistant for a physical therapist. Convert the '
+        f'therapist\'s spoken summary into a complete, professional "{form.name}".',
+        # `_section_roster_rule(form)` is deliberately NOT called anywhere. It was measured and it
+        # made the problem worse — see that function's docstring.
+        f'NOTE STRUCTURE FOR "{form.name}":\n{form.spec}',
+    ])
 
 
 # --- "Ask for changes": choosing what to re-write ----------------------------------

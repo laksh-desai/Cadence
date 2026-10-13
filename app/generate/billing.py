@@ -299,12 +299,35 @@ _BARE_NUMBER_RE = re.compile(r"(?<![\d./+-])(\d{1,3})(?![\d./+-])")
 def session_total_minutes(transcript: str) -> int | None:
     """The stated whole-session length, or None. Never inferred — a fraction with no stated total
     stays unresolved and is reported as a gap rather than multiplied against a guess."""
+    value, _ = session_total_detail(transcript)
+    return value
+
+
+# "total was forty five, uh, forty minutes" / "total treatment time today forty minutes" — how a
+# therapist actually says it (field test, 2026-10). A second number right after the first, before
+# the unit, is a SELF-CORRECTION: the later value is the one meant (rule 8), and the earlier one is
+# returned so the note can ask the clinician to confirm it rather than silently pick.
+_TOTAL_SPOKEN_RE = re.compile(
+    r"\btotal\s+(?:treatment\s+|session\s+|visit\s+)?(?:time\s+)?(?:today\s+)?"
+    r"(?:was|of|is|were)?\s*(?:about\s+)?(\d{2,3})"
+    r"(?:\s*,?\s*(?:no|sorry|i mean|actually|wait|correction)?\s*,?\s*(\d{2,3}))?"
+    r"\s*(?:minutes?|mins?)\b", re.IGNORECASE)
+
+
+def session_total_detail(transcript: str) -> tuple[int | None, int | None]:
+    """(stated session length, the value it corrected) — the second is None unless the therapist
+    corrected themselves mid-number."""
     norm = normalize_for_matching(transcript)
     for rx in _SESSION_TOTAL_RES:
         m = rx.search(norm)
         if m:
-            return int(m.group(1))
-    return None
+            return int(m.group(1)), None
+    m = _TOTAL_SPOKEN_RE.search(norm)
+    if m:
+        if m.group(2):
+            return int(m.group(2)), int(m.group(1))
+        return int(m.group(1)), None
+    return None, None
 
 
 def _bare_number_candidates(norm_clause: str, consumed: list[tuple[int, int]]) -> list[re.Match]:

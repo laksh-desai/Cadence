@@ -9,6 +9,7 @@ atomic replace. On clean shutdown: final re-encrypt, then delete the working cop
 
 import os
 import sqlite3
+import sys
 import tempfile
 from pathlib import Path
 
@@ -128,6 +129,28 @@ def _fernet() -> Fernet:
     return Fernet(_load_or_create_key())
 
 
+#: True when the working-copy folder was EFS-encrypted at startup (shown on the Status page).
+working_copy_efs = False
+
+
+def _efs_protect(folder: Path) -> None:
+    global working_copy_efs
+    working_copy_efs = False
+    if sys.platform != "win32":
+        return
+    try:
+        import subprocess
+        r = subprocess.run(["cipher", "/e", "/s:" + str(folder)], capture_output=True, text=True,
+                           timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if r.returncode == 0:
+            probe = subprocess.run(["cipher", str(folder.parent / folder.name)], capture_output=True,
+                                   text=True, timeout=30,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            working_copy_efs = r.returncode == 0 and " E " in (" " + probe.stdout.replace("\n", " ") + " ")
+    except Exception:  # noqa: BLE001 - hardening, never a startup failure
+        working_copy_efs = False
+
+
 def init() -> Path:
     """Decrypt (or create) the working DB copy and apply the schema. Returns the
     runtime DB path. Safe to call once at process startup."""
@@ -135,6 +158,11 @@ def init() -> Path:
     _acquire_lock()
     _runtime_dir = Path(tempfile.mkdtemp(prefix="cadence_"))
     _runtime_db_path = _runtime_dir / "cadence.db"
+    # The decrypted working copy must sit somewhere SQLite can open it. Mark that folder for
+    # Windows EFS BEFORE anything is written into it, so the working copy is encrypted on disk and
+    # bound to this Windows user, on top of disk encryption. Best effort: on a system without EFS
+    # (Windows Home, non-NTFS, another OS) it silently stays as before.
+    _efs_protect(_runtime_dir)
 
     if ENC_PATH.exists():
         try:

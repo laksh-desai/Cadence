@@ -39,8 +39,20 @@ class ExtractSnapshotFieldsTests(unittest.TestCase):
         self.assertEqual(fields["functional_status"], "x")
 
     def test_unmapped_form_returns_empty(self):
-        # A form that never carries forward (e.g. the Initial Evaluation) has no field map at all.
-        self.assertEqual(extract_snapshot_fields("initial", [_sec("Assessment", "x")]), {})
+        # A form with no carry-forward or seed map (a custom template) has no field map at all.
+        self.assertEqual(extract_snapshot_fields("my_custom_note", [_sec("Assessment", "x")]), {})
+
+    def test_initial_evaluation_seeds_the_snapshot(self):
+        """The Initial Evaluation never READS a prior note, but its goals must reach the first
+        Daily Visit — before 2026-10 that visit started with nothing to carry forward."""
+        out = extract_snapshot_fields("initial", [
+            _sec("Functional Mobility", "Walks 75 ft with a rolling walker, min assist."),
+            _sec("Short-Term Goals", "In 2 weeks walk 150 ft with walker at supervision."),
+            _sec("Long-Term Goals", "In 8 weeks independent household walking with a cane."),
+        ])
+        self.assertIn("75 ft", out["functional_status"])
+        self.assertIn("150 ft", out["short_term_goals"])
+        self.assertIn("household", out["long_term_goals"])
 
     def test_first_matching_section_wins(self):
         sections = [

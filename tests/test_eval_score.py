@@ -203,7 +203,7 @@ class SectionCoverageTests(unittest.TestCase):
         )
         self.assertGreater(expected, 0)
         self.assertEqual(present, expected - len(missing))
-        self.assertIn("Response to Treatment", missing)
+        self.assertIn("Assessment", missing)
 
 
 if __name__ == "__main__":

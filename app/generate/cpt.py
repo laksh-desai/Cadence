@@ -95,12 +95,31 @@ def billing_enabled() -> bool:
         return True
     if override in ("off", "0", "false", "no"):
         return False
+    choice = _practice_choice()
+    if choice == "on":
+        return True
+    if choice == "off":
+        return False
     return not coding_tables.unverified_body_parts()
 
 
+def _practice_choice() -> str:
+    """The practice's Manage Office setting ("auto" when unset or unreadable). Imported lazily so
+    the pure extractor modules and the eval harness never depend on the settings file."""
+    try:
+        from app.integrations import office_ally
+        return office_ally.load_billing_choice()
+    except Exception:  # noqa: BLE001 - a broken settings file falls back to the computed gate
+        return "auto"
+
+
 def billing_gate_reason() -> str:
-    """Why billing is off, in words the clinician can act on. Empty when it is on."""
+    """Why billing is off, in words the clinician can act on. Empty when it is on and verified."""
     if billing_enabled():
+        unverified = coding_tables.unverified_body_parts()
+        if unverified:
+            return ("On (practice setting). The ICD-10 tables are not yet coder-verified "
+                    f"({', '.join(unverified)}) — confirm every code before billing.")
         return ""
     unverified = coding_tables.unverified_body_parts()
     if unverified:
@@ -111,6 +130,11 @@ def billing_gate_reason() -> str:
 
 
 _EVAL_FORMS = {"initial", "initial_updated"}
+
+# Re-evaluation 97164 is billable ONLY with a documented significant change (new clinical findings,
+# an unexpected change in condition, or failure to respond to the plan). A routine 10th-visit
+# Progress Report is not billable at all. Which one this visit is, is the clinician's call.
+_REEVAL_FORMS = {"reeval"}
 
 # Patient-facing and auxiliary notes are NOT billing documents — a treatment CPT code must never
 # land on a patient's plain-language After-Visit Letter, a Referral Letter to another provider, or
@@ -160,6 +184,13 @@ def suggest_codes(sections: list[dict], form_id: str,
     # Asking anyway was the bug: it discarded a stated fact and then demanded it back on every
     # single evaluation, which trains the clinician to dismiss the gap list without reading it.
     # The level is still never INFERRED — no statement, no capture, and the question returns.
+    if form_id in _REEVAL_FORMS:
+        extra.append(
+            "Re-evaluation or Progress Report? Bill 97164 (Re-evaluation) ONLY if this visit "
+            "documents a significant change — new clinical findings, an unexpected change in "
+            "condition, or failure to respond to the plan. A routine 10th-visit Progress Report "
+            "is not billable; bill only the treatment codes performed today."
+        )
     if form_id in _EVAL_FORMS and not eval_complexity_stated:
         extra.append(
             "Assign the PT evaluation CPT — 97161 (low), 97162 (moderate), or 97163 (high) "

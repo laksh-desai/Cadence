@@ -13,3 +13,4 @@ transformers==5.12.1
 huggingface_hub==1.21.0
 librosa==0.11.0
 python-multipart==0.0.32
+av==19.0.1

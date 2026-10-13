@@ -181,6 +181,27 @@
     return out;
   }
 
+  // Cadence's pre-send billing audit (codes, minutes per timed code, total treatment time) — the
+  // same server check the Send button shows. Never blocks the fill: the clinician was already shown
+  // it in Cadence and chose to send; here it stays visible next to the boxes it affects.
+  function auditCheck(a) {
+    if (!a) return null;
+    const findings = a.findings || [];
+    const fixes = findings.filter((f) => f.level === "fix");
+    const n = (a.codes || []).length;
+    const sum = n + " code" + (n === 1 ? "" : "s") +
+      (a.total_timed_minutes != null ? ", " + a.total_timed_minutes + " timed min" : "") +
+      (a.total_treatment_minutes != null ? ", " + a.total_treatment_minutes + " min total" : "");
+    if (!findings.length) return { name: "Billing: " + sum, ok: true, block: false, reason: "" };
+    return { name: (fixes.length ? "Billing may not be paid — " : "Billing to check — ") + sum, ok: false, block: false,
+      reason: findings.map((f) => f.text).join(" ") + (fixes.length ? " Fix it in Cadence, save, and reload this panel." : "") };
+  }
+
+  function billingWarning(a) {
+    const fixes = ((a && a.findings) || []).filter((f) => f.level === "fix");
+    return fixes.length ? " BILLING: " + fixes.map((f) => f.text).join(" ") : "";
+  }
+
   function renderChecks(checks) {
     const mount = $("#coChecks");
     if (!checks || !checks.length) { mount.innerHTML = ""; return; }
@@ -547,10 +568,12 @@
     const pid = $("#coPatient").value, nid = $("#coNote").value;
     if (!pid || !nid) return;
     setStatus("Loading note…");
-    const [nr, pr] = await Promise.all([bg("note", { patientId: pid, noteId: nid }), bg("patient", { patientId: pid })]);
+    const [nr, pr, ar] = await Promise.all([bg("note", { patientId: pid, noteId: nid }), bg("patient", { patientId: pid }),
+      bg("audit", { patientId: pid, noteId: nid })]);
     if (!nr.ok) { setStatus("Couldn't load note: " + nr.error, true); return; }
     state.note = nr.data;
     state.patient = pr.ok ? pr.data : null;
+    state.audit = ar.ok ? ar.data : null;
     state.sources = M.noteSources(state.note, state.patient);
     state.gapsAcknowledged = false;
     state.dupAcknowledged = false;
@@ -566,7 +589,8 @@
     }
     // Does the page already hold this note (e.g. just saved)? Compare box by box.
     const saved = savedCheck();
-    renderChecks(saved ? checks.concat([saved]) : checks);
+    const billingCheck = auditCheck(state.audit);
+    renderChecks(checks.concat(billingCheck ? [billingCheck] : [], saved ? [saved] : []));
     const blocked = checks.find((c) => c.block);
     const justSaved = state.verifyAfterSave;
     state.verifyAfterSave = false;
@@ -821,7 +845,8 @@
       (unplaced.length ? " Copy in by hand: " + unplaced.map((u) => u.heading).join(", ") + "." : "") +
       (notFound ? " " + notFound + " field(s) not found on page." : "") +
       (skipped ? " " + skipped + " manual mapping(s) not in this note." : "") +
-      (gaps ? " " + gaps + " flagged item" + (gaps > 1 ? "s are" : " is") + " marked [! …] in the boxes — check " + (gaps > 1 ? "them" : "it") + " before signing." : "");
+      (gaps ? " " + gaps + " flagged item" + (gaps > 1 ? "s are" : " is") + " marked [! …] in the boxes — check " + (gaps > 1 ? "them" : "it") + " before signing." : "") +
+      billingWarning(state.audit);
 
     // 6. Remember that this note now lives in this encounter, so a second "Create" for the same
     //    note does not open another Add Note page (each one makes a new, blank encounter).

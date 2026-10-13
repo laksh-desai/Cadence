@@ -19,9 +19,13 @@ from __future__ import annotations
 import re
 
 MIN_WORDS = 6          # shorter sentences may legitimately repeat
-LOOP_REPEATS = 4       # a 6+-word sentence written 4 times is a loop, not a note
+LOOP_REPEATS = 3       # the same substantial sentence 3 times...
+LOOP_WINDOW = 12       # ...within the last 12 sentences is a loop, not a note
 
 _SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+# Cadence's own flags ([[NEEDS: ...]], [[CPT: ...]]) legitimately repeat word for word across
+# sections ("not stated in the dictation — clinician to confirm"); they are never loop evidence.
+_MARKER = re.compile(r"\[\[[^\]]*\]\]")
 
 
 def _norm(unit: str) -> str:
@@ -33,14 +37,17 @@ def _substantial(unit: str) -> bool:
 
 
 def is_looping(text: str) -> bool:
-    """True when any substantial sentence/line already appears LOOP_REPEATS times."""
-    counts: dict[str, int] = {}
-    for raw in _SPLIT.split(text or ""):
-        u = _norm(raw)
-        if not u or u.startswith("#") or not _substantial(u):
-            continue
-        counts[u] = counts.get(u, 0) + 1
-        if counts[u] >= LOOP_REPEATS:
+    """True when a substantial sentence recurs LOOP_REPEATS times inside a short window.
+
+    A real loop repeats back to back ("A. B. A. B. A. B."). Counting over the WHOLE note instead
+    (the first version) stopped legitimate notes that restate one long sentence in several
+    sections, cutting them off before Plan — a far worse failure than the loop it guards against.
+    """
+    units = [_norm(_MARKER.sub("", raw)) for raw in _SPLIT.split(text or "")]
+    units = [u for u in units if u and not u.startswith("#") and _substantial(u)]
+    for i in range(len(units)):
+        window = units[max(0, i - LOOP_WINDOW + 1): i + 1]
+        if window.count(units[i]) >= LOOP_REPEATS:
             return True
     return False
 

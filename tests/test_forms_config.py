@@ -22,13 +22,13 @@ from app.storage.carry_forward import CARRY_FIELD_HEADING_MAP
 # The practice trimmed the built-in set to its two evaluations + the follow-up (the rest were
 # removed; users rebuild what they need via the Templates tab). Both Initial Evaluations are
 # require mode; "initial_updated" is the block-structured variant. No built-in omit forms remain.
-REQUIRE_FORMS = {"initial", "initial_updated", "followup"}
+REQUIRE_FORMS = {"initial", "initial_updated", "followup", "reeval", "discharge"}
 OMIT_FORMS = set()
 
 
 class FormConfigConsistencyTests(unittest.TestCase):
     def test_all_forms_present(self):
-        self.assertEqual(len(FORM_ORDER), 3)
+        self.assertEqual(len(FORM_ORDER), 5)
         self.assertEqual(set(FORMS), set(FORM_ORDER))
 
     def test_modes_match_claude_md(self):

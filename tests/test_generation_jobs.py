@@ -408,3 +408,26 @@ class JobEndpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DuplicateSubmitTests(unittest.TestCase):
+    def test_identical_unfinished_request_returns_the_same_job(self):
+        async def run():
+            gate = asyncio.Event()
+
+            async def runner(job, emit):
+                await gate.wait()
+                return {"ok": True}
+
+            q = jobs.JobQueue(runner)
+            kw = dict(patient_id="p", patient_name="P", form_id="followup", form_name="Daily Visit",
+                      fast=False, payload={"summary": "gait 15 min", "patient_id": "p"})
+            a = q.submit(**kw)
+            b = q.submit(**kw)
+            c = q.submit(**{**kw, "payload": {"summary": "different", "patient_id": "p"}})
+            self.assertIs(a, b)
+            self.assertIsNot(a, c)
+            self.assertEqual(len(q.list()), 2)
+            gate.set()
+            await q.stop()
+        asyncio.run(run())

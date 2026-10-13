@@ -56,6 +56,33 @@ class SettingsError(ValueError):
     pass
 
 
+#: Practice choice for CPT/ICD code suggestions: "on", "off", or "auto" (on only once every ICD-10
+#: region is coder-verified — see app.generate.cpt.billing_enabled). Set by the practice in Manage
+#: Office. "on" before sign-off is the practice's explicit decision (2026-10-11); every code is
+#: still a "confirm" suggestion and unverified ICD tables stay labelled as such.
+BILLING_CHOICES = ("auto", "on", "off")
+
+
+def _read() -> dict:
+    try:
+        data = json.loads(settings_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def load_billing_choice() -> str:
+    choice = str(_read().get("billing", "auto")).strip().lower()
+    return choice if choice in BILLING_CHOICES else "auto"
+
+
+def save_billing_choice(choice: str) -> None:
+    choice = str(choice or "").strip().lower()
+    if choice not in BILLING_CHOICES:
+        raise SettingsError("billing must be one of: " + ", ".join(BILLING_CHOICES))
+    _write({**_read(), "billing": choice})
+
+
 def validate_layouts(layouts: dict, known_form_ids: set[str]) -> dict[str, dict[str, str]]:
     """Clean what the Manage Office form sent. An empty id removes that note type's rule."""
     if not isinstance(layouts, dict):
@@ -81,13 +108,17 @@ def validate_layouts(layouts: dict, known_form_ids: set[str]) -> dict[str, dict[
 
 
 def save_layouts(layouts: dict[str, dict[str, str]]) -> None:
+    _write({**_read(), "layouts": layouts})
+
+
+def _write(data: dict) -> None:
     """Atomic write: a half-written settings file would silently drop every layout."""
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".office_ally.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"layouts": layouts}, f, indent=2)
+            json.dump(data, f, indent=2)
         os.replace(tmp, path)
     except BaseException:
         try:

@@ -52,6 +52,22 @@ submissions don't look templated.
     hand-off, opens the chart) — and the extension blocks on an Office Ally login page or a
     timed-out session. The extension ships in the release (`scripts/release.py` INCLUDE); its
     tests do not.
+  - **Dictation intake from the phone/tablet (2026-10-13) stays inside these two carve-outs.**
+    `app/integrations/email_intake.py` reads the practice's Google Workspace mailbox(es) over
+    IMAP/TLS; `form_intake.py` reads the practice's Google Form responses Sheet and uploaded audio
+    (Forms / Sheets / Drive) with the practice's service account. Both are the Workspace account the
+    BAA covers. Rules: only senders from the practice domain are processed (a personal account is
+    not covered); audio is downloaded into memory and transcribed LOCALLY by MedASR; the note goes to
+    the review queue under a new "Unknown patient" (visit date in DOB) and is never saved unreviewed;
+    mailbox app passwords are Fernet-encrypted with a key locked to the Windows user by DPAPI
+    (`app/secure_store.py`) and never returned by the API; state files hold ids only. Clinicians
+    must NOT use phone keyboard voice typing (Gboard / Apple dictation) to fill the form or email —
+    that sends audio to a speech service the BAA does not cover; record and attach instead.
+    Setup and the clinician rules: `docs/Intake_Setup_Guide.md`.
+  - **Encryption layers (2026-10-13):** database Fernet-encrypted at rest; the decrypted working copy
+    lives in an EFS-encrypted folder (`db._efs_protect`, shown on Status); intake secrets DPAPI-bound;
+    server and Ollama bound to 127.0.0.1 only; everything external over TLS. Full-disk encryption
+    (BitLocker / Device encryption) is still REQUIRED and must be confirmed on each machine.
 - The prototype (`cadence-prototype.html`, at the repo root) **no longer calls any
   model.** It formerly POSTed to a cloud model (Anthropic) as a stand-in for the local
   model, using FAKE data only; that live cloud call has been removed. It is now a
@@ -104,7 +120,11 @@ instead.
 
 ---
 
-## The note templates (3 built-in)
+## The note templates (5 built-in — see rule 36)
+
+> **2026-10:** `followup` is now the **Daily Visit**, and two built-ins were added: **Re-evaluation /
+> Progress Report** (`reeval`) and **Discharge Summary** (`discharge`), both carry-forward. The text
+> below describes the original three and is still accurate for `initial` / `initial_updated`.
 
 The practice trimmed the built-in set to **three** templates (the rest were removed at the
 clinician's request and moved to `templates/_archive/` — recoverable, not loaded). Users add back
@@ -729,6 +749,70 @@ every note-generation prompt:
     at the SQL level rather than trusting someone to remember which patient was fake. Full recipe,
     including why deterministically-rendered targets are the wrong shortcut (they teach templated
     prose, violating rule 9, and are circular per rule 21): `docs/finetune-when-viable.md`.
+
+36. **The 2026-10 rebuild: five note types, a code-written Billing section, a Medicare checklist,
+    and the prompt reordered for speed.** Set by the practice owner (2026-10-11). Each part, and the
+    reason it is shaped the way it is:
+    (a) **Note types.** `followup` is now the **Daily Visit** (Medicare treatment note: Subjective,
+    per-intervention sections with "Minutes: N" + skilled detail, Objective Measures, Assessment with
+    medical necessity, goals, Plan) — same id, so saved notes, carry-forward and Manage Office keep
+    working. New built-ins `reeval` (**Re-evaluation / Progress Report**, shaped like the Initial
+    Evaluation plus reporting period, goal status and comparisons) and `discharge` (**Discharge
+    Summary**, Net Health–style). Both carry forward. The Initial Evaluations now SEED the
+    carry-forward snapshot (`carry_forward.SNAPSHOT_SEED_MAP`) — before this, the first Daily Visit
+    after an evaluation had no goals to carry. Objective Measures returns to the Daily Visit ON ITS
+    OWN, without the rule-35 roster, which stays off.
+    (b) **97164 is never assigned.** A routine 10th-visit Progress Report is not billable; a
+    Re-evaluation is billable only with a documented significant change. `cpt._REEVAL_FORMS` raises
+    that decision for the clinician on every `reeval` note. Same discipline as 97161/2/3.
+    (c) **Billing is on by the practice's choice** — `office_ally.json` `"billing": "on"`, read by
+    `cpt.billing_enabled()` after the env override and before the computed gate (default `auto` =
+    the old computed gate). ICD-10 tables are still not coder-verified: the Status line says so, every
+    ICD line reads "ICD-10 (confirm)", and the sign-off test still fails on purpose.
+    (d) **The "Billing — CPT & Minutes" section is written by CODE, never the model**
+    (`billing_section.build`, appended in `_finalize_note`): one `[[CPT: … — confirm]]` line per
+    code with its dictated minutes, total timed minutes, total treatment time, 8-minute-rule units
+    (both methods when they disagree), ICD-10 to confirm. Anything missing is a `[[NEEDS:]]` gap —
+    a timed code with no minutes, no total time, a self-corrected total. It exists because the
+    billing draft was response metadata and vanished on Save, so nothing about minutes reached
+    Office Ally.
+    (e) **Pre-send audit** (`note_audit.audit`, `GET /api/patients/{pid}/notes/{nid}/audit`) — ONE
+    implementation read by Cadence's Send button (a "Fix / Check billing before sending" step) and
+    the extension panel (a Billing check row + a BILLING line in the fill summary). "fix" = would not
+    be paid as written; "check" = look first. It never blocks by itself; the clinician decides.
+    (f) **Medicare documentation checklist** (`compliance.check`) — the MAC reviewer's questions per
+    note type (skilled input per intervention, parameters, patient response, goal linkage, medical
+    necessity, measurable and time-bound goals, plan frequency/duration, objective baseline,
+    reporting period and comparisons, final goal status). Deterministic, explainable, never edits.
+    It is a FLOOR, not an approval: it cannot judge whether care was reasonable and necessary, and
+    it cannot see the signed plan of care, the KX threshold or payer edits. Never describe a passing
+    note as "will be paid". `tests/test_compliance.py` holds a compliant note per type plus one case
+    per common denial reason; a checker that flags good notes is worse than none (rule 24).
+    (g) **Prompt order — the rules stay AFTER the dictation; only the outline is cached.** The
+    first version of this rebuild moved the writing rules ABOVE the dictation so Ollama could cache
+    ~3k tokens (prompt read 121 s -> ~12 s). It broke notes: on a structured, already-written
+    dictation the model returned only the outline's headings (a real 445-char "note", every body
+    empty), and on the same fake input it stopped after the treatment sections — **5 of 14
+    sections vs 14 of 14 with the rules last**. Completeness beats speed, so the order is back to
+    framing + outline (`prompt.static_prefix`, cached and warmed at startup) -> patient -> prior
+    note -> dictation -> rules -> output format. Same lesson as rules 31(c) and 35: on a 4B model,
+    WHERE an instruction sits changes what it does; measure on real output before moving one.
+    `_finalize_note` now also puts "INCOMPLETE NOTE ... regenerate" at the top of the review list
+    when more than half the template's sections are missing or empty, so an abandoned note can
+    never again look finished. Ollama timings are logged (counts and seconds only, never text).
+    (h) **The loop guard counts within a window, ignoring Cadence's markers.** Its first version
+    counted repeats over the WHOLE note, so a legitimate note restating one long `[[NEEDS:]]` flag in
+    four sections was cut off before Plan — a likely cause of "no output / missing sections". A loop
+    is now the same substantial sentence 3 times within 12 sentences.
+    (i) **Office Ally mapping is exact-label first** (`oaroute.candidatesFor` step 0): a box whose
+    label equals a Cadence heading wins outright. The four `templates/OfficeAlly_*.md` specs ask
+    Office Ally to name every box after a Cadence section, which makes the mapping one-to-one; the
+    concept rules remain the fallback for any other layout. The Billing section has its own concept
+    (fallback: Procedure Notes).
+    (j) **`scripts/field_test.py`** runs whole fake episodes (evaluation -> daily visits ->
+    re-evaluation -> discharge) through the exact queued pipeline into a THROWAWAY database, saves
+    each note through the API so carry-forward is real, runs the audit, and scores sections, loops,
+    duplicates, billing and the checklist. Re-run it after any change to a template, rule or prompt.
 
 ## Standing workflow instruction
 

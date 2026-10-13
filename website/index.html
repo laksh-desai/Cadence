@@ -48,9 +48,10 @@
       <li><a href="#services">Services</a></li>
       <li><a href="#how">How it works</a></li>
       <li><a href="#insurance">Insurance</a></li>
-      <li><a href="#reviews">Reviews</a></li>
+      <li id="navReviews" hidden><a href="#reviews">Reviews</a></li>
       <li><a href="#forms">Forms</a></li>
       <li><a href="#contact">Contact</a></li>
+      <li><a href="exercises/">Exercises</a></li>
     </ul>
     <div class="nav-cta">
       <a class="nav-phone" href="tel:+16192897110">619-289-7110</a>
@@ -186,8 +187,9 @@
     </div>
   </section>
 
-  <!-- Reviews: REAL reviews only. See the note in the script at the bottom of this page. -->
-  <section class="section tint" id="reviews">
+  <!-- Reviews: REAL reviews only. See the note in the script at the bottom of this page.
+       Hidden (with its menu link) until REVIEWS has at least one review; the script shows both. -->
+  <section class="section tint" id="reviews" hidden>
     <div class="wrap">
       <div class="section-head reveal">
         <span class="eyebrow">Reviews</span>
@@ -249,20 +251,54 @@
   // Add REAL reviews only — copied word for word from Google, Yelp, or a patient's own written
   // feedback. A testimonial from a patient needs their written permission to be published
   // (HIPAA), and made-up reviews are illegal under the FTC's rule on fake reviews (2024).
-  // Use the name format the patient agreed to, e.g. "Margaret T." Example:
-  //   { text: "Their words, exactly as written.", name: "First name + last initial", source: "Google review" }
+  // Use the name format the patient agreed to, e.g. "Margaret T." Add `stars` only if the review
+  // itself gave a star rating (e.g. a 5-star Google review). Example:
+  //   { text: "Their words, exactly as written.", name: "First name + last initial", source: "Google review", stars: 5 },
+  // While this list is empty, the Reviews section and its menu link stay hidden. Add one review to
+  // show them; with two or more, the section rotates automatically, one review at a time.
   const REVIEWS = [
   ];
 
   const list = document.getElementById("reviewList");
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const shareHref = "mailto:info@sdmobilept.com?subject=My%20experience%20with%20SD%20Mobile%20PT";
   if (REVIEWS.length) {
-    list.innerHTML = REVIEWS.map((r) => `<figure class="review reveal"><div class="stars" aria-label="5 out of 5 stars">★★★★★</div>
-      <blockquote>“${esc(r.text)}”</blockquote><footer><strong>${esc(r.name)}</strong>${r.source ? " · " + esc(r.source) : ""}</footer></figure>`).join("");
-  } else {
-    list.innerHTML = `<div class="review-empty reveal"><h3>Had a great experience with us?</h3>
-      <p>Your words help other San Diego families find care at home. We'd be grateful if you shared how therapy went for you.</p>
-      <a class="btn btn-primary" href="mailto:info@sdmobilept.com?subject=My%20experience%20with%20SD%20Mobile%20PT">Share your experience</a></div>`;
+    document.getElementById("reviews").hidden = false;
+    document.getElementById("navReviews").hidden = false;
+    const stars = (n) => n ? `<div class="stars" aria-label="${n} out of 5 stars">${"★".repeat(n)}${"☆".repeat(5 - n)}</div>` : "";
+    const many = REVIEWS.length > 1;
+    list.classList.add("carousel");
+    list.innerHTML = `<div class="carousel-viewport reveal" aria-live="polite">${REVIEWS.map((r, i) =>
+      `<figure class="review slide${i === 0 ? " active" : ""}" role="group" aria-roledescription="review" aria-label="Review ${i + 1} of ${REVIEWS.length}"${i ? ' aria-hidden="true"' : ""}>${stars(r.stars)}
+        <blockquote>“${esc(r.text)}”</blockquote><footer><strong>${esc(r.name)}</strong>${r.source ? " · " + esc(r.source) : ""}</footer></figure>`).join("")}</div>` +
+      (many ? `<div class="carousel-controls"><button class="car-btn" type="button" data-step="-1" aria-label="Previous review">‹</button>
+        <div class="car-dots">${REVIEWS.map((_, i) => `<button type="button" class="car-dot${i === 0 ? " active" : ""}" data-go="${i}" aria-label="Show review ${i + 1}"></button>`).join("")}</div>
+        <button class="car-btn" type="button" data-step="1" aria-label="Next review">›</button></div>` : "") +
+      `<p class="review-share">Had a great experience with us? <a href="${shareHref}">Share your experience</a></p>`;
+
+    if (many) {
+      const slides = [...list.querySelectorAll(".slide")], dots = [...list.querySelectorAll(".car-dot")];
+      let at = 0, timer = null, paused = false;
+      const show = (i) => {
+        at = (i + slides.length) % slides.length;
+        slides.forEach((el, k) => { el.classList.toggle("active", k === at); el.setAttribute("aria-hidden", k === at ? "false" : "true"); });
+        dots.forEach((el, k) => { el.classList.toggle("active", k === at); el.setAttribute("aria-current", k === at ? "true" : "false"); });
+      };
+      // Rotate every 7 seconds; pause while the visitor is pointing at or reading a review.
+      const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const start = () => { if (!reduce && !timer) timer = setInterval(() => { if (!paused && !document.hidden) show(at + 1); }, 7000); };
+      list.addEventListener("click", (e) => {
+        const b = e.target.closest("button"); if (!b) return;
+        if (b.dataset.step) show(at + Number(b.dataset.step));
+        if (b.dataset.go) show(Number(b.dataset.go));
+        clearInterval(timer); timer = null; start(); // restart the clock after a manual change
+      });
+      list.addEventListener("mouseenter", () => { paused = true; });
+      list.addEventListener("mouseleave", () => { paused = false; });
+      list.addEventListener("focusin", () => { paused = true; });
+      list.addEventListener("focusout", () => { paused = false; });
+      show(0); start();
+    }
   }
 
   // ---- Header, menu, reveal-on-scroll --------------------------------------------------------

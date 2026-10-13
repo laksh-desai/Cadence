@@ -81,6 +81,11 @@
   // `anyBucket`: the label is specific enough to trust even when the practice put that box in a
   // different SOAP part (e.g. "History of Falls" sits under Subjective on Cadence Init Eval).
   const CONCEPTS = [
+    // Cadence's code-written "Billing — CPT & Minutes" section (codes, minutes per code, total
+    // timed minutes, total treatment time). Its own box when the layout has one; otherwise the
+    // procedures box, never prose boxes.
+    { id: "billing", match: ["billing", "cpt & minutes"], bucket: "P", anyBucket: true,
+      keys: ["P_Procedures"], labels: ["billing", "cpt", "charge", "procedure code"] },
     { id: "chief_complaint", match: ["chief complaint", "complaint"], bucket: "S",
       keys: ["S_ChiefComplaint"], labels: ["chief complaint", "complaint"] },
     { id: "narrative", match: ["summary of daily", "present illness", "subjective"], bucket: "S",
@@ -116,7 +121,7 @@
       keys: ["O_FunctionalStatus", "O_Objective"], labels: ["functional"] },
     { id: "special_tests", match: ["special test"], bucket: "O", anyBucket: true,
       keys: ["O_Objective"], labels: ["special test"] },
-    { id: "outcome_measures", match: ["outcome", "standardized test", "berg", "timed up and go"], bucket: "O", anyBucket: true,
+    { id: "outcome_measures", match: ["outcome", "objective measure", "standardized test", "berg", "timed up and go"], bucket: "O", anyBucket: true,
       keys: ["O_Objective"], labels: ["outcome"] },
     // Before "assessment": a heading like "Musculoskeletal Assessment" is exam findings (Objective),
     // not the clinical assessment.
@@ -182,11 +187,20 @@
     });
   }
 
-  function candidatesFor(concept, fields) {
+  // Heading and box label reduced to letters/digits, so "Pain - At Rest" matches a box labelled
+  // "Pain – At Rest:" and "Billing — CPT & Minutes" one labelled "Billing - CPT & Minutes".
+  function exactKey(s) { return norm(s).replace(/\(cont[a-z.]*\)/g, "").replace(/[^a-z0-9]+/g, ""); }
+
+  function candidatesFor(concept, fields, heading) {
     const byKey = {};
     fields.forEach(function (f) { byKey[f.key] = f; });
     const out = [];
     const push = function (f) { if (f && out.indexOf(f) === -1) out.push(f); };
+    // 0. A box whose label IS this section's heading. The Office Ally templates built for Cadence
+    //    (templates/OfficeAlly_*.md) name every box after a Cadence section, so this is the exact,
+    //    one-to-one mapping; the concept rules below are the fallback for any other layout.
+    const hk = exactKey(heading);
+    if (hk) fields.forEach(function (f) { if (exactKey(f.label) === hk) push(f); });
     // 1. A box labelled for this concept (a practice's own naming wins over the defaults) — only
     //    within the section's SOAP bucket, so an Objective finding never lands in a Subjective box
     //    that happens to share a word.
@@ -308,7 +322,7 @@
       const heading = String(s.heading || "").trim();
       const body = String(s.text || "").trim();
       if (!body || skip.indexOf(norm(heading)) !== -1) return;
-      const cands = candidatesFor(conceptFor(heading), all);
+      const cands = candidatesFor(conceptFor(heading), all, heading);
       if (!cands.length) { unplaced.push({ heading: heading, reason: "no matching Office Ally box on this layout" }); return; }
 
       // Whole section into the first candidate with room.

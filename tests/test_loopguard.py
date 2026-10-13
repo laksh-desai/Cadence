@@ -43,5 +43,24 @@ class LoopGuardTests(unittest.TestCase):
         self.assertEqual(out[0]["body"].count("Patient ambulates 150 feet"), 1)
 
 
+class LegitimateRepeatsAreNotLoops(unittest.TestCase):
+    """The first loop guard counted repeats over the WHOLE note and cut off real notes."""
+
+    def test_repeated_flags_across_sections_are_not_a_loop(self):
+        note = "\n".join(
+            f"## Section {i}\nFinding number {i} about the left knee today.\n"
+            "[[NEEDS: not stated in the dictation — clinician to confirm]]" for i in range(8))
+        self.assertFalse(loopguard.is_looping(note))
+
+    def test_a_sentence_restated_far_apart_is_not_a_loop(self):
+        rep = "Patient tolerated the exercise without any increase in pain."
+        filler = [f"Distinct finding number {i} with enough words in it." for i in range(13)]
+        self.assertFalse(loopguard.is_looping("\n".join([rep] + filler + [rep] + filler + [rep])))
+
+    def test_back_to_back_repetition_is_a_loop(self):
+        loop = "Walked 100 feet with the walker and cues. Balance at the counter with min assist. " * 3
+        self.assertTrue(loopguard.is_looping(loop))
+
+
 if __name__ == "__main__":
     unittest.main()

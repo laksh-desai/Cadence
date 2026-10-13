@@ -24,11 +24,11 @@ CUSTOM_DIR = paths.templates_data_dir() / "custom"
 # not alphabetical, so the UI dropdown order doesn't silently change. This is the
 # fixed set of BUILT-IN forms; user-created templates are appended after these
 # (see ordered_form_ids), and this list stays the definition of "built-in".
-FORM_ORDER = ["initial", "initial_updated", "followup"]
+FORM_ORDER = ["initial", "initial_updated", "followup", "reeval", "discharge"]
 
 VALID_MODES = ("require", "omit")
 
-CARRY_FORWARD_FORM_IDS = {"followup"}
+CARRY_FORWARD_FORM_IDS = {"followup", "reeval", "discharge"}
 
 # The exact section labels each carry-enabled form's spec marks [carry forward]. Injected
 # verbatim into the prompt so the model has a concrete, closed list instead of an abstract
@@ -36,6 +36,8 @@ CARRY_FORWARD_FORM_IDS = {"followup"}
 # "sections explicitly marked [carry forward] in the structure".
 CARRY_SECTION_LABELS: dict[str, list[str]] = {
     "followup": ["Precautions", "Functional Status", "Short-Term Goals", "Long-Term Goals"],
+    "reeval": ["Precautions", "Functional Mobility", "Short-Term Goals", "Long-Term Goals"],
+    "discharge": ["Precautions", "Functional Status", "Short-Term Goals", "Long-Term Goals"],
 }
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)

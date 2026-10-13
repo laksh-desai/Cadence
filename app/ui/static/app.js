@@ -161,7 +161,8 @@
   function billingCodes(sections){
     const out=[];
     (sections||[]).forEach(s=>{
-      const m=/\[\[CPT:\s*([0-9A-Z]+)\s+(.+?)\s+—\s*confirm\]\]/.exec(s.body||"");
+      // Any chip: "— confirm" (pending), plain (confirmed), or "— clinician-assigned".
+      const m=/\[\[CPT:\s*([0-9A-Z]+)\s+(.+?)(?:\s+—\s*(?:confirm|clinician-assigned))?\]\]/.exec(s.body||"");
       if(!m) return;
       const mm=/Minutes:\s*(\d+)/i.exec(s.body||"") || /\b(\d{1,3})\s*minutes?\b/i.exec(s.body||"");
       out.push({code:m[1], label:m[2].trim(), minutes: mm?parseInt(mm[1],10):null});
@@ -332,7 +333,8 @@
   function markerToText(body){
     return (body||"")
       .replace(/\[\[NEEDS:\s*([^\]]+)\]\]/g, "[! $1]")
-      .replace(/\[\[CPT:\s*([^\]]+?)\s*—\s*confirm\]\]/g, "[CPT: $1]");
+      .replace(/\[\[CPT:\s*([^\]]+?)\s*—\s*confirm\]\]/g, "[CPT: $1 — unconfirmed]")
+      .replace(/\[\[CPT:\s*([^\]]+?)(?:\s*—\s*clinician-assigned)?\]\]/g, "CPT $1");
   }
   // Build the finished note as clean plain text — for the "Copy note" button (paste into the EHR).
   function noteToText(r){
@@ -493,8 +495,41 @@
     // window's "Open the note" button gets back here after logging in.
     const pid=digitsOf(p.mrn);
     const row=(await oaLayouts())[ctx.formId];
-    window.open(row && row.id ? OA_ADD_URL(pid, row.id) : OA_HOME_URL, "cadence_officeally");
-    showSendSteps(ctx, p);
+    const audit=await noteAudit(ctx);
+    const open=()=>{ window.open(row && row.id ? OA_ADD_URL(pid, row.id) : OA_HOME_URL, "cadence_officeally"); showSendSteps(ctx, p, audit); };
+    if(audit && audit.findings && audit.findings.length){ showAudit(ctx, p, audit, open); return; }
+    open();
+  }
+
+  // Pre-send billing audit (codes, minutes, total treatment time) — computed by the server
+  // (app/generate/note_audit.py), the same check the extension shows on the Office Ally tab.
+  async function noteAudit(ctx){
+    try{
+      const r=await fetch("/api/patients/"+encodeURIComponent(ctx.patientId)+"/notes/"+encodeURIComponent(ctx.noteId)+"/audit");
+      return r.ok ? await r.json() : null;
+    }catch(_){ return null; }
+  }
+  function auditSummary(a){
+    if(!a) return "";
+    const n=(a.codes||[]).length, bits=[n+" code"+(n===1?"":"s")];
+    if(a.total_timed_minutes!=null) bits.push(a.total_timed_minutes+" timed min");
+    if(a.total_treatment_minutes!=null) bits.push(a.total_treatment_minutes+" min total");
+    return bits.join(" · ");
+  }
+  function showAudit(ctx, p, a, proceed){
+    const fixes=a.findings.filter(f=>f.level==="fix"), checks=a.findings.filter(f=>f.level!=="fix");
+    openOverlay(fixes.length ? "Fix billing before sending" : "Check billing before sending");
+    const li=(f)=>'<li class="audit-'+(f.level==="fix"?"fix":"check")+'">'+esc(f.text)+'</li>';
+    modalBody.innerHTML=
+      '<p class="setup-lede">'+(fixes.length
+        ? '<b>This note may not be paid as written.</b> Fix these in Cadence (Edit or Ask for changes), save, then send again.'
+        : 'Everything required is there. Please look at these before sending.')+'</p>'
+      +(a.codes&&a.codes.length?'<p class="audit-sum">Billing: '+esc(auditSummary(a))+'</p>':'')
+      +'<ul class="audit-list">'+fixes.map(li).join("")+checks.map(li).join("")+'</ul>'
+      +'<div class="modal-actions"><button class="btn btn-ghost" id="auSend">Send anyway</button>'
+      +'<button class="btn btn-primary" style="width:auto;margin:0" id="auFix">'+(fixes.length?"Fix in Cadence":"Go back")+'</button></div>';
+    $("auFix").addEventListener("click", closeOverlay);
+    $("auSend").addEventListener("click", ()=>{ closeOverlay(); proceed(); });
   }
 
   // Has the extension already opened an Office Ally encounter for this note? Office Ally creates an
@@ -511,7 +546,7 @@
   // The practice's path (docs/OfficeAlly_Integration_Rules.md): log in, create ONE encounter on the
   // note type's layout, fill it with the extension (which saves a draft and checks it), then review
   // and sign.
-  async function showSendSteps(ctx, p){
+  async function showSendSteps(ctx, p, audit){
     const pid=digitsOf(p.mrn);
     const row=(await oaLayouts())[ctx.formId];
     const layout=row&&row.id?{label:row.name||("layout "+row.id), id:row.id}:null;
@@ -520,6 +555,7 @@
     const btn=(id, text)=>'<button class="btn btn-save btn-sm" id="'+id+'" style="width:auto;margin:6px 0 0">'+text+'</button>';
     modalBody.innerHTML=
       '<p class="setup-lede">Office Ally opened in the other tab'+(layout?' on a new <b>'+esc(layout.label)+'</b> note for <b>'+esc(p.name)+'</b> (Patient ID '+esc(pid)+').':'. No Office Ally layout is set for this note type — add one in <b>Manage Office</b>.')+'</p>'
+      +(audit&&audit.codes&&audit.codes.length?'<p class="audit-sum">Billing going to Office Ally: '+esc(auditSummary(audit))+'</p>':'')
       +'<ol class="setup-steps">'
       +(layout?'<li><b>Log in</b> if Office Ally asks, then click this to open the note page:<br>'+btn("oaAdd","Open the "+esc(layout.label)+" note")+'</li>':'')
       +'<li>On the Office Ally tab, click the <b>Cadence icon</b> (top-right of Chrome). This note is already selected. Click <b>Fill &amp; save draft</b>.</li>'
@@ -1393,6 +1429,8 @@
       templateCustomized: !!data.template_customized,
       missingInfo: data.missing_info || [],
       formName: data.form_name, formId: data.form_id,
+      // Set by intake (email / Google Form): the visit date read from the submission.
+      visitDate: data.visit_date || undefined,
       patientId: ctx.patientId,
       dictationRaw: ctx.extraInfo ? (ctx.summary+"\n\nADDITIONAL DETAILS: "+ctx.extraInfo) : ctx.summary,
       usedPrior: !!data.used_prior,
@@ -2253,6 +2291,11 @@
     });
     h+='</tbody></table></div>'
       +'<div class="modal-actions" style="justify-content:flex-start"><button class="btn btn-primary" style="width:auto;margin:0" id="officeSave">Save layouts</button><span class="savehint" id="officeMsg"></span></div></div>'
+      +'<div class="card office-card"><h2>Billing codes</h2>'
+      +'<p class="setup-lede">CPT and ICD-10 suggestions on every note, plus the Billing section (minutes per code, total treatment time, units) that goes to Office Ally. Every code is a suggestion you confirm.</p>'
+      +'<div class="billing-choice">'+[["on","On"],["auto","On after coder sign-off"],["off","Off"]].map(o=>'<label><input type="radio" name="billingChoice" value="'+o[0]+'"'+((data.billing||"auto")===o[0]?" checked":"")+'> '+o[1]+'</label>').join("")+'</div>'
+      +'<p class="setup-note">The ICD-10 tables have not yet been reviewed by a certified coder, so ICD-10 lines always say "confirm".</p>'
+      +'<span class="savehint" id="billingMsg"></span></div>'
       +'<div class="card office-card"><h2>Chrome extension</h2>'
       +(ext
         ? '<p class="setup-lede">✓ Installed (version '+esc(ext)+'). Clinicians use <b>Send to Office Ally</b> under any saved note.</p>'
@@ -2281,10 +2324,101 @@
       }catch(_){ msg.textContent="Couldn't save — try again."; }
       b.disabled=false;
     });
+    Array.prototype.forEach.call(mount.querySelectorAll('input[name="billingChoice"]'), el=>el.addEventListener("change", async ()=>{
+      const bm=$("billingMsg");
+      try{
+        const layouts={}; Array.prototype.forEach.call(mount.querySelectorAll(".office-id"), i=>{ const f=i.dataset.form; layouts[f]={id:i.value.trim(), name:mount.querySelector('.office-name[data-form="'+f+'"]').value.trim()}; });
+        const r=await fetch("/api/office-ally/settings",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({layouts, billing: el.value})});
+        const j=await r.json(); bm.style.color=r.ok?"":"#cf4631"; bm.textContent=r.ok?"Saved — applies to the next note generated.":(j.detail||"Couldn't save.");
+      }catch(_){ bm.textContent="Couldn't save — try again."; }
+    }));
+    renderIntake(mount);
     const setupBtn=$("officeSetup");
     if(setupBtn) setupBtn.addEventListener("click", ()=>showExtensionSetup(null));
   }
 
+  // ---------- Manage Office: dictation intake (email / Google Form) ----------
+  // Both options create an "Unknown patient" (visit date in the DOB column) and put the draft in
+  // "Notes in progress" for review. Passwords are write-only: the server never sends them back.
+  async function renderIntake(host){
+    const box=document.createElement("div");
+    host.appendChild(box);
+    let data;
+    try{ data=await (await fetch("/api/intake/settings")).json(); }
+    catch(_){ box.innerHTML='<div class="card office-card"><p class="savehint">Couldn\'t load intake settings.</p></div>'; return; }
+    const em=data.email||{}, fm=data.form||{};
+    const mbRow=(m)=>'<tr><td><input class="in-addr" value="" placeholder="name@sdmobilept.com" autocomplete="off"></td>'
+      +'<td><input class="in-pw" type="password" autocomplete="new-password" placeholder="'+(m&&m.has_password?"saved — leave blank to keep":"app password")+'"></td>'
+      +'<td><input class="in-allow" placeholder="sdmobilept.com" autocomplete="off"></td>'
+      +'<td><button class="btn btn-ghost btn-sm in-del" title="Remove">×</button></td></tr>';
+    box.innerHTML='<div class="card office-card"><h2>Dictation from phone or email</h2>'
+      +'<p class="setup-lede">Send a visit\'s dictation from the iPhone or Android tablet instead of opening Cadence. Each one becomes a draft under a new <b>Unknown patient</b> (visit date in the DOB column) in <b>Notes in progress</b>, for you to review, rename the patient, and save. Setup: <code>docs/Intake_Setup_Guide.md</code>.</p>'
+      +'<h3 class="in-h">Option 1 — Email</h3>'
+      +'<p class="setup-note">Email the dictation from a practice account with <b>Cadence</b> in the subject; put the visit date in the subject or body. Add "eval", "re-eval" or "discharge" to the subject for those note types (Daily Visit otherwise).</p>'
+      +'<label class="in-on"><input type="checkbox" id="inEmailOn"> Check these mailboxes</label>'
+      +'<div class="office-table-wrap"><table class="office-table"><thead><tr><th>Mailbox</th><th>App password</th><th>Accept senders from</th><th></th></tr></thead><tbody id="inMbBody"></tbody></table></div>'
+      +'<button class="btn btn-ghost btn-sm" id="inAddMb">+ Subscribe another mailbox</button>'
+      +'<h3 class="in-h">Option 2 — Google Form (recommended for phones)</h3>'
+      +'<p class="setup-note">A practice Google Form on the phone\'s home screen: visit date, note type, and a typed dictation or an attached recording. Recordings are transcribed on this computer. Uses Forms / Sheets / Drive in the practice Workspace (BAA-covered).</p>'
+      +'<label class="in-on"><input type="checkbox" id="inFormOn"> Check the form responses</label>'
+      +'<div class="mfield"><label>Responses Sheet link</label><input id="inSheet" placeholder="https://docs.google.com/spreadsheets/d/…" autocomplete="off"></div>'
+      +'<div class="mfield"><label>Responses tab</label><input id="inTab" autocomplete="off"></div>'
+      +'<p class="setup-note" id="inCred"></p>'
+      +'<div class="mfield"><label>Check every (seconds)</label><input id="inPoll" inputmode="numeric" style="max-width:120px"></div>'
+      +'<div class="modal-actions" style="justify-content:flex-start;flex-wrap:wrap;gap:8px"><button class="btn btn-primary" style="width:auto;margin:0" id="inSave">Save</button>'
+      +'<button class="btn btn-ghost" id="inTest">Test connection</button><button class="btn btn-ghost" id="inCheck">Check now</button>'
+      +'<span class="savehint" id="inMsg"></span></div>'
+      +'<p class="setup-note" id="inLast"></p></div>';
+    const body=$("inMbBody");
+    const addRow=(m)=>{
+      body.insertAdjacentHTML("beforeend", mbRow(m));
+      const tr=body.lastElementChild;
+      tr.querySelector(".in-addr").value=(m&&m.address)||"";
+      tr.querySelector(".in-allow").value=(m&&m.allowed_senders)||"";
+      tr.querySelector(".in-del").addEventListener("click", ()=>tr.remove());
+    };
+    (em.mailboxes&&em.mailboxes.length?em.mailboxes:[{address:"info@sdmobilept.com"}]).forEach(addRow);
+    $("inAddMb").addEventListener("click", ()=>addRow(null));
+    $("inEmailOn").checked=!!em.enabled;
+    $("inFormOn").checked=!!fm.enabled;
+    $("inSheet").value=fm.spreadsheet_id||"";
+    $("inTab").value=fm.sheet_name||"Form Responses 1";
+    $("inPoll").value=em.poll_seconds||120;
+    $("inCred").textContent=fm.credentials_found
+      ? "✓ Google service-account key found on this computer."
+      : "Google Form option needs a service-account key on this computer — see the setup guide, step 2. (Email works without it.)";
+    const last=[em.last_check?("Email checked "+fmtDateTime(em.last_check)+": "+(em.last_result||"")):"",
+                fm.last_check?("Form checked "+fmtDateTime(fm.last_check)+": "+(fm.last_result||"")):""].filter(Boolean);
+    $("inLast").textContent=last.join("  ·  ");
+    const msg=$("inMsg");
+    const payload=()=>({
+      email:{enabled:$("inEmailOn").checked, poll_seconds:parseInt($("inPoll").value,10)||120,
+             mailboxes:Array.prototype.map.call(body.querySelectorAll("tr"), tr=>({
+               address:tr.querySelector(".in-addr").value.trim(),
+               password:tr.querySelector(".in-pw").value,
+               allowed_senders:tr.querySelector(".in-allow").value.trim()}))},
+      form:{enabled:$("inFormOn").checked, spreadsheet_id:$("inSheet").value.trim(),
+            sheet_name:$("inTab").value.trim(), poll_seconds:parseInt($("inPoll").value,10)||120}
+    });
+    const call=async (url, opts, done)=>{
+      msg.style.color=""; msg.textContent="Working…";
+      try{
+        const r=await fetch(url, opts); const j=await r.json();
+        if(!r.ok){ msg.style.color="#cf4631"; msg.textContent=j.detail||"Couldn't do that."; return; }
+        msg.textContent=done(j);
+      }catch(_){ msg.style.color="#cf4631"; msg.textContent="Couldn't reach Cadence — try again."; }
+    };
+    $("inSave").addEventListener("click", ()=>call("/api/intake/settings",
+      {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload())},
+      ()=>{ Array.prototype.forEach.call(body.querySelectorAll(".in-pw"), i=>{ i.value=""; i.placeholder="saved — leave blank to keep"; }); return "Saved."; }));
+    $("inTest").addEventListener("click", ()=>call("/api/intake/test",{method:"POST"},
+      j=>(j.results||[]).map(r=>(r.ok?"✓ ":"✕ ")+r.source+" — "+r.detail).join("   ")));
+    $("inCheck").addEventListener("click", ()=>call("/api/intake/check",{method:"POST"},
+      j=>Object.keys(j).map(k=>k+": "+j[k].result).join("   ")+(Object.values(j).some(x=>x.queued)?" — see Notes in progress.":"")));
+  }
+
+  // Developer-only tabs (Evals) stay out of the clinician's way; open the app with ?dev=1 to show them.
+  if(/[?&]dev=1/.test(location.search)) Array.prototype.forEach.call(document.querySelectorAll(".dev-only"), el=>{ el.hidden=false; });
   // ---------- Nav ----------
   const PAGES={home:$("page-home"), patients:$("page-patients"), templates:$("page-templates"), evals:$("page-evals"), office:$("page-office"), status:$("page-status")};
   let currentPage="home";

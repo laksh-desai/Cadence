@@ -277,6 +277,9 @@ class BillingGateTests(unittest.TestCase):
         db.init()
         self._orig_billing = os.environ.get("CADENCE_BILLING")
         os.environ.pop("CADENCE_BILLING", None)          # exercise the SHIPPED default
+        # ...and ignore this machine's own Manage Office billing choice (the practice turned it on).
+        self._choice = patch("app.generate.cpt._practice_choice", lambda: "auto")
+        self._choice.start()
         # /api/status reads state the lifespan normally sets; TestClient is deliberately not used
         # as a context manager here (see the module docstring), so stub it.
         server.app.state.medasr_ready = False
@@ -286,6 +289,7 @@ class BillingGateTests(unittest.TestCase):
         self.client = TestClient(server.app)
 
     def tearDown(self):
+        self._choice.stop()
         if self._orig_billing is not None:
             os.environ["CADENCE_BILLING"] = self._orig_billing
         db.shutdown()

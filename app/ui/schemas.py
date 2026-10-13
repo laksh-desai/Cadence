@@ -115,6 +115,9 @@ class GenerateRequest(BaseModel):
     use_prior: bool = True
     extra_info: str | None = None
     fast: bool = False  # use the smaller fast-draft model instead of the 4B quality model
+    # Visit day (YYYY-MM-DD) known at generation time - set by intake (email / Google Form). Echoed
+    # back on the result so the review screen pre-fills its visit-date picker.
+    visit_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class ReviseRequest(BaseModel):
@@ -205,6 +208,7 @@ class GenerateResponse(BaseModel):
     fast: bool = False
     template_spec_sha: str | None = None
     template_customized: bool = False
+    visit_date: str | None = None
 
 
 class ReviseInstruction(BaseModel):

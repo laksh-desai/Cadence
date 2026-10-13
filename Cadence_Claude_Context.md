@@ -59,7 +59,7 @@ No Python package upgrades either (versions are pinned). Do keep Windows updates
   `C:\Users\localuser\Cadence\extension`; reload ↻ after code changes.
 
 ## 5. Website — LIVE (Cloudflare Pages)
-- Files: `website/` (`index.html`, `book/`, `cadence/`, `assets/site.css`). Guide:
+- Files: `website/` (`index.html`, `book/`, `cadence/`, `pt-booking/`, `exercises/`, `assets/site.css`). Guide:
   `docs/Website_Publish_Guide.md`.
 - Hosting: Cloudflare **Pages** project `sdmobilept` → `sdmobilept.pages.dev`.
   - Lesson: the first upload created a **Worker** (`blue-boat-487f…workers.dev`). Workers need the
@@ -77,7 +77,8 @@ No Python package upgrades either (versions are pinned). Do keep Windows updates
   new site over https (cadence redirects to /cadence/ in the browser).
 - Domain registered 2025-02-01, **expires 2027-02-01** — check auto-renew is on.
 - One domain covers both addresses (`www`, `cadence` are free subdomains).
-- Reviews: real ones only (FTC); add to `REVIEWS` in `index.html`.
+- Reviews: real ones only (FTC); add to `REVIEWS` in `index.html` (section + menu link stay hidden
+  until it has at least one).
 - Update the site: edit `website/` → Cloudflare → Workers & Pages → sdmobilept → Create deployment
   → drag `website` folder → Deploy.
 
@@ -129,5 +130,44 @@ No Python package upgrades either (versions are pinned). Do keep Windows updates
   (`.githooks/pre-commit` + CLAUDE.md rule) so every change appends a dated Change-log entry.
   Website: added `pt-booking/` ("Appointment booked by PT", staff books for a patient via the same
   Google Calendar embed) + footer link on the home page. Re-deployed 5:32 PM; confirmed live.
+- **2026-10-07** — Website: added `exercises/` (SD Mobile PT exercise program builder from
+  `Claude_Projects/SDMPT_Exercises`, staff login SDMPT / Exercises in `exercises/js/config.js`,
+  patient links skip login) + "Exercises" nav link on home/book/pt-booking; nav breakpoints
+  widened in `site.css` so 7 links fit. Reviews section turned into a rotating carousel that
+  activates with 2+ real reviews (`REVIEWS` still empty; fake reviews declined); section + menu link
+  hidden while empty. Not yet re-deployed.
   `to_do_list.md` created (repo root) — Kushang's own to-do list: flexible staff booking, calendar
   sharing, website follow-ups. Keep it; add items there when he says "add to my to-do".
+- **2026-10-09** — Added `start_cadence.bat` / `stop_cadence.bat` (repo root) — double-click start
+  (offline flags, minimized "Cadence Server" window, opens browser) and stop (also deletes the
+  decrypted temp DB copy a forced stop leaves behind). Tested stop → start. Uncommitted.
+- **2026-10-11/12** — Big rebuild (CLAUDE.md rule 36): Daily Visit redesigned; Re-eval/Progress
+  Report + Discharge templates; billing ON by practice choice (CPT + ICD, ICD still unverified);
+  code-written Billing section; pre-send audit + Medicare checklist (Send button + extension);
+  exact-label OA mapping + 4 `templates/OfficeAlly_*.md` specs; static-first prompt + startup
+  warm-up (prompt read ~120 s -> ~10 s); loop guard fixed; duplicate-submit guard;
+  `scripts/field_test.py`. Dev box has only 8 GB RAM (~0.5 GB free) — main cause of slowness here.
+  Open: self-corrected per-code minutes ("twenty, no wait, eighteen minutes") stay flagged for
+  the clinician to confirm.
+- **2026-10-12 (later)** — `start_cadence.bat` merged start+stop: always restarts (stop -> `wsl
+  --shutdown` -> start); `start_cadence.bat stop` stops only; `stop_cadence.bat` removed. Dev laptop
+  is an X1 Carbon Gen 9 with 8 GB soldered RAM (not upgradeable) — use the 16 GB target ThinkPad.
+- **2026-10-13** — Batch files now `Start_Server.bat` + `Stop_Server.bat` (user's choice).
+  Reboot loop on 2026-10-12 was THERMAL (Kernel-Power 86 "critical thermal event"), caused by hours
+  of 100%-CPU field testing on the thin X1 Carbon — do NOT run long generation sweeps on this
+  laptop; use the target ThinkPad, and pause between notes.
+- **2026-10-13** — Empty Daily Visit bug: caused by my rules-before-dictation reorder (5/14 vs 14/14
+  on the same fake input). Reverted; outline-only prefix cache kept; "INCOMPLETE NOTE" warning
+  added. User pasted a real note into chat — reminded them not to (cloud, not covered by BAA).
+- **2026-10-13** — Intake from phone/tablet: email (IMAP app password, practice senders only,
+  multi-mailbox) + Google Form (Sheets/Drive service account, audio transcribed locally via PyAV +
+  MedASR). Unknown patient per submission, visit date in DOB, review tray only. Security: EFS on the
+  working DB copy, DPAPI for intake secrets, Status "Data protection" line. User must: create app
+  password, build the form, (Form only) service account, confirm BitLocker. Never ask for or accept
+  the mailbox password in chat.
+- **2026-10-13** — User confirmed the Google Workspace HIPAA BAA is accepted in the Admin console
+  (Account -> Legal and compliance). Still to confirm: BitLocker/Device encryption ON; 2-Step
+  Verification enforced; mobile device management for the iPhone + Android tablet.
+- **2026-10-13** — Device encryption confirmed ON on the dev laptop (Windows Settings screenshot).
+- **2026-10-13** — Email intake connected: info@sdmobilept.com app password saved in Manage Office,
+  Test connection ✓. Next: user sends a fake test email (subject "Cadence <date>").

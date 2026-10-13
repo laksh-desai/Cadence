@@ -90,7 +90,7 @@ class TemplateEchoTests(unittest.TestCase):
     never touch a real value that merely shares a couple of words."""
 
     def test_echoed_functional_status_instruction_flagged(self):
-        body = "ambulation distance, assistive device, assist level, and stairs, updated to reflect today."
+        body = "ambulation distance, assistive device, assist level, transfers and stairs, updated to reflect today."
         out = postprocess.flag_template_echo("followup", [_sec("Functional Status", body)])
         self.assertIn("[[NEEDS:", out[0]["body"])
         self.assertNotIn("assist level", out[0]["body"])
@@ -102,7 +102,7 @@ class TemplateEchoTests(unittest.TestCase):
 
     def test_echoed_plan_instruction_flagged(self):
         out = postprocess.flag_template_echo(
-            "followup", [_sec("Plan", "plan for the next visit: frequency, progression, and any change to the assist level.")])
+            "followup", [_sec("Plan", "focus of the next visit, frequency, planned progression, and any home exercise or education given today.")])
         self.assertIn("[[NEEDS:", out[0]["body"])
 
     def test_real_functional_status_value_not_flagged(self):
@@ -427,8 +427,8 @@ class SpecInstructionHeadingTests(unittest.TestCase):
 
     def test_strips_the_instruction_and_keeps_the_body(self):
         sections = [{
-            "heading": "Precautions — weight-bearing status, range-of-motion limits, and any "
-                       "other precautions still in effect.",
+            "heading": "Precautions — fall risk, weight-bearing status, and any other "
+                       "precautions still in effect.",
             "body": "Weight-bearing as tolerated. Left hip ROM limited to 90 degrees of flexion.",
         }]
         out = postprocess.strip_spec_instruction_headings("followup", sections)
@@ -438,7 +438,7 @@ class SpecInstructionHeadingTests(unittest.TestCase):
     def test_strips_a_heading_that_is_under_the_fold_threshold(self):
         """The repair is about instruction text, not length. "Vitals — Blood pressure and heart
         rate." is only 39 chars, so no length-based check would ever reach it."""
-        sections = [{"heading": "Vitals — Blood pressure and heart rate.",
+        sections = [{"heading": "Vitals — blood pressure, heart rate and O2 if taken today.",
                      "body": "BP 128/76, HR 72."}]
         out = postprocess.strip_spec_instruction_headings("followup", sections)
         self.assertEqual(out[0]["heading"], "Vitals")
@@ -465,12 +465,12 @@ class SpecInstructionHeadingTests(unittest.TestCase):
         """Order guard. With an EMPTY body, split_folded_headings would move the instruction text
         down into the body, where it would masquerade as clinical content and nothing removes it.
         Stripping first means the fold repair only ever sees real content."""
-        sections = [_sec("Precautions — weight-bearing status, range-of-motion limits, and any "
-                         "other precautions still in effect.", "")]
+        sections = [_sec("Precautions — fall risk, weight-bearing status, and any other "
+                         "precautions still in effect.", "")]
         out = postprocess.apply("followup", sections)
         self.assertTrue(out, "the section should survive")
         self.assertEqual(out[0]["heading"], "Precautions")
-        self.assertNotIn("weight-bearing status, range-of-motion limits", out[0]["body"],
+        self.assertNotIn("fall risk, weight-bearing status", out[0]["body"],
                          "template boilerplate must not be relocated into the body")
 
     def test_is_idempotent(self):

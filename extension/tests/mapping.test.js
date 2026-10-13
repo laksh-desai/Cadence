@@ -17,7 +17,10 @@ const PATIENT = { name: "Alex Rivera", dob: "01/02/1960", mrn: "01023-557" };
 
 test("markerToText renders NEEDS and CPT markers legibly", () => {
   assert.strictEqual(M.markerToText("x [[NEEDS: assist level — verify]]"), "x [! assist level — verify]");
-  assert.strictEqual(M.markerToText("y [[CPT: 97116 Gait Training — confirm]]"), "y [CPT: 97116 Gait Training]");
+  assert.strictEqual(M.markerToText("y [[CPT: 97116 Gait Training — confirm]]"), "y [CPT: 97116 Gait Training — unconfirmed]");
+  // A confirmed chip (no "— confirm") and a clinician-assigned one used to reach Office Ally raw.
+  assert.strictEqual(M.markerToText("z [[CPT: 97110 Therapeutic Exercise]] 15 min"), "z CPT 97110 Therapeutic Exercise 15 min");
+  assert.strictEqual(M.markerToText("[[CPT: 97530 Therapeutic Activities — clinician-assigned]]"), "CPT 97530 Therapeutic Activities");
 });
 
 test("noteSources yields patient fields, sections, and SOAP blocks", () => {

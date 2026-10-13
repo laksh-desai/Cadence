@@ -1,0 +1,233 @@
+{
+  "_about": "Hand-written FAKE dictations for scripts/field_test.py. No real patient, no PHI. Each patient is an episode run in order (evaluation -> daily visits -> re-evaluation -> discharge) so carry-forward is exercised between notes. 'expect' is labelled by hand from the dictation, never by running the extractor (CLAUDE.md rule 21b).",
+  "patients": [
+    {
+      "name": "Margaret Fieldtest (fake)",
+      "condition": "s/p right hip ORIF, fall risk",
+      "visits": [
+        {
+          "id": "A1-initial",
+          "form_id": "initial",
+          "dictation": "Initial evaluation. Eighty two year old female referred by orthopedics after a right hip ORIF for an intertrochanteric fracture six weeks ago after a fall at home. Chief complaint is difficulty walking and fear of falling. Diagnosis is right hip fracture status post ORIF and gait abnormality. Medications are Eliquis five milligrams twice a day, metoprolol twenty five milligrams daily, calcium with vitamin D, and Tylenol as needed. No known drug allergies. History of hypertension, atrial fibrillation, and osteoporosis. Weight bearing as tolerated on the right leg, posterior hip precautions until eight weeks. Prior level of function she walked in the community with no device and lived alone independently. Lives alone in a single story home with two steps to enter and one rail, daughter checks on her daily. Two falls in the last six months. Right hip flexion eighty five degrees, abduction twenty degrees. Right hip flexors three plus out of five, abductors three minus out of five, left leg four out of five. Blood pressure one thirty four over seventy eight, heart rate seventy two, O2 ninety six percent at rest. Sit to stand with min assist from a standard chair. Walks seventy five feet with a rolling walker with contact guard assist, decreased stance time on the right and short step length. Two steps with one rail and min assist. Berg Balance Scale thirty six out of fifty six. Timed Up and Go twenty four seconds with the walker. Assessment, she has decreased strength, balance and gait after the hip fracture and is a high fall risk, moderate complexity with three comorbidities, needs skilled PT, good rehab potential. Clinical decision making is moderate complexity. Short term goals in three weeks walk one hundred fifty feet with the rolling walker at supervision, and Berg greater than forty five out of fifty six. Long term goals in eight weeks walk five hundred feet with a cane independently, independent with two steps and a rail, and independent with home exercise program. Plan PT two times a week for eight weeks, sixty minutes per session, gait training, neuromuscular re-education, therapeutic exercise, and home exercise program. Certification period March third to April twenty eighth. Today evaluation took forty five minutes.",
+          "expect": {
+            "codes": [],
+            "eval": true,
+            "sections_min": 14
+          }
+        },
+        {
+          "id": "A2-daily-clean",
+          "form_id": "followup",
+          "dictation": "Daily visit. Patient reports right hip pain three out of ten at rest and five out of ten with walking, no falls since last visit, doing her home exercises once a day. Precautions fall risk, weight bearing as tolerated, posterior hip precautions. Blood pressure one twenty eight over seventy four, heart rate seventy. Gait training fifteen minutes, walked two times one hundred feet with the rolling walker, contact guard, verbal cues for step length and upright posture, she needed one standing rest. Neuromuscular re-education twelve minutes, static standing balance with eyes closed three times thirty seconds and weight shifting at the counter, tactile cues at the pelvis, min assist for two losses of balance. Therapeutic exercise fifteen minutes, sit to stand three times ten from a standard chair, standing hip abduction two times ten each side, heel raises two times fifteen, cues to slow down the lowering phase. Total treatment time forty five minutes. Tolerated well, fatigue after gait, step length better on the right. Functional status walks one hundred feet with the walker at contact guard, sit to stand with standby assist. Short term goal of one hundred fifty feet is progressing. Plan continue two times a week, progress gait distance and start step training next visit.",
+          "expect": {
+            "codes": {
+              "97116": 15,
+              "97112": 12,
+              "97110": 15
+            },
+            "total_time": 45,
+            "sections_min": 10
+          }
+        },
+        {
+          "id": "A3-daily-messy",
+          "form_id": "followup",
+          "dictation": "Um okay so daily note for Margaret. Uh she say she is feeling more, more strong today, pain is like two out of ten, um no falls. So we did, uh, gait training for, for twenty minutes, no wait, eighteen minutes, she walk one hundred fifty feet two times with rolling walker, standby assist now, I cue her for the right heel strike. Then balance, neuromuscular re ed, ten minutes, tandem stance at the counter, um, three times twenty second, she lose balance one time, I give min assist. Then exercise, therapeutic exercise twelve minutes, the step ups on four inch step two times ten, the bridges two times ten. Total was forty five, uh, forty minutes today. She tolerate good. She is walking better, one fifty feet standby. Short term goal one fifty feet with walker supervision, I think, yes it is met today. Plan, continue, we start the cane next week maybe.",
+          "expect": {
+            "codes": {
+              "97116": 18,
+              "97112": 10,
+              "97110": 12
+            },
+            "total_time": 40,
+            "sections_min": 9
+          }
+        },
+        {
+          "id": "A4-daily-missing-time",
+          "form_id": "followup",
+          "dictation": "Daily visit. Patient reports no pain today and no falls. Gait training with the single point cane in the clinic, walked two hundred feet with standby assist and cues for cane sequencing. Therapeutic exercise sit to stand and step ups. Neuromuscular re-education ten minutes, single leg stance at the counter. Tolerated well. Plan continue.",
+          "expect": {
+            "codes": {
+              "97116": null,
+              "97110": null,
+              "97112": 10
+            },
+            "total_time": null,
+            "audit_ready": false,
+            "sections_min": 7
+          }
+        },
+        {
+          "id": "A5-reeval-routine",
+          "form_id": "reeval",
+          "dictation": "Re-evaluation progress report, tenth visit, reporting period March third to April second, ten visits attended. Routine progress report, no significant change in her condition. She reports feeling much steadier at home, pain two out of ten, no falls this period, no new medications. Precautions fall risk, weight bearing as tolerated, hip precautions now lifted by the surgeon. Berg forty four out of fifty six, up from thirty six. Timed Up and Go sixteen seconds with the cane, down from twenty four with the walker. Right hip flexors four minus out of five, up from three plus. Walks two hundred fifty feet with a single point cane at standby assist, up from seventy five feet with the walker at contact guard. Two steps with one rail at supervision. Goal walk one hundred fifty feet with the walker at supervision is met. Goal Berg greater than forty five is progressing, now forty four. Long term goal walk five hundred feet with a cane independently is progressing. Assessment good progress in balance and gait, still a fall risk with turns and uneven ground, needs skilled balance and gait training, good rehab potential. New short term goal in three weeks walk four hundred feet with the cane independently and Berg forty eight. Long term goals unchanged. Plan continue two times a week for four more weeks, recertification through April thirtieth, focus on outdoor walking and turns. Today we also did gait training fifteen minutes outside on the sidewalk with the cane. Total treatment time fifty minutes.",
+          "expect": {
+            "codes": {
+              "97116": 15
+            },
+            "total_time": 50,
+            "reeval_flag": true,
+            "sections_min": 12
+          }
+        },
+        {
+          "id": "A6-discharge",
+          "form_id": "discharge",
+          "dictation": "Discharge summary. Discharged today April twenty eighth, start of care March third, sixteen visits attended of sixteen planned. Reason for discharge goals met. Diagnosis right hip fracture status post ORIF and gait abnormality. Treatment provided gait training, balance and neuromuscular re-education, strengthening, stair training and home exercise instruction two times a week. At the start she walked seventy five feet with a rolling walker at contact guard, Berg thirty six, Timed Up and Go twenty four seconds. At discharge Berg fifty out of fifty six and Timed Up and Go eleven seconds with the cane. Walks six hundred feet with a single point cane independently, transfers independent, two steps with a rail independently. Short term goals walk one hundred fifty feet with walker at supervision met, Berg greater than forty five met. Long term goals walk five hundred feet with a cane independently met, independent with steps met, independent with home exercise program met. Issued written home exercise program for balance and strengthening, daughter trained in guarding on the steps, patient demonstrated it correctly. Using a single point cane, recommend a community balance class, return to PT if she falls again. Good prognosis to maintain her gains. Today gait training fifteen minutes outdoors and therapeutic exercise ten minutes reviewing the home program, total treatment time thirty five minutes.",
+          "expect": {
+            "codes": {
+              "97116": 15,
+              "97110": 10
+            },
+            "total_time": 35,
+            "sections_min": 11
+          }
+        }
+      ]
+    },
+    {
+      "name": "Harold Fieldtest (fake)",
+      "condition": "Parkinson's disease, gait freezing",
+      "visits": [
+        {
+          "id": "B1-daily-parkinson",
+          "form_id": "followup",
+          "dictation": "Daily visit. Seventy nine year old with Parkinson's disease. Wife reports two near falls this week when turning in the kitchen, no actual falls. He took his carbidopa levodopa one hour before the session. Neuromuscular re-education twenty minutes, large amplitude stepping and turning practice with visual floor targets, one hundred eighty degree turns to each side, verbal and auditory cueing with a metronome, freezing episodes reduced from four to one by the end. Gait training fifteen minutes, three hundred feet with the four wheeled walker, cueing for heel strike and arm swing, contact guard on turns. Therapeutic activities ten minutes, floor to standing transfer practice with a chair, min assist. Total treatment time fifty minutes. Five times sit to stand eighteen seconds. Assessment responds well to external cues, still high fall risk on turns, needs skilled cueing and guarding. Plan continue two times a week, add dual task gait, educated wife on cueing strategies at home.",
+          "expect": {
+            "codes": {
+              "97112": 20,
+              "97116": 15,
+              "97530": 10
+            },
+            "total_time": 50,
+            "sections_min": 9
+          }
+        },
+        {
+          "id": "B2-daily-short",
+          "form_id": "followup",
+          "dictation": "Daily visit. No falls. Gait training twenty minutes with the rollator, three hundred feet, contact guard on turns. Neuro re-ed fifteen minutes, turning drills with cues. Total treatment time thirty five minutes. Doing better with turns. Continue plan.",
+          "expect": {
+            "codes": {
+              "97116": 20,
+              "97112": 15
+            },
+            "total_time": 35,
+            "sections_min": 6
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dolores Fieldtest (fake)",
+      "condition": "deconditioning after hospitalization, CHF",
+      "visits": [
+        {
+          "id": "C1-reeval-change",
+          "form_id": "reeval",
+          "dictation": "Re-evaluation due to a significant change. Patient was hospitalized for five days for a CHF exacerbation and is now back home, this is her first visit after the hospital stay. She reports more short of breath and weaker, pain zero out of ten, one fall at home before the hospital admission. New medication furosemide forty milligrams daily. Precautions fall risk, monitor vitals, stop if O2 below ninety percent. Blood pressure one forty two over eighty four, heart rate eighty eight at rest, O2 ninety four percent at rest and ninety one percent after walking. Thirty second chair stand five, down from nine before the hospital. Walks eighty feet with a rolling walker at contact guard, was walking three hundred feet with a cane before. Goal walk three hundred feet with a cane independently not met, regressed due to the hospitalization. Assessment significant decline in endurance and function after the hospitalization, high fall risk, needs skilled PT with vitals monitoring, fair to good rehab potential. New short term goals in two weeks walk one hundred fifty feet with the walker at supervision with O2 above ninety two percent. Long term goal in six weeks return to three hundred feet with a cane independently. Plan two times a week for six weeks, new certification period, focus on endurance and gait. Today therapeutic exercise ten minutes seated, total treatment time forty minutes.",
+          "expect": {
+            "codes": {
+              "97110": 10
+            },
+            "total_time": 40,
+            "reeval_flag": true,
+            "sections_min": 12
+          }
+        }
+      ]
+    },
+    {
+      "name": "Walter Fieldtest (fake)",
+      "condition": "left CVA with right hemiparesis",
+      "visits": [
+        {
+          "id": "D1-initial-cva",
+          "form_id": "initial",
+          "dictation": "Initial evaluation. Seventy six year old male, left MCA stroke eight weeks ago, discharged from acute rehab two weeks ago, referred by his neurologist for home PT. Chief complaint right leg weakness and difficulty walking. Diagnosis hemiplegia affecting right dominant side following cerebral infarction. Medications aspirin eighty one milligrams daily, atorvastatin forty milligrams, lisinopril ten milligrams. Allergic to penicillin. History of hypertension and type two diabetes. Prior level of function independent community ambulator, drove, lived with his wife in a two story home with twelve steps and a rail on the right. Right hip flexors three minus out of five, right knee extensors three out of five, right ankle dorsiflexion two out of five, left side five out of five. Sensation decreased to light touch on the right foot. Blood pressure one forty over eighty two, heart rate seventy eight. Sit to stand min assist. Walks forty feet with a hemi walker and moderate assist, right foot drop and knee hyperextension. Unable to do stairs. Berg twenty eight out of fifty six. Assessment high fall risk, significant weakness and balance deficits, high complexity with diabetes, hypertension and the stroke, needs skilled PT, fair to good rehab potential. Evaluation is high complexity. Short term goals in four weeks walk one hundred feet with a hemi walker and min assist, sit to stand with supervision. Long term goals in twelve weeks walk two hundred feet with a quad cane and supervision, go up and down twelve steps with the rail and min assist. Plan three times a week for twelve weeks, gait training, neuromuscular re-education, therapeutic exercise, therapeutic activities, caregiver training. Evaluation forty five minutes.",
+          "expect": {
+            "codes": {},
+            "eval": true,
+            "sections_min": 14
+          }
+        },
+        {
+          "id": "D2-daily-cva",
+          "form_id": "followup",
+          "dictation": "Daily visit. Wife says he is walking more in the house with her help, no falls. Pain zero. Gait training twenty minutes with the hemi walker, sixty feet times two, moderate to min assist, tactile cues at the right knee to prevent hyperextension and verbal cues for step length. Neuromuscular re-education fifteen minutes, weight shifting onto the right leg in standing and seated reaching outside base of support, facilitation at the right hip. Therapeutic activities ten minutes, sit to stand practice and bed to chair transfers, min assist, trained the wife in safe guarding. Total treatment time forty five minutes. Improving right weight bearing, still needs hands on assist. Plan continue three times a week, order a quad cane trial next visit.",
+          "expect": {
+            "codes": {
+              "97116": 20,
+              "97112": 15,
+              "97530": 10
+            },
+            "total_time": 45,
+            "sections_min": 9
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ruth Fieldtest (fake)",
+      "condition": "right TKA, dementia",
+      "visits": [
+        {
+          "id": "E1-daily-tka-caregiver",
+          "form_id": "followup",
+          "dictation": "Daily visit, three weeks after right total knee replacement. Patient has mild dementia, her daughter reports she is sleeping better and taking Tylenol twice a day, no falls. Pain four out of ten at rest and six out of ten with bending the knee. Manual therapy ten minutes, patellar mobilizations and soft tissue mobilization to the right quad. Therapeutic exercise twenty minutes, heel slides, quad sets, short arc quads two times fifteen, seated knee flexion stretch, needed demonstration and repeated verbal cues because of memory. Right knee flexion ninety two degrees, up from eighty five, extension minus five. Gait training ten minutes with the rolling walker, one hundred feet, standby assist. Total treatment time forty five minutes. Assessment knee motion improving, still needs skilled cues due to cognition. Plan continue two times a week, progress to stationary bike, gave the daughter a written home exercise sheet with pictures.",
+          "expect": {
+            "codes": {
+              "97140": 10,
+              "97110": 20,
+              "97116": 10
+            },
+            "total_time": 45,
+            "sections_min": 10
+          }
+        },
+        {
+          "id": "E2-daily-vitals-stop",
+          "form_id": "followup",
+          "dictation": "Daily visit. Patient reports feeling dizzy this morning. Blood pressure at rest one seventy eight over ninety six, heart rate ninety four, rechecked after five minutes one seventy four over ninety four. Held exercise because blood pressure was above the safe limit, called her primary care office and spoke with the nurse who will see her today. Educated the daughter on signs of stroke and when to call nine one one. Self care home management training ten minutes on medication schedule and fall prevention at home. Total treatment time twenty minutes. Plan reschedule for later this week once medically cleared.",
+          "expect": {
+            "codes": {
+              "97535": 10
+            },
+            "total_time": 20,
+            "sections_min": 6
+          }
+        }
+      ]
+    },
+    {
+      "name": "Jose Fieldtest (fake)",
+      "condition": "lumbar stenosis, deconditioning",
+      "visits": [
+        {
+          "id": "F1-daily-broken-english",
+          "form_id": "followup",
+          "dictation": "daily note. patient he say back pain little better, five of ten, he no fall. we do gait training fifteen minute, he walk two hundred feet with cane, he lean forward too much, i tell him stand tall many time, standby. then exercise, therapeutic exercise fifteen minute, the bridges, the clam shell, the cat camel, two set ten each, he need help for the position. then balance ten minute neuromuscular re ed, standing on foam with eyes open, tandem, he lose balance two time, i hold him, min assist. total forty minute. he tired after but ok. goal walk three hundred feet with cane is not yet. plan same next time, add stairs.",
+          "expect": {
+            "codes": {
+              "97116": 15,
+              "97110": 15,
+              "97112": 10
+            },
+            "total_time": 40,
+            "sections_min": 9
+          }
+        },
+        {
+          "id": "F2-discharge-hospital",
+          "form_id": "discharge",
+          "dictation": "Discharge summary. Patient discharged from PT today because he was admitted to the hospital for pneumonia and will go to a skilled nursing facility after. Start of care February tenth, discharge March twentieth, nine visits attended of sixteen planned. Diagnosis lumbar spinal stenosis and difficulty walking. Treatment provided gait training, balance training and strengthening two times a week. At start of care he walked one hundred feet with a cane and standby assist, five times sit to stand twenty two seconds. At the last visit walked two hundred feet with the cane at standby assist, five times sit to stand eighteen seconds. Short term goal walk two hundred feet with a cane at supervision met. Long term goal walk five hundred feet with a cane independently not met because of the hospitalization. Home exercise program was issued for bridges, sit to stand and walking. Recommend PT at the skilled nursing facility and a new home health or outpatient referral when he returns home. Prognosis fair given the new illness. No treatment today, this is a discharge note only.",
+          "expect": {
+            "codes": {},
+            "sections_min": 10
+          }
+        }
+      ]
+    }
+  ]
+}

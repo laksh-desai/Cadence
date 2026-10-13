@@ -1,6 +1,7 @@
 """Local Ollama call, ported from test_medgemma.py's validated request shape."""
 
 import json
+import logging
 import os
 
 import httpx
@@ -65,6 +66,33 @@ class OllamaUnavailableError(Exception):
     pass
 
 
+logger = logging.getLogger("cadence.generate")
+
+# Ollama's own timing for the most recent call: token COUNTS and durations only, never text, so it
+# is safe to log. Prefill (prompt) vs output are reported separately because they are different
+# levers: prefill is cut by reusing a cached prompt prefix, output only by writing less.
+last_stats: dict = {}
+
+
+def _record_stats(data: dict, model: str) -> None:
+    global last_stats
+    ns = 1e9
+    stats = {
+        "model": model,
+        "prompt_tokens": data.get("prompt_eval_count"),
+        "prompt_seconds": round((data.get("prompt_eval_duration") or 0) / ns, 1),
+        "output_tokens": data.get("eval_count"),
+        "output_seconds": round((data.get("eval_duration") or 0) / ns, 1),
+        "load_seconds": round((data.get("load_duration") or 0) / ns, 1),
+    }
+    last_stats = stats
+    logger.info(
+        "ollama: prompt %s tok in %ss, output %s tok in %ss, load %ss (%s)",
+        stats["prompt_tokens"], stats["prompt_seconds"], stats["output_tokens"],
+        stats["output_seconds"], stats["load_seconds"], model,
+    )
+
+
 def _build_payload(prompt: str, model: str | None = None) -> dict:
     options = {
         "temperature": 0.3,
@@ -99,7 +127,23 @@ async def generate_note(prompt: str, timeout_s: float = 1800.0, model: str | Non
         raise OllamaUnavailableError(
             "Could not reach the local model. Is Ollama running?"
         ) from e
+    _record_stats(data, payload["model"])
     return data.get("message", {}).get("content", "")
+
+
+async def warm_prefix(prefix: str, model: str | None = None) -> None:
+    """Load the model and pre-compute the KV cache for a prompt PREFIX (num_predict=1), so the next
+    real note that starts with the same text skips re-reading it. build_prompt puts every static
+    part (template + rules) first for exactly this reason. Best effort: any failure is ignored."""
+    payload = _build_payload(prefix, model)
+    payload["options"]["num_predict"] = 1
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            resp = await client.post(OLLAMA_URL, json=payload)
+            resp.raise_for_status()
+            _record_stats(resp.json(), payload["model"])
+    except Exception:  # noqa: BLE001 - warming is an optimisation, never a failure
+        logger.info("ollama: prefix warm-up skipped (model not reachable)")
 
 
 async def stream_note(prompt: str, timeout_s: float = 1800.0, model: str | None = None):
@@ -133,8 +177,14 @@ async def stream_note(prompt: str, timeout_s: float = 1800.0, model: str | None 
                         if len(written) - checked_at >= 300:
                             checked_at = len(written)
                             if loopguard.is_looping(written):
+                                global last_stats
+                                last_stats = {"model": payload["model"], "stopped_by_loop_guard": True,
+                                              "output_chars": len(written)}
+                                logger.warning("ollama: loop guard stopped a repeating note after %s chars",
+                                               len(written))
                                 return
                     if data.get("done"):
+                        _record_stats(data, payload["model"])
                         return
     except httpx.HTTPError as e:
         raise OllamaUnavailableError(

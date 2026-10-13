@@ -110,8 +110,89 @@ def drop_unperformed_treatment_sections(sections: list[dict]) -> list[dict]:
     """Drop any section whose body opens with "Minutes: 0" — a reliable signal the
     model invented a placeholder for a treatment that was never performed, rather
     than the (clinically nonsensical) idea that a treatment took zero minutes.
+
+    Also drop a TREATMENT section (a heading that maps to a CPT code) whose whole body says it was
+    not done ("Not performed today."). Measured on the 2026-10 Daily Visit: the model listed every
+    intervention in the template, wrote "Not performed today" under three of them, and each one then
+    earned a CPT chip — a code for a service nobody provided. Only the heading-mapped treatment
+    sections are touched, and only when NOTHING else is in the body.
     """
-    return [s for s in sections if not _ZERO_MINUTES_RE.match(s["body"])]
+    from app.generate.cpt import code_for_heading  # local: cpt must not depend on postprocess
+    out = []
+    for s in sections:
+        if _ZERO_MINUTES_RE.match(s["body"]):
+            continue
+        if code_for_heading(s.get("heading", "")) and _NOT_PERFORMED_RE.match(
+                _MARKER_RE.sub("", s.get("body", "")).strip()):
+            continue
+        out.append(s)
+    return out
+
+
+_MARKER_RE = re.compile(r"\[\[[^\]]*\]\]")
+_NOT_PERFORMED_RE = re.compile(
+    r"^(?:minutes:\s*(?:0|n/?a|none|__)\s*[.,;]?\s*)?"
+    r"(?:(?:this )?(?:treatment |intervention )?(?:was )?(?:not|no)\s+(?:performed|done|provided|"
+    r"completed|addressed|indicated|applicable|treated)(?: today| this (?:visit|session))?|"
+    r"none(?: today)?|n/?a|not applicable)\s*\.?$", re.IGNORECASE)
+
+
+_BARE_STATUS_RE = re.compile(r"^\s*(?:met|not met|progressing|in progress|ongoing|partially met)\s*\.?\s*$",
+                             re.IGNORECASE)
+
+
+def flag_bare_goal_status(sections: list[dict]) -> list[dict]:
+    """A goal section that is ONLY a status word ("MET") names no goal and no value. A reviewer
+    cannot verify it, and on a short dictation the model wrote it with no goal stated at all (rule
+    5: MET only when today's data shows it). Flag it; never guess which goal was meant."""
+    out = []
+    for s in sections:
+        h = (s.get("heading") or "").lower()
+        body = _MARKER_RE.sub("", s.get("body") or "")
+        if "goal" in h and _BARE_STATUS_RE.match(body):
+            s = {**s, "body": (s["body"].rstrip() + " [[NEEDS: name each goal and its current value "
+                                                   "— a bare status cannot be verified]]").strip()}
+        out.append(s)
+    return out
+
+
+def split_label_lines(form_id: str, sections: list[dict]) -> list[dict]:
+    """Split a body that holds several of the template's sections as "Label — value" LINES.
+
+    Measured on a 2026-10 Re-evaluation: the model wrote only "## Reporting Period" and put the
+    other 14 sections under it, each on its own line as "Diagnoses — …", "Goal Status — …". The
+    content was right; the structure was one section. Text is MOVED, never rewritten.
+
+    Guards (stricter than `split_shifted_section_bodies`, because this looks past the first line):
+      * the line must START with a label the template declares, followed by a separator (— – : -),
+        so prose that merely mentions "plan" or "goals" never splits;
+      * that section must not already exist in the note.
+    """
+    declared = sorted(forms_store.spec_section_labels(form_id), key=len, reverse=True)
+    if not declared:
+        return sections
+    present = {(s.get("heading") or "").strip().lower() for s in sections}
+    leads = [(lab, re.compile(r"^\s*" + re.escape(lab) + r"\s*(?:\[[^\]]*\])?\s*[—–:-]\s*", re.IGNORECASE))
+             for lab in declared]
+    out: list[dict] = []
+    for sec in sections:
+        current = dict(sec)
+        current_lines: list[str] = []
+        pieces: list[dict] = []
+        for line in (sec.get("body") or "").split("\n"):
+            hit = next(((lab, rx) for lab, rx in leads
+                        if lab.lower() not in present and rx.match(line)), None)
+            if hit:
+                lab, rx = hit
+                pieces.append({**current, "body": "\n".join(current_lines).strip()})
+                present.add(lab.lower())
+                current = {"heading": lab, "carried_forward": sec.get("carried_forward", False)}
+                current_lines = [rx.sub("", line, count=1)]
+            else:
+                current_lines.append(line)
+        pieces.append({**current, "body": "\n".join(current_lines).strip()})
+        out.extend(pieces)
+    return out
 
 
 def flag_code_sections(sections: list[dict]) -> list[dict]:
@@ -677,6 +758,8 @@ def apply(form_id: str, sections: list[dict]) -> list[dict]:
     # Before the fold repair: this leaves an empty body behind, which is precisely the shape the
     # fold repair then fixes by moving the stranded value off the heading line.
     sections = split_shifted_section_bodies(form_id, sections)
+    # The same shift, but for MANY sections stacked as "Label — value" lines in one body.
+    sections = split_label_lines(form_id, sections)
     # The split must precede the zero-minutes drop. That drop matches "Minutes: 0" at the START OF
     # THE BODY, so a folded "Minutes: 0 — ultrasound not performed today" leaves an empty body, the
     # drop never fires, and the invented placeholder section survives into the note. Splitting
@@ -692,6 +775,7 @@ def apply(form_id: str, sections: list[dict]) -> list[dict]:
     sections = loopguard.collapse_repeats(sections)
     sections = drop_unperformed_treatment_sections(sections)
     sections = enforce_carry_tags(form_id, sections)
+    sections = flag_bare_goal_status(sections)
     sections = flag_template_echo(form_id, sections)
     sections = flag_code_sections(sections)
     sections = flag_code_field_lines(sections)

@@ -50,6 +50,7 @@ const ROUTES = {
   patient: (m) => "/api/patients/" + encodeURIComponent(m.patientId),
   notes: (m) => "/api/patients/" + encodeURIComponent(m.patientId) + "/notes",
   note: (m) => "/api/patients/" + encodeURIComponent(m.patientId) + "/notes/" + encodeURIComponent(m.noteId),
+  audit: (m) => "/api/patients/" + encodeURIComponent(m.patientId) + "/notes/" + encodeURIComponent(m.noteId) + "/audit",
 };
 
 // The note the clinician chose with Cadence's "Send to Office Ally" button: ids only, held for a

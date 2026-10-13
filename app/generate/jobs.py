@@ -146,6 +146,17 @@ class JobQueue:
     # -- submission ----------------------------------------------------------
     def submit(self, *, patient_id: str, patient_name: str, form_id: str, form_name: str,
                fast: bool, payload: dict) -> Job:
+        # A double-click, a resubmit after a slow response, or a reload that re-posts would queue
+        # the SAME note twice: twice the minutes on a CPU that can only write one at a time, and
+        # two near-identical drafts in the tray. An identical request still queued or writing is
+        # that note — return it instead of starting another.
+        for jid in self._order:
+            existing = self._jobs.get(jid)
+            if (payload.get("patient_id") and existing and not existing.finished
+                    and existing.payload == payload
+                    and (existing.patient_id, existing.form_id, existing.fast)
+                    == (patient_id, form_id, fast)):
+                return existing
         job = Job(id=uuid.uuid4().hex[:12], patient_id=patient_id, patient_name=patient_name,
                   form_id=form_id, form_name=form_name, fast=fast, payload=payload)
         self._jobs[job.id] = job

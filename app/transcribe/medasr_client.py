@@ -83,6 +83,23 @@ def is_loaded() -> bool:
     return _model is not None
 
 
+def _decode_with_av(data: bytes):
+    """Decode any common audio container (m4a, aac, mp4, 3gp, ogg, webm, ...) to 16 kHz mono
+    float32 — on this computer, with PyAV's bundled decoder."""
+    import av
+    import numpy as np
+    with av.open(io.BytesIO(data)) as container:
+        stream = next(s for s in container.streams if s.type == "audio")
+        resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
+        chunks = []
+        for frame in container.decode(stream):
+            for out in resampler.resample(frame):
+                chunks.append(out.to_ndarray().reshape(-1))
+        for out in resampler.resample(None):
+            chunks.append(out.to_ndarray().reshape(-1))
+    return np.concatenate(chunks) if chunks else np.zeros(0, dtype="float32")
+
+
 def transcribe(wav_bytes: bytes) -> str:
     """Blocking, CPU-bound -- callers MUST run this via asyncio.to_thread, same
     treatment as app.integrations.sheets_sync.run_sync_cycle.
@@ -94,8 +111,13 @@ def transcribe(wav_bytes: bytes) -> str:
 
     try:
         speech, _ = librosa.load(io.BytesIO(wav_bytes), sr=16000, mono=True)
-    except Exception as e:
-        raise AudioUnreadableError("Couldn't read the recorded audio.") from e
+    except Exception:
+        # Phone recordings (iPhone Voice Memos, Android recorders) are usually .m4a/AAC, which
+        # librosa cannot read without a system ffmpeg. PyAV bundles the decoder and runs locally.
+        try:
+            speech = _decode_with_av(wav_bytes)
+        except Exception as e:
+            raise AudioUnreadableError("Couldn't read the recorded audio.") from e
     if speech.size == 0:
         raise AudioUnreadableError("The recording was empty.")
 
